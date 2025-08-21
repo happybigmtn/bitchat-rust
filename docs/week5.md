@@ -1,5 +1,16 @@
 # Week 5: Application Layer & CLI
 
+## ⚠️ IMPORTANT: Updated Implementation Notes
+
+**Before starting this week, please review `/docs/COMPILATION_FIXES.md` for critical dependency and API updates.**
+
+**Key fixes for Week 5:**
+- Add UI dependencies: `clap = "4.5.45"`, `ratatui = "0.29.0"`, `crossterm = "0.29.0"`
+- Use `f.area()` instead of deprecated `f.size()` for ratatui
+- Set cursor position as tuple: `f.set_cursor_position((x, y))`
+- Remove unnecessary Backend type parameters from Widget implementations
+- Use current clap derive syntax with `#[command(...)]`
+
 ## Overview
 Implement the user-facing application layer with CLI interface and terminal UI for BitChat, including specialized casino UI components for BitCraps gaming and wallet integration.
 

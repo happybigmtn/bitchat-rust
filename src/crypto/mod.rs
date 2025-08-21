@@ -1,11 +1,6 @@
-//! crypto module
+//! Cryptographic primitives for BitChat
+//! 
+//! This module implements the Noise protocol framework and key management
+//! for secure communication.
 
-pub mod keys;
-pub mod noise;
-
-// Re-export commonly used types
-pub use keys::{NoiseKeyPair, SigningKeyPair, BitchatIdentity, GameCrypto};
-pub use noise::{NoiseEncryptionService, NoiseSession, NoiseSessionState};
-
-#[cfg(test)]
-pub mod tests;
+// Cryptographic implementations to be added in Week 1-2

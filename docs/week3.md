@@ -1,5 +1,15 @@
 # Week 3: Mesh Service Architecture & Message Handling
 
+## ⚠️ IMPORTANT: Updated Implementation Notes
+
+**Before starting this week, please review `/docs/COMPILATION_FIXES.md` for critical dependency and API updates.**
+
+**Key fixes for Week 3:**
+- Add mesh networking dependencies: `quinn = "0.11.8"`, `futures = "0.3.31"`
+- All transport operations must use `.await` for async operations
+- Add `Send + Sync` bounds to all async traits
+- Use proper async/await patterns throughout mesh implementations
+
 ## Overview
 
 Week 3 focuses on building the sophisticated mesh service architecture that makes BitChat unique. Based on the Android implementation's mesh components, we'll create a complete mesh networking system with advanced message handling, deduplication, security management, and IRC-style channel management. This week transforms the protocol foundations from Weeks 1 and 2 into a production-ready mesh networking system.

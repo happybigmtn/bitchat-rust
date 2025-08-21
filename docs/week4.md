@@ -1,5 +1,15 @@
 # Week 4: Session Management & Noise Protocol Integration
 
+## ⚠️ IMPORTANT: Updated Implementation Notes
+
+**Before starting this week, please review `/docs/COMPILATION_FIXES.md` for critical dependency and API updates.**
+
+**Key fixes for Week 4:**
+- Add session persistence dependencies: `argon2 = "0.5.3"`, `chrono = "0.4.41"`, `rusqlite`
+- Session state machine is already correctly implemented with proper states
+- SQLite schemas need proper constraints and indexes
+- All session operations should be async where appropriate
+
 ## Overview
 
 This week implements the session management layer and full Noise protocol integration for BitChat. We'll build secure session state machines with lifecycle management, implement forward secrecy through key rotation, and add encrypted channel communication with session persistence.

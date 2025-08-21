@@ -1,17 +1,6 @@
-//! protocol module
+//! BitChat protocol implementation
+//! 
+//! This module contains the core protocol types and binary serialization
+//! logic for BitChat messages.
 
-pub mod constants;
-pub mod types;
-pub mod error;
-pub mod binary;
-pub mod utils;
-
-// Re-export commonly used types
-pub use constants::*;
-pub use types::*;
-pub use error::{ProtocolError, ProtocolResult};
-pub use binary::BinaryProtocol;
-pub use utils::PacketUtils;
-
-#[cfg(test)]
-pub mod tests;
+// Module implementations to be added in Week 1

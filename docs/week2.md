@@ -1,5 +1,15 @@
 # Week 2 Updated: Transport Layer & Network Management
 
+## ⚠️ IMPORTANT: Updated Implementation Notes
+
+**Before starting this week, please review `/docs/COMPILATION_FIXES.md` for critical dependency and API updates.**
+
+**Key fixes for Week 2:**
+- Add noise protocol dependencies: `snow = "0.10.0"`, `chacha20poly1305 = "0.10.1"`
+- Use proper Noise protocol initialization: `let params: NoiseParams = "Noise_XX_25519_ChaChaPoly_SHA256".parse()?;`
+- Add async/await support with `tokio` and `async-trait`
+- All transport operations must be async
+
 ## Overview
 
 Week 2 focuses on building the network transport layer and mesh management components that enable BitChat to communicate across different network mediums with enhanced scalability and security features. This updated version includes Kademlia DHT for O(log n) routing, eclipse attack mitigation with redundant paths, and PoW identity generation for sybil resistance.

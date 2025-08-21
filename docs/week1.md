@@ -1,5 +1,15 @@
 # Week 1: Cryptographic Foundations & BitCraps Gaming Protocol Implementation
 
+## ⚠️ IMPORTANT: Updated Implementation Notes
+
+**Before starting this week, please review `/docs/COMPILATION_FIXES.md` for critical dependency and API updates.**
+
+**Key fixes for Week 1:**
+- Use updated dependency versions specified in COMPILATION_FIXES.md
+- Gaming packet constants have been corrected for proper integration
+- Binary serialization uses serde derive macros for simplicity
+- Error handling must use `Error::Unknown` instead of `Error::Other`
+
 ## Overview
 
 This week focuses on implementing the core cryptographic foundations and binary protocol layer that forms the backbone of BitChat, enhanced with BitCraps gaming primitives. Based on analysis of the Swift implementation, we'll create a Rust equivalent that maintains 100% protocol compatibility while leveraging Rust's safety and performance characteristics, extended to support decentralized gaming.
@@ -50,12 +60,12 @@ pub const PACKET_TYPE_PONG: u8 = 0x07;
 // Gaming packet types for BitCraps
 pub const PACKET_TYPE_GAME_CREATE: u8 = 0x10;
 pub const PACKET_TYPE_GAME_JOIN: u8 = 0x11;
-pub const PACKET_TYPE_GAME_BET: u8 = 0x12;
-pub const PACKET_TYPE_GAME_ROLL_COMMIT: u8 = 0x13;
-pub const PACKET_TYPE_GAME_ROLL_REVEAL: u8 = 0x14;
-pub const PACKET_TYPE_GAME_RESULT: u8 = 0x15;
-pub const PACKET_TYPE_CRAP_TOKEN_TRANSFER: u8 = 0x16;
-pub const PACKET_TYPE_GAME_STATE_SYNC: u8 = 0x17;
+pub const PACKET_TYPE_GAME_STATE: u8 = 0x12;
+pub const PACKET_TYPE_DICE_ROLL: u8 = 0x13;
+pub const PACKET_TYPE_BET_PLACE: u8 = 0x14;
+pub const PACKET_TYPE_BET_RESOLVE: u8 = 0x15;
+pub const PACKET_TYPE_TOKEN_TRANSFER: u8 = 0x16;
+pub const PACKET_TYPE_FILE_TRANSFER: u8 = 0x17;
 
 // Flag bit positions
 pub const FLAG_RECIPIENT_PRESENT: u8 = 0x01;    // Bit 0
@@ -3787,9 +3797,21 @@ src/
 ### Dependencies to Add to Cargo.toml
 ```toml
 [dependencies]
+# Core error handling
+thiserror = "2.0.16"
+
+# Serialization
+serde = { version = "1.0.219", features = ["derive"] }
+bytes = "1.10.1"
+byteorder = "1.5.0"
+hex = "0.4.3"
+
 # Cryptography
-snow = "0.9"                    # Noise Protocol implementation
-curve25519-dalek = "4.0"       # Curve25519 operations
+rand = "0.9.2"
+sha2 = "0.10.9"
+ed25519-dalek = "2.2.0"
+x25519-dalek = "2.0.1"
+curve25519-dalek = "4.1.3"
 ed25519-dalek = "2.0"          # Ed25519 signing
 rand = "0.8"                   # Random number generation
 sha2 = "0.10"                  # SHA-256 hashing

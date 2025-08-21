@@ -1,5 +1,16 @@
 # Week 6: Testing, Optimization & Deployment
 
+## ⚠️ IMPORTANT: Updated Implementation Notes
+
+**Before starting this week, please review `/docs/COMPILATION_FIXES.md` for critical dependency and API updates.**
+
+**Key fixes for Week 6:**
+- Add test dependencies in `[dev-dependencies]`: `criterion = "0.7.0"`, `proptest = "1.7.0"`, etc.
+- Use `BenchmarkId` for parameterized benchmarks in criterion
+- Set up proper async test runtime with `#[tokio::test]`
+- Use `mockall` with `#[automock]` for async traits
+- Add proper test setup and teardown patterns
+
 ## Overview
 Comprehensive testing, performance optimization, and production deployment preparation for the BitChat P2P messaging system, including specialized gaming fairness testing and economic simulations for BitCraps casino operations.
 
