@@ -12,8 +12,7 @@ use super::efficient_game_state::{CompactGameState, StateSnapshot, VarInt};
 use super::efficient_bet_resolution::{EfficientBetResolver, PayoutLookupTable};
 use super::efficient_consensus::{EfficientDiceConsensus, EntropyAggregator, MerkleTree, ConsensusConfig};
 use super::efficient_history::{EfficientGameHistory, HistoryConfig};
-use super::efficient_sync::{EfficientStateSync, SyncConfig};
-use super::{BetType, CrapTokens, DiceRoll, PeerId, GameId};
+use super::{BetType, CrapTokens, DiceRoll};
 
 /// Comprehensive benchmark suite for BitCraps optimizations
 pub struct BitCrapsBenchmarks;
@@ -649,17 +648,17 @@ impl BitCrapsBenchmarks {
         
         // Warmup
         for _ in 0..config.warmup_iterations {
-            let tree = MerkleTree::new(&leaves[..config.small_dataset]);
-            let _proof = tree.generate_proof(0);
+            let tree = MerkleTree::new(&leaves[..config.small_dataset]).unwrap();
+            let _proof = tree.generate_proof(0).unwrap();
         }
         
         // Benchmark merkle tree creation and proof generation
         for _ in 0..config.iterations {
             let start = Instant::now();
             
-            let tree = black_box(MerkleTree::new(&leaves));
+            let tree = black_box(MerkleTree::new(&leaves).unwrap());
             let _root = black_box(tree.root());
-            let _proof = black_box(tree.generate_proof(leaves.len() / 2));
+            let _proof = black_box(tree.generate_proof(leaves.len() / 2).unwrap());
             
             let duration = start.elapsed();
             times.push(duration);

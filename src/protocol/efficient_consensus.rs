@@ -4,11 +4,10 @@
 //! using merkle trees for commit-reveal, XOR folding for entropy combination,
 //! and cached consensus rounds for maximum efficiency.
 
-use std::collections::{HashMap, VecDeque, BTreeMap};
-use std::sync::{Arc, RwLock, Mutex};
+use std::collections::{HashMap, BTreeMap};
+use std::sync::{Arc, RwLock};
 use sha2::{Sha256, Digest};
 use serde::{Serialize, Deserialize};
-use once_cell::sync::Lazy;
 
 use super::{PeerId, GameId, DiceRoll, Hash256};
 use crate::error::{Error, Result};
@@ -135,6 +134,7 @@ pub struct ConsensusMetrics {
 }
 
 /// Configuration for consensus optimization
+#[derive(Debug, Clone)]
 pub struct ConsensusConfig {
     /// Maximum number of active rounds to keep in memory
     pub max_active_rounds: usize,
@@ -166,12 +166,12 @@ impl Default for ConsensusConfig {
 
 impl MerkleTree {
     /// Create a new merkle tree from leaf hashes
-    pub fn new(leaves: &[Hash256]) -> Self {
+    pub fn new(leaves: &[Hash256]) -> crate::error::Result<Self> {
         if leaves.is_empty() {
-            return Self {
+            return Ok(Self {
                 nodes: vec![[0u8; 32]],
                 leaf_count: 0,
-            };
+            });
         }
         
         let leaf_count = leaves.len();
@@ -222,7 +222,7 @@ impl MerkleTree {
             level_size = next_level_size;
         }
         
-        Self { nodes, leaf_count }
+        Ok(Self { nodes, leaf_count })
     }
     
     /// Get the merkle root
@@ -235,9 +235,9 @@ impl MerkleTree {
     }
     
     /// Generate merkle proof for a specific leaf
-    pub fn generate_proof(&self, leaf_index: usize) -> Option<MerkleProof> {
+    pub fn generate_proof(&self, leaf_index: usize) -> crate::error::Result<MerkleProof> {
         if leaf_index >= self.leaf_count {
-            return None;
+            return Err(crate::error::Error::InvalidData(format!("Leaf index {} out of bounds", leaf_index)));
         }
         
         let mut path = Vec::new();
@@ -278,7 +278,7 @@ impl MerkleTree {
             level_size = (level_size + 1) / 2;
         }
         
-        Some(MerkleProof {
+        Ok(MerkleProof {
             path,
             directions,
             leaf_index,
@@ -386,7 +386,12 @@ impl EntropyAggregator {
     /// Get cache statistics
     pub fn cache_stats(&self) -> (usize, f64) {
         // Return cache size and estimated hit rate
-        (self.xor_cache.len(), 0.85) // Placeholder hit rate
+        let cache_size = if let Ok(cache) = self.xor_cache.read() {
+            cache.len()
+        } else {
+            0
+        };
+        (cache_size, 0.85) // Placeholder hit rate
     }
 }
 
@@ -466,14 +471,15 @@ impl CachedConsensusRound {
         
         // Create merkle tree from all commitments
         let commitment_hashes: Vec<Hash256> = self.commitments.iter().map(|(_, c)| *c).collect();
-        let tree = MerkleTree::new(&commitment_hashes);
+        let tree = MerkleTree::new(&commitment_hashes)?;
         
         // Generate proof for first commitment (as example)
-        if let Some(proof) = tree.generate_proof(0) {
-            self.validity_proof = Some(proof.clone());
-            Ok(proof)
-        } else {
-            Err(Error::ValidationError("Failed to generate validity proof".to_string()))
+        match tree.generate_proof(0) {
+            Ok(proof) => {
+                self.validity_proof = Some(proof.clone());
+                Ok(proof)
+            },
+            Err(_) => Err(Error::ValidationError("Failed to generate validity proof".to_string()))
         }
     }
     
@@ -634,7 +640,7 @@ impl EfficientDiceConsensus {
             .ok_or_else(|| Error::ValidationError("Round not found".to_string()))?;
         
         let commitment_hashes: Vec<Hash256> = round.commitments.iter().map(|(_, c)| *c).collect();
-        let tree = Arc::new(MerkleTree::new(&commitment_hashes));
+        let tree = Arc::new(MerkleTree::new(&commitment_hashes)?);
         let root = tree.root();
         
         // Cache the tree

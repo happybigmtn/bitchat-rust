@@ -9,9 +9,7 @@
 //! - Huffman coding for frequent patterns
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
-use bytes::{Buf, BufMut, Bytes, BytesMut};
-use serde::{Serialize, Deserialize};
+use bytes::{BufMut, BytesMut};
 
 use crate::error::{Error, Result};
 use super::{BetType, CrapTokens, DiceRoll, PeerId, GameId};

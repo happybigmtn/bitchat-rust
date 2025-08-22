@@ -4,7 +4,7 @@
 //! for efficient state verification, bloom filters for difference detection, and
 //! binary diff algorithms for minimal data transfer.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Serialize, Deserialize};
@@ -114,7 +114,7 @@ pub struct StateMerkleTree {
 }
 
 /// Node in the merkle tree
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MerkleNode {
     /// Hash value for this node
     pub hash: Hash256,
@@ -130,7 +130,7 @@ pub struct MerkleNode {
 }
 
 /// Metadata for merkle tree nodes
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeMetadata {
     /// Number of games in subtree
     pub game_count: u32,
@@ -445,7 +445,7 @@ impl StateMerkleTree {
                     None
                 };
                 
-                let parent_node = self.create_parent_node(left_child, right_child, current_level + 1);
+                let parent_node = self.create_parent_node(left_child, right_child, (current_level + 1) as u8);
                 self.levels[next_level].push(parent_node);
                 
                 i += 2;
@@ -632,17 +632,17 @@ impl BinaryDiffEngine {
         let operations = self.myers_diff(source, target)?;
         
         let diff = BinaryDiff {
-            operations,
+            operations: operations.clone(),
             target_checksum: target_hash,
             original_size: target.len() as u32,
             diff_size: 0, // Would calculate actual diff size
             compression_ratio: if target.len() > 0 {
                 operations.iter().map(|op| match op {
-                    DiffOperation::Copy { length, .. } => 8, // Size of copy operation
-                    DiffOperation::Insert { data } => 4 + data.len(),
-                    DiffOperation::Skip { length } => 4,
-                    DiffOperation::Delete { length, .. } => 8,
-                }).sum::<usize>() as f64 / target.len() as f64
+                    DiffOperation::Copy { length, .. } => 8 + *length as usize, // Operation size + data
+                    DiffOperation::Insert { data } => 4 + data.len(), // Operation size + data
+                    DiffOperation::Skip { length } => 4 + *length as usize, // Operation size + skipped
+                    DiffOperation::Delete { length, .. } => 8 + *length, // Operation size + deleted
+                }).sum::<usize>() as f32 / target.len() as f32
             } else {
                 1.0
             }
@@ -676,6 +676,10 @@ impl BinaryDiffEngine {
                 DiffOperation::Skip { length } => {
                     // Skip bytes in target (used for optimization)
                     result.resize(result.len() + *length as usize, 0);
+                },
+                DiffOperation::Delete { offset, length } => {
+                    // Skip bytes in source, don't add to result
+                    source_pos = (*offset as usize).saturating_add(*length);
                 },
             }
         }
@@ -743,7 +747,7 @@ impl BinaryDiffEngine {
                 // Need to delete from source
                 operations.push(DiffOperation::Delete {
                     offset: i as u32,
-                    length: (n - i) as u32,
+                    length: n - i,
                 });
                 i = n;
             }
@@ -1169,7 +1173,7 @@ impl EfficientStateSync {
                 (self.metrics.average_sync_time_ms * (total_completed - 1.0) + stats.duration_ms as f64) / total_completed;
             
             self.metrics.average_compression_ratio =
-                (self.metrics.average_compression_ratio * (total_completed - 1.0) + stats.compression_ratio) / total_completed as f32;
+                ((self.metrics.average_compression_ratio as f64 * (total_completed - 1.0) + stats.compression_ratio as f64) / total_completed) as f32;
         }
     }
     

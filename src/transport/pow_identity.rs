@@ -2,11 +2,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::collections::HashMap;
 use sha2::{Sha256, Digest};
 use serde::{Serialize, Deserialize};
-use rand::RngCore;
 use crate::protocol::PeerId;
 
 /// Standalone Proof of Work for NodeId validation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ProofOfWork {
     pub nonce: u64,
     pub timestamp: u64, 

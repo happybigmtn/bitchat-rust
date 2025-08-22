@@ -15,8 +15,7 @@ use clap::{Parser, Subcommand};
 use crossterm::event::{self, Event};
 use ratatui::Terminal;
 use dirs;
-use crate::protocol::{BetType, CrapTokens, DiceRoll};
-use crate::protocol::craps::GamePhase;
+use crate::protocol::BetType;
 
 // Add missing NetworkManager
 pub struct NetworkManager;

@@ -72,6 +72,7 @@ struct PacketFragment {
 }
 
 /// Memory pool for efficient buffer management
+#[derive(Debug)]
 struct MemoryPool {
     /// Available buffers
     buffers: Arc<Mutex<Vec<BytesMut>>>,
@@ -84,7 +85,7 @@ struct MemoryPool {
 }
 
 /// Memory pool statistics
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct PoolStats {
     total_requests: u64,
     cache_hits: u64,
@@ -93,6 +94,7 @@ struct PoolStats {
 }
 
 /// Zero-copy fragment buffer with automatic cleanup
+#[derive(Debug)]
 struct FragmentBuffer {
     /// Fragment data using zero-copy Bytes
     fragments: HashMap<u16, PacketFragment>,
@@ -105,6 +107,7 @@ struct FragmentBuffer {
 }
 
 /// Efficient fragmentation manager
+#[derive(Debug)]
 struct FragmentationManager {
     /// Memory pool for buffers
     memory_pool: MemoryPool,
@@ -454,12 +457,12 @@ impl BluetoothTransport {
             // Convert to zero-copy Bytes for efficient fragmentation
             let data_bytes = Bytes::from(data);
             
-            // Get TX characteristic
-            let tx_char = connection.tx_char.as_ref()
+            // Get TX characteristic (clone to avoid borrow conflicts)
+            let tx_char = connection.tx_char.clone()
                 .ok_or("TX characteristic not available")?;
             
             // Use zero-copy fragmentation
-            self.send_fragmented_zero_copy(connection, tx_char, data_bytes, peer_id).await?;
+            self.send_fragmented_zero_copy(connection, &tx_char, data_bytes, peer_id).await?;
             
             // Update last activity
             connection.last_activity = Instant::now();
@@ -547,14 +550,15 @@ impl BluetoothTransport {
                     
                     log::debug!("Sent fragment {}/{} ({} bytes) to peer {:?}", 
                               fragment_index + 1, total_fragments, buffer.len(), peer_id);
+                    
+                    // Return buffer to pool after successful write
+                    self.global_memory_pool.return_buffer(buffer).await;
                 } else {
+                    let buffer_len = buffer.len();
                     self.global_memory_pool.return_buffer(buffer).await;
                     return Err(format!("Fragment {} size {} exceeds MTU limit {}", 
-                                      fragment_index, buffer.len(), BLE_MTU_SIZE).into());
+                                      fragment_index, buffer_len, BLE_MTU_SIZE).into());
                 }
-                
-                // Return buffer to pool
-                self.global_memory_pool.return_buffer(buffer).await;
                 
                 // Small delay between fragments to prevent overwhelming
                 if !is_last {
@@ -986,7 +990,7 @@ impl FragmentationManager {
                 // Find the last fragment to determine total count
                 let last_sequence = buffer.fragments.keys().max().copied().unwrap_or(0);
                 let expected_count = last_sequence + 1;
-                buffer.fragments.len() >= expected_count
+                buffer.fragments.len() >= expected_count as usize
             }
         };
         

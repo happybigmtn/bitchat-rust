@@ -8,7 +8,6 @@ use crate::error::{Error, Result};
 use super::craps::{CrapsGame, GamePhase};
 use super::{Bet, BetType};
 use super::consensus::{ConsensusEngine, ConsensusConfig, GameOperation, GameProposal, DisputeClaim};
-use crate::TREASURY_ADDRESS;
 
 /// Gaming runtime configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

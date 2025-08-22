@@ -16,8 +16,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
-use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce, AeadCore, AeadInPlace, KeyInit};
-use rand::{RngCore, CryptoRng};
+use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce, AeadInPlace, KeyInit};
 
 use crate::protocol::PeerId;
 use crate::crypto::BitchatKeypair;
@@ -250,7 +249,7 @@ impl BitchatSession {
     /// Generate session ID using cryptographic randomness
     fn generate_session_id() -> SessionId {
         let mut session_id = [0u8; 16];
-        use rand::{RngCore, CryptoRng};
+        use rand::RngCore;
         let mut rng = rand::thread_rng();
         rng.fill_bytes(&mut session_id);
         session_id

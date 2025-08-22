@@ -5,13 +5,12 @@
 //! encoding for sequential states to minimize memory usage and maximize performance.
 
 use std::collections::{VecDeque, HashMap, BTreeMap};
-use std::sync::Arc;
 use std::mem;
 use serde::{Serialize, Deserialize};
 use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 
-use super::{GameId, PeerId, DiceRoll, Hash256};
-use super::efficient_game_state::{CompactGameState, StateDelta};
+use super::{GameId, PeerId};
+use super::efficient_game_state::CompactGameState;
 use crate::error::{Error, Result};
 
 /// Configuration for history storage optimization
@@ -389,19 +388,19 @@ impl<'a, T> Iterator for RingBufferIterator<'a, T> {
 
 impl BloomFilter {
     /// Create new bloom filter
-    fn new(expected_items: usize, false_positive_rate: f64) -> Self {
+    pub fn new(expected_items: usize, false_positive_rate: f64) -> Self {
         let size = Self::optimal_size(expected_items, false_positive_rate);
         let hash_count = Self::optimal_hash_count(size, expected_items);
         
         Self {
-            bits: vec![0; (size + 7) / 8],
+            bits: vec![0; ((size + 7) / 8) as usize],
             hash_count,
             size,
         }
     }
     
     /// Add item to bloom filter
-    fn add(&mut self, item: &[u8]) {
+    pub fn add(&mut self, item: &[u8]) {
         for i in 0..self.hash_count {
             let hash = self.hash(item, i);
             let bit_index = (hash as usize) % (self.size as usize);

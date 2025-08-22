@@ -18,7 +18,7 @@ pub use casino::*;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect, Alignment},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Gauge, Clear},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     Terminal, Frame,
@@ -28,8 +28,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::io;
 use std::time::{Duration, Instant};
-use crate::protocol::{PeerId, GameId, DiceRoll, BetType, CrapTokens};
-use crate::protocol::craps::{GamePhase, CrapsGame};
+use crate::protocol::DiceRoll;
 
 /// Main TUI application state for BitCraps casino
 pub struct TuiApp {

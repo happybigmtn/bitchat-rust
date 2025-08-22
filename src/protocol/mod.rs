@@ -64,7 +64,7 @@ pub type GameId = [u8; 16];
 /// Helper function to create a new GameId using cryptographic randomness
 pub fn new_game_id() -> GameId {
     let mut game_id = [0u8; 16];
-    use rand::{RngCore, CryptoRng};
+    use rand::RngCore;
     let mut rng = rand::thread_rng();
     rng.fill_bytes(&mut game_id);
     game_id

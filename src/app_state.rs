@@ -94,7 +94,7 @@ impl BitCrapsApp {
         
         // Step 7: Initialize game runtime with treasury
         println!("🎰 Starting game runtime with treasury participant...");
-        let (game_runtime, _game_sender) = GameRuntime::new(Default::default());
+        let (game_runtime, _game_sender) = GameRuntime::new(Default::default(), [0; 32]);
         let game_runtime = Arc::new(game_runtime);
         
         // Step 8: Setup proof-of-relay consensus

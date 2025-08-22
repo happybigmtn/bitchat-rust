@@ -5,9 +5,8 @@
 //! cached resolution results for maximum efficiency.
 
 use std::collections::HashMap;
-use std::sync::{LazyLock, RwLock};
+use std::sync::RwLock;
 use once_cell::sync::Lazy;
-use serde::{Serialize, Deserialize};
 
 use super::{PeerId, BetType, CrapTokens, DiceRoll};
 use super::efficient_game_state::CompactGameState;
@@ -52,7 +51,7 @@ pub struct PayoutLookupTable {
 /// Resolution type for fast binary decisions
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum ResolutionType {
+pub enum ResolutionType {
     NoResolution = 0, // Bet continues
     Win = 1,
     Lose = 2,
@@ -105,7 +104,7 @@ struct ResolutionCacheKey {
 
 impl PayoutLookupTable {
     /// Initialize the complete payout lookup table
-    fn new() -> Self {
+    pub fn new() -> Self {
         let mut table = Self {
             payout_multipliers: [[100; 13]; 64], // Default 1:1 payout (100%)
             resolution_type: [[ResolutionType::NoResolution; 13]; 64],
@@ -420,6 +419,13 @@ impl ResolutionCache {
         }
     }
     
+    /// Clear all cached entries
+    pub fn clear(&mut self) {
+        self.cache.clear();
+        self.hits = 0;
+        self.misses = 0;
+    }
+    
     /// Store resolution result in cache
     pub fn insert(&mut self, key: ResolutionCacheKey, result: Vec<BetResolution>) {
         self.cache.put(key, result);
@@ -459,7 +465,7 @@ impl EfficientBetResolver {
         let cache_key = self.create_cache_key(state, dice_roll, active_bets);
         
         // Check resolution cache first (thread-safe)
-        if let Ok(cache) = RESOLUTION_CACHE.read() {
+        if let Ok(mut cache) = RESOLUTION_CACHE.write() {
             if let Some(cached_result) = cache.get(&cache_key) {
                 self.cache_hits += 1;
                 return Ok(cached_result.clone());

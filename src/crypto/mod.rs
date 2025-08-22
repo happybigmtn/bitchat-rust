@@ -16,7 +16,7 @@ use pbkdf2::pbkdf2_hmac;
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::{PeerId, GameId};
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 /// Ed25519 keypair for signing and identity
 #[derive(Debug, Clone)]
@@ -268,7 +268,7 @@ impl GameCrypto {
         
         // Add fresh cryptographic randomness
         let mut csprng_bytes = [0u8; 32];
-        use rand::{RngCore, CryptoRng};
+        use rand::RngCore;
         let mut rng = rand::thread_rng();
         rng.fill_bytes(&mut csprng_bytes);
         
@@ -356,7 +356,7 @@ impl GameCrypto {
     
     /// Generate cryptographically secure random bytes
     pub fn generate_random_bytes(length: usize) -> Vec<u8> {
-        use rand::{RngCore, CryptoRng};
+        use rand::RngCore;
         let mut rng = rand::thread_rng();
         let mut bytes = vec![0u8; length];
         rng.fill_bytes(&mut bytes);
@@ -365,7 +365,7 @@ impl GameCrypto {
     
     /// Generate a secure dice roll without external sources
     pub fn generate_secure_dice_roll() -> (u8, u8) {
-        use rand::{RngCore, CryptoRng};
+        use rand::RngCore;
         let mut rng = rand::thread_rng();
         let mut bytes = [0u8; 16];
         rng.fill_bytes(&mut bytes);
@@ -461,7 +461,7 @@ impl SecureRng {
         }
         
         // Add fresh cryptographic randomness
-        use rand::{RngCore, CryptoRng};
+        use rand::RngCore;
         let mut rng = rand::thread_rng();
         let mut csprng_bytes = [0u8; 32];
         rng.fill_bytes(&mut csprng_bytes);

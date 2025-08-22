@@ -8,12 +8,10 @@
 //! - Zero-copy operations where possible
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
 use bytes::{Buf, BufMut, BytesMut};
-use serde::{Serialize, Deserialize};
 
 use crate::error::{Error, Result};
-use super::{PeerId, GameId, BetType, CrapTokens, DiceRoll};
+use super::{PeerId, GameId, BetType};
 use super::craps::{GamePhase, CrapsGame};
 
 /// Bit flags for game state

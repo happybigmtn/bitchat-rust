@@ -8,7 +8,6 @@ use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
 use crate::protocol::PeerId;
 use bitvec::prelude::*;
-use blake3::Hasher as Blake3Hasher;
 use crate::transport::pow_identity::ProofOfWork;
 
 /// Kademlia node ID - 256-bit identifier with cryptographic validation
@@ -19,7 +18,7 @@ use crate::transport::pow_identity::ProofOfWork;
 /// This creates a natural "neighborhood" structure in the network.
 /// 
 /// Security Enhancement: NodeIDs now require cryptographic proof to prevent poisoning
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId {
     id: [u8; 32],
     proof_of_work: Option<ProofOfWork>,
@@ -121,7 +120,7 @@ pub struct Contact {
     pub id: NodeId,
     pub peer_id: PeerId,
     pub address: SocketAddr,
-    #[serde(skip)]
+    #[serde(skip, default = "Instant::now")]
     pub last_seen: Instant,
     #[serde(skip)]
     pub rtt: Option<Duration>, // Round-trip time
@@ -129,6 +128,20 @@ pub struct Contact {
     pub reputation_score: f32,  // Anti-spam reputation (0.0-1.0)
     #[serde(skip)]
     pub validation_attempts: u32, // Track validation failures
+}
+
+impl Default for Contact {
+    fn default() -> Self {
+        Self {
+            id: NodeId::new_legacy([0; 32]),
+            peer_id: [0; 32],
+            address: "0.0.0.0:0".parse().unwrap(),
+            last_seen: Instant::now(),
+            rtt: None,
+            reputation_score: 0.5, // Neutral score
+            validation_attempts: 0,
+        }
+    }
 }
 
 /// K-bucket storing up to K contacts at a specific distance
@@ -366,7 +379,7 @@ impl KademliaNode {
         let (event_sender, _) = mpsc::unbounded_channel();
         
         let node = Self {
-            local_id,
+            local_id: local_id.clone(),
             local_address,
             routing_table: Arc::new(RoutingTable::new(local_id, k, alpha)),
             storage: Arc::new(RwLock::new(HashMap::new())),
@@ -402,7 +415,7 @@ impl KademliaNode {
         // Add ourselves to closest if we're close
         let self_distance = self.local_id.distance(&target);
         let self_contact = Contact {
-            id: self.local_id,
+            id: self.local_id.clone(),
             peer_id: [0u8; 32], // Would be actual peer ID
             address: self.local_address,
             last_seen: Instant::now(),
@@ -421,8 +434,9 @@ impl KademliaNode {
             
             // Query α nodes in parallel
             for contact in to_query.drain(..).take(self.routing_table.alpha) {
+                let contact_clone = contact.clone();
                 if queried.insert(contact.id) {
-                    futures.push(self.send_find_node(contact.clone(), target));
+                    futures.push(self.send_find_node(contact_clone, target.clone()));
                 }
             }
             
@@ -484,10 +498,10 @@ impl KademliaNode {
         // Calculate key ID
         let mut hasher = Sha256::new();
         hasher.update(&key);
-        let key_id = NodeId::new(hasher.finalize().into());
+        let key_id = NodeId::new_legacy(hasher.finalize().into());
         
         // Find K closest nodes
-        let nodes = self.lookup_node(key_id).await;
+        let nodes = self.lookup_node(key_id.clone()).await;
         
         let mut success_count = 0;
         let mut futures = Vec::new();
@@ -552,7 +566,7 @@ impl KademliaNode {
         // Calculate key ID and search network
         let mut hasher = Sha256::new();
         hasher.update(&key);
-        let key_id = NodeId::new(hasher.finalize().into());
+        let key_id = NodeId::new_legacy(hasher.finalize().into());
         
         // Use iterative lookup for FIND_VALUE
         match self.iterative_find_value(key_id, key.clone()).await {
@@ -581,8 +595,9 @@ impl KademliaNode {
             
             // Query α nodes in parallel
             for contact in to_query.drain(..).take(self.routing_table.alpha) {
+                let contact_clone = contact.clone();
                 if queried.insert(contact.id) {
-                    futures.push(self.send_find_value(contact.clone(), key.clone()));
+                    futures.push(self.send_find_value(contact_clone, key.clone()));
                 }
             }
             
@@ -701,7 +716,7 @@ impl KademliaNode {
     /// Create contact info for ourselves
     fn create_self_contact(&self) -> Contact {
         Contact {
-            id: self.local_id,
+            id: self.local_id.clone(),
             peer_id: [0u8; 32], // Would be actual peer ID
             address: self.local_address,
             last_seen: Instant::now(),
@@ -717,7 +732,7 @@ impl KademliaNode {
         let routing_table = self.routing_table.clone();
         let storage = self.storage.clone();
         let pending_queries = self.pending_queries.clone();
-        let local_id = self.local_id;
+        let local_id = self.local_id.clone();
         let local_address = self.local_address;
         let event_sender = self.event_sender.clone();
         
@@ -747,7 +762,7 @@ impl KademliaNode {
                                 message,
                                 query_id,
                                 from,
-                                local_id,
+                                local_id.clone(),
                                 local_address,
                                 &routing_table,
                                 &storage,
@@ -825,7 +840,7 @@ impl KademliaNode {
                         storage.write().await.remove(&key);
                         let mut hasher = Sha256::new();
                         hasher.update(&key);
-                        let key_id = NodeId::new(hasher.finalize().into());
+                        let key_id = NodeId::new_legacy(hasher.finalize().into());
                         let nodes = routing_table.find_closest(&key_id, routing_table.k).await;
                         FindValueResult::Nodes(nodes)
                     }
@@ -833,7 +848,7 @@ impl KademliaNode {
                     // Value not found, return closest nodes
                     let mut hasher = Sha256::new();
                     hasher.update(&key);
-                    let key_id = NodeId::new(hasher.finalize().into());
+                    let key_id = NodeId::new_legacy(hasher.finalize().into());
                     let nodes = routing_table.find_closest(&key_id, routing_table.k).await;
                     FindValueResult::Nodes(nodes)
                 };
@@ -965,7 +980,7 @@ impl KademliaNode {
         
         // Perform lookup for our own ID to populate routing table
         tokio::time::sleep(Duration::from_millis(500)).await; // Wait for pings to complete
-        self.lookup_node(self.local_id).await;
+        self.lookup_node(self.local_id.clone()).await;
         
         Ok(())
     }
@@ -989,7 +1004,7 @@ impl KademliaNode {
         }
         
         NodeStats {
-            node_id: self.local_id,
+            node_id: self.local_id.clone(),
             local_address: self.local_address,
             stored_values: storage.len(),
             routing_table_size: total_contacts,

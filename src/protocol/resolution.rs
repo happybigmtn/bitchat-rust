@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use super::{PeerId, BetType, Bet, CrapTokens, DiceRoll};
-use crate::protocol::bet_types::{GamePhase, BetResolution};
+use crate::protocol::bet_types::BetResolution;
 use crate::protocol::game_logic::CrapsGame;
 
 /// Trait for resolving bets based on dice rolls

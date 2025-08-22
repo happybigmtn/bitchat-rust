@@ -503,6 +503,7 @@ impl BluetoothDiscovery {
         let mut registry = self.peer_registry.write().await;
         let mut discovered_peers = self.discovered_peers.write().await;
         let now = Instant::now();
+        let peer_count = message.peer_list.len();
         
         for announcement in message.peer_list {
             // Skip our own peer ID
@@ -545,7 +546,7 @@ impl BluetoothDiscovery {
         
         self.discovery_events.send(DiscoveryEvent::PeerExchangeReceived {
             from: message.sender_id,
-            peer_count: message.peer_list.len(),
+            peer_count,
         }).ok();
         
         Ok(())

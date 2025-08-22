@@ -20,17 +20,17 @@
 //! - Cryptographic signatures for all state changes
 //! - Timeout-based progression to prevent stalling
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
-use rand::{RngCore, CryptoRng};
+use rand::RngCore;
 use ed25519_dalek::{SigningKey, VerifyingKey, Signature as Ed25519Signature, Signer, Verifier};
 use lru::LruCache;
 use std::num::NonZeroUsize;
 
 use crate::error::{Error, Result};
-use super::{PeerId, GameId, CrapTokens, DiceRoll, BetType, Bet, Hash256, Signature};
+use super::{PeerId, GameId, CrapTokens, DiceRoll, Bet, Hash256, Signature};
 use super::craps::{CrapsGame, GamePhase, BetResolution};
 
 /// Consensus constants
@@ -901,7 +901,7 @@ impl ConsensusEngine {
             dice_roll,
             entropy_proof: reveals.values()
                 .map(|r| self.create_randomness_commitment(round_id, &r.nonce))
-                .collect::<Result<Vec<_>, _>>()?,
+                .collect::<std::result::Result<Vec<_>, crate::error::Error>>()?,
         };
 
         self.propose_operation(operation)?;

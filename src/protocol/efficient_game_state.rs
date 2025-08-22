@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::mem::size_of;
-use serde::{Serialize, Deserialize};
+use serde::{Serialize, Deserialize, Serializer, Deserializer};
 
 use super::{PeerId, GameId, BetType, DiceRoll};
 use crate::error::Result;
@@ -42,6 +42,7 @@ pub struct CompactGameState {
     pub special_state: [u16; 3],
     
     /// Dynamic data stored separately for copy-on-write efficiency
+    #[serde(serialize_with = "serialize_arc", deserialize_with = "deserialize_arc")]
     pub dynamic_data: Arc<DynamicGameData>,
 }
 
@@ -475,6 +476,23 @@ impl StateSnapshot {
         self.base_state.memory_usage().total_bytes + 
         self.deltas.len() * size_of::<StateDelta>()
     }
+}
+
+/// Custom serializer for Arc<DynamicGameData>
+fn serialize_arc<S>(data: &Arc<DynamicGameData>, serializer: S) -> std::result::Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    data.as_ref().serialize(serializer)
+}
+
+/// Custom deserializer for Arc<DynamicGameData>
+fn deserialize_arc<'de, D>(deserializer: D) -> std::result::Result<Arc<DynamicGameData>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let data = DynamicGameData::deserialize(deserializer)?;
+    Ok(Arc::new(data))
 }
 
 #[cfg(test)]

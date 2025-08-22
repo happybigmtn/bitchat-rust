@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 use bytes::{Bytes, BytesMut};

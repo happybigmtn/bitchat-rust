@@ -6,13 +6,12 @@
 use serde::{Serialize, Deserialize};
 use std::time::SystemTime;
 use crate::PeerId;
-use crate::protocol::{DiceRoll, BetType, CrapTokens};
+use crate::protocol::{DiceRoll, BetType};
 use crate::protocol::craps::GamePhase;
 use ratatui::text::{Span, Line};
 use ratatui::style::{Style, Color, Modifier};
-use ratatui::widgets::{List, ListItem, Block, Borders, StatefulWidget, ListState, Paragraph, Gauge};
+use ratatui::widgets::{List, ListItem, Block, Borders, Paragraph, Gauge};
 use ratatui::layout::{Rect, Layout, Direction, Constraint, Alignment};
-use ratatui::buffer::Buffer;
 use ratatui::Frame;
 
 // Add missing types
@@ -591,7 +590,7 @@ impl ProgressWidget {
         };
         
         let gauge = Gauge::default()
-            .block(Block::default().borders(Borders::ALL).title(&self.label))
+            .block(Block::default().borders(Borders::ALL).title(self.label.as_str()))
             .gauge_style(Style::default().fg(self.color))
             .percent((progress * 100.0) as u16)
             .label(format!("{}/{} ({:.1}%)", self.current, self.max, progress * 100.0));

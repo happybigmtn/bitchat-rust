@@ -122,7 +122,6 @@ impl CrapsGame {
     /// 4. Calculate exact payouts based on bet type and amount
     pub fn process_roll(&mut self, roll: DiceRoll) -> Vec<BetResolution> {
         // Import the resolution logic from the resolution module
-        use crate::protocol::resolution::BetResolver;
         
         let mut resolutions = Vec::new();
         let total = roll.total();
