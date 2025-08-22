@@ -254,7 +254,7 @@ impl GameCrypto {
         commitment == &computed_commitment
     }
     
-    /// Combine multiple sources of randomness for fair dice rolls
+    /// Combine multiple sources of randomness for fair dice rolls using cryptographic RNG
     pub fn combine_randomness(sources: &[[u8; 32]]) -> (u8, u8) {
         let mut combined = [0u8; 32];
         
@@ -265,23 +265,56 @@ impl GameCrypto {
             }
         }
         
+        // Add fresh cryptographic randomness
+        let mut csprng_bytes = [0u8; 32];
+        use rand::{RngCore, CryptoRng};
+        let mut rng = rand::thread_rng();
+        rng.fill_bytes(&mut csprng_bytes);
+        
+        // Combine with existing sources
+        for (i, byte) in csprng_bytes.iter().enumerate() {
+            combined[i] ^= byte;
+        }
+        
         // Hash the combined result for final randomness
         let mut hasher = Sha256::new();
-        hasher.update(b"BITCRAPS_DICE_ROLL");
+        hasher.update(b"BITCRAPS_DICE_ROLL_V2");
         hasher.update(&combined);
-        hasher.update(&SystemTime::now()
+        
+        // Use fallback timestamp if system time is unavailable
+        let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-            .to_be_bytes());
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
+            .as_nanos();
+        hasher.update(&timestamp.to_be_bytes());
         
         let hash = hasher.finalize();
         
-        // Convert to dice values (1-6)
-        let die1 = ((hash[0] % 6) + 1) as u8;
-        let die2 = ((hash[1] % 6) + 1) as u8;
+        // Convert to dice values (1-6) using unbiased method
+        let die1 = Self::hash_to_die_value(&hash[0..8]);
+        let die2 = Self::hash_to_die_value(&hash[8..16]);
         
         (die1, die2)
+    }
+    
+    /// Convert hash bytes to unbiased die value (1-6)
+    fn hash_to_die_value(bytes: &[u8]) -> u8 {
+        // Use rejection sampling to avoid modulo bias
+        let mut value = u64::from_le_bytes(bytes.try_into().unwrap_or([0u8; 8]));
+        
+        // Reject values that would cause bias (multiples of 6 near u64::MAX)
+        const MAX_VALID: u64 = u64::MAX - (u64::MAX % 6);
+        
+        while value >= MAX_VALID {
+            // If we hit a biased value, hash again to get new randomness
+            let mut hasher = Sha256::new();
+            hasher.update(b"BITCRAPS_REROLL");
+            hasher.update(&value.to_le_bytes());
+            let new_hash = hasher.finalize();
+            value = u64::from_le_bytes(new_hash[0..8].try_into().unwrap_or([0u8; 8]));
+        }
+        
+        ((value % 6) + 1) as u8
     }
     
     /// Generate session key for encrypted gaming
@@ -320,12 +353,26 @@ impl GameCrypto {
         hash
     }
     
-    /// Generate secure random bytes
+    /// Generate cryptographically secure random bytes
     pub fn generate_random_bytes(length: usize) -> Vec<u8> {
-        let mut rng = thread_rng();
+        use rand::{RngCore, CryptoRng};
+        let mut rng = rand::thread_rng();
         let mut bytes = vec![0u8; length];
         rng.fill_bytes(&mut bytes);
         bytes
+    }
+    
+    /// Generate a secure dice roll without external sources
+    pub fn generate_secure_dice_roll() -> (u8, u8) {
+        use rand::{RngCore, CryptoRng};
+        let mut rng = rand::thread_rng();
+        let mut bytes = [0u8; 16];
+        rng.fill_bytes(&mut bytes);
+        
+        let die1 = Self::hash_to_die_value(&bytes[0..8]);
+        let die2 = Self::hash_to_die_value(&bytes[8..16]);
+        
+        (die1, die2)
     }
     
     /// Create HMAC for message authentication
@@ -425,7 +472,7 @@ pub struct SecureRng {
 }
 
 impl SecureRng {
-    /// Create new secure RNG with seed from multiple sources
+    /// Create new secure RNG with seed from multiple sources plus cryptographic randomness
     pub fn new_from_sources(sources: &[[u8; 32]]) -> Self {
         let mut state = [0u8; 32];
         
@@ -436,15 +483,26 @@ impl SecureRng {
             }
         }
         
-        // Add timestamp entropy
+        // Add fresh cryptographic randomness
+        use rand::{RngCore, CryptoRng};
+        let mut rng = rand::thread_rng();
+        let mut csprng_bytes = [0u8; 32];
+        rng.fill_bytes(&mut csprng_bytes);
+        
+        for (i, byte) in csprng_bytes.iter().enumerate() {
+            state[i] ^= byte;
+        }
+        
+        // Add timestamp entropy with fallback
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_nanos();
         
         let mut hasher = Sha256::new();
         hasher.update(&state);
         hasher.update(&timestamp.to_be_bytes());
+        hasher.update(b"BITCRAPS_SECURE_RNG_V2");
         let final_state = hasher.finalize();
         state.copy_from_slice(&final_state);
         
@@ -476,11 +534,11 @@ impl SecureRng {
         output
     }
     
-    /// Generate dice roll
+    /// Generate dice roll using unbiased method
     pub fn roll_dice(&mut self) -> (u8, u8) {
-        let bytes = self.next_bytes(2);
-        let die1 = (bytes[0] % 6) + 1;
-        let die2 = (bytes[1] % 6) + 1;
+        let bytes = self.next_bytes(16);
+        let die1 = GameCrypto::hash_to_die_value(&bytes[0..8]);
+        let die2 = GameCrypto::hash_to_die_value(&bytes[8..16]);
         (die1, die2)
     }
 }

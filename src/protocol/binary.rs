@@ -254,7 +254,7 @@ impl BinarySerializable for CrapTokens {
         if buf.len() < 8 {
             return Err(Error::Serialization("Not enough data for CrapTokens".to_string()));
         }
-        Ok(CrapTokens::new(buf.get_u64()))
+        Ok(CrapTokens::new_unchecked(buf.get_u64()))
     }
     
     fn serialized_size(&self) -> usize {

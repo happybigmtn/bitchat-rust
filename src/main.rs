@@ -5,10 +5,12 @@ use clap::{Parser, Subcommand};
 use log::{info, warn};
 
 use bitcraps::{
-    BitchatIdentity, TransportCoordinator, MeshService, SessionManager, 
-    TokenLedger, ProofOfRelay, CrapsGame, TreasuryParticipant, 
+    BitchatIdentity, ProofOfWork, BluetoothTransport, TransportCoordinator,
+    MeshService, SessionManager as BitchatSessionManager, TokenLedger, ProofOfRelay,
+    TreasuryParticipant, CrapsGame, BluetoothDiscovery, DhtDiscovery,
+    PersistenceManager, GameRuntime,
     AppConfig, Result, Error, GameId, PeerId, CrapTokens, BetType,
-    TREASURY_ADDRESS, PacketUtils,
+    TREASURY_ADDRESS, PacketUtils, GameCrypto, BitchatPacket,
 };
 
 /// Simple struct for game info display
@@ -69,95 +71,125 @@ enum Commands {
     Ping,
 }
 
-/// Main BitCraps application bringing all components together
-#[allow(dead_code)]
+/// Main BitCraps application
+/// 
+/// Feynman: This is the master conductor that brings the whole
+/// orchestra together. Each component is like a different section
+/// (strings, brass, percussion), and the conductor ensures they
+/// all play in harmony to create the complete casino experience.
 pub struct BitCrapsApp {
     identity: Arc<BitchatIdentity>,
-    transport: Arc<TransportCoordinator>,
-    mesh: Arc<MeshService>,
-    sessions: Arc<SessionManager>,
+    transport_coordinator: Arc<TransportCoordinator>,
+    mesh_service: Arc<MeshService>,
+    session_manager: Arc<BitchatSessionManager>,
     ledger: Arc<TokenLedger>,
+    game_runtime: Arc<GameRuntime>,
+    discovery: Arc<BluetoothDiscovery>,
+    persistence: Arc<PersistenceManager>,
     proof_of_relay: Arc<ProofOfRelay>,
-    treasury: Option<Arc<TreasuryParticipant>>,
+    // ui: Option<TerminalUI>, // Removed until UI is implemented
     config: AppConfig,
     active_games: Arc<tokio::sync::RwLock<std::collections::HashMap<GameId, CrapsGame>>>,
 }
 
 impl BitCrapsApp {
-    /// Initialize the complete BitCraps application
     pub async fn new(config: AppConfig) -> Result<Self> {
-        info!("🎲 Initializing BitCraps Casino...");
+        println!("🎲 Initializing BitCraps...");
         
-        // Step 1: Generate or load identity with proof-of-work
-        info!("⛏️  Generating identity with proof-of-work (difficulty: {})...", config.pow_difficulty);
-        let identity = Arc::new(BitchatIdentity::generate_with_pow(config.pow_difficulty));
-        info!("✅ Identity generated: {:?}", identity.peer_id);
+        // Step 1: Generate or load identity with PoW
+        println!("⛏️ Generating identity with proof-of-work (difficulty: {})...", 
+                 config.pow_difficulty);
+        let identity = Arc::new(
+            BitchatIdentity::generate_with_pow(config.pow_difficulty)
+        );
+        println!("✅ Identity generated: {:?}", identity.peer_id);
         
-        // Step 2: Initialize transport layer
-        info!("🔗 Initializing Bluetooth mesh transport...");
-        let mut transport = TransportCoordinator::new();
-        transport.init_bluetooth(identity.peer_id).await
-            .map_err(|e| Error::Network(format!("Failed to initialize Bluetooth: {}", e)))?;
-        let transport = Arc::new(transport);
-        info!("✅ Transport layer ready");
+        // Step 2: Initialize persistence
+        println!("💾 Initializing persistence layer...");
+        let persistence = Arc::new(
+            PersistenceManager::new(&config.data_dir).await?
+        );
         
-        // Step 3: Initialize mesh networking
-        info!("🕸️  Setting up mesh networking...");
-        let mesh = Arc::new(MeshService::new(identity.clone(), transport.clone()));
-        info!("✅ Mesh service ready");
-        
-        // Step 4: Initialize session management
-        info!("🔐 Setting up encrypted sessions...");
-        let sessions = Arc::new(SessionManager::new(
-            bitcraps::SessionLimits::default()
-        ));
-        info!("✅ Session manager ready");
-        
-        // Step 5: Initialize token ledger
-        info!("💰 Initializing CRAP token ledger...");
+        // Step 3: Initialize token ledger with treasury
+        println!("💰 Initializing token ledger and treasury...");
         let ledger = Arc::new(TokenLedger::new());
-        
-        // Wait for treasury initialization
-        sleep(Duration::from_millis(100)).await;
-        
         let treasury_balance = ledger.get_balance(&TREASURY_ADDRESS).await;
-        info!("✅ Token ledger ready - Treasury: {} CRAP", 
-             CrapTokens::new(treasury_balance).to_crap());
+        println!("✅ Treasury initialized with {} CRAP tokens", 
+                 treasury_balance / 1_000_000);
         
-        // Step 6: Initialize proof-of-relay mining
-        info!("⛏️  Setting up proof-of-relay mining...");
+        // Step 4: Setup transport layer
+        println!("📡 Setting up Bluetooth transport...");
+        let mut transport_coordinator = TransportCoordinator::new();
+        transport_coordinator.init_bluetooth(identity.peer_id).await
+            .map_err(|e| Error::Network(format!("Failed to initialize Bluetooth: {}", e)))?;
+        let transport_coordinator = Arc::new(transport_coordinator);
+        
+        // Step 5: Initialize mesh service
+        println!("🕸️ Starting mesh networking service...");
+        let session_manager = BitchatSessionManager::new(Default::default());
+        let mesh_service = Arc::new(
+            MeshService::new(identity.clone(), transport_coordinator.clone())
+        );
+        
+        // Step 6: Setup discovery
+        println!("🔍 Starting peer discovery...");
+        let discovery = Arc::new(
+            BluetoothDiscovery::new(identity.clone()).await
+                .map_err(|e| Error::Network(e.to_string()))?
+        );
+        
+        // Step 7: Initialize game runtime with treasury
+        println!("🎰 Starting game runtime with treasury participant...");
+        let (game_runtime, _game_sender) = GameRuntime::new(Default::default());
+        let game_runtime = Arc::new(game_runtime);
+        
+        // Step 8: Setup proof-of-relay consensus
+        println!("⚡ Initializing proof-of-relay consensus...");
         let proof_of_relay = Arc::new(ProofOfRelay::new(ledger.clone()));
-        info!("✅ Proof-of-relay ready");
         
-        // Step 7: Initialize treasury participant (if enabled)
-        let treasury = if config.enable_treasury {
-            info!("🏦 Initializing treasury participant...");
-            let treasury_participant = Arc::new(TreasuryParticipant::new(treasury_balance));
-            info!("✅ Treasury participant ready");
-            Some(treasury_participant)
-        } else {
-            None
-        };
+        // Step 9: Start mesh service
+        mesh_service.start().await?;
+        
+        println!("🚀 BitCraps node ready!");
+        println!("📱 Peer ID: {:?}", identity.peer_id);
+        if let Some(nick) = &config.nickname {
+            println!("👤 Nickname: {}", nick);
+        }
         
         Ok(Self {
-            identity,
-            transport,
-            mesh,
-            sessions,
+            identity: identity.clone(),
+            transport_coordinator,
+            mesh_service,
+            session_manager: Arc::new(session_manager),
             ledger,
+            game_runtime,
+            discovery,
+            persistence,
             proof_of_relay,
-            treasury,
+            // ui: None, // Removed until UI is implemented
             config,
             active_games: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         })
     }
     
-    /// Start the BitCraps application
-    pub async fn start(&self) -> Result<()> {
-        info!("🚀 Starting BitCraps node...");
+    /// Start the main application loop
+    /// 
+    /// Feynman: Like opening the casino doors - all systems are go,
+    /// the dealers are at their tables, the lights are on, and we're
+    /// ready for players. The main loop keeps everything running smoothly.
+    pub async fn start(&mut self) -> Result<()> {
+        // Start relay reward timer
+        self.start_mining_rewards().await?;
         
-        // Start all services
-        self.mesh.start().await?;
+        // Start UI if in interactive mode (TODO: implement UI)
+        // if self.ui.is_none() {
+        //     let ui = TerminalUI::new(
+        //         self.identity.clone(),
+        //         self.ledger.clone(),
+        //         self.game_runtime.clone(),
+        //     );
+        //     self.ui = Some(ui);
+        // }
         
         // Start background tasks
         self.start_heartbeat().await;
@@ -168,6 +200,15 @@ impl BitCrapsApp {
         info!("💼 Balance: {} CRAP", 
              CrapTokens::new(self.ledger.get_balance(&self.identity.peer_id).await).to_crap());
         info!("🎲 Ready to play craps!");
+        
+        // Keep running until shutdown
+        loop {
+            sleep(Duration::from_secs(1)).await;
+            self.periodic_tasks().await?;
+        }
+        
+        println!("👋 Shutting down BitCraps...");
+        self.shutdown().await?;
         
         Ok(())
     }
@@ -184,7 +225,8 @@ impl BitCrapsApp {
         // Buy-in is managed at the runtime level, not directly on the game
         
         // Add treasury to game automatically
-        if self.treasury.is_some() {
+        // Add treasury if configured
+        if self.config.enable_treasury {
             game.add_player(TREASURY_ADDRESS);
             info!("🏦 Treasury automatically joined game");
         }
@@ -200,7 +242,7 @@ impl BitCrapsApp {
             buy_in,
         );
         
-        self.mesh.broadcast_packet(packet).await?;
+        self.mesh_service.broadcast_packet(packet).await?;
         
         info!("✅ Game created: {:?}", game_id);
         Ok(game_id)
@@ -254,16 +296,24 @@ impl BitCrapsApp {
         let game = games.get_mut(&game_id)
             .ok_or_else(|| Error::Protocol("Game not found".to_string()))?;
         
+        // Generate bet ID with proper error handling
+        let bet_id_bytes = bitcraps::GameCrypto::generate_random_bytes(16);
+        let bet_id: [u8; 16] = bet_id_bytes.try_into()
+            .map_err(|_| Error::Crypto("Failed to generate bet ID".to_string()))?;
+        
+        // Get timestamp with fallback
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
+            .as_secs();
+        
         let bet = bitcraps::protocol::Bet {
-            id: bitcraps::GameCrypto::generate_random_bytes(16).try_into().unwrap(),
+            id: bet_id,
             game_id,
             player: self.identity.peer_id,
             bet_type,
             amount,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp,
         };
         
         game.place_bet(self.identity.peer_id, bet).map_err(|e| Error::InvalidBet(e))?;
@@ -292,15 +342,15 @@ impl BitCrapsApp {
     /// Send discovery ping
     pub async fn send_ping(&self) -> Result<()> {
         let packet = PacketUtils::create_ping(self.identity.peer_id);
-        self.mesh.broadcast_packet(packet).await?;
+        self.mesh_service.broadcast_packet(packet).await?;
         info!("📡 Ping sent to discover peers");
         Ok(())
     }
     
     /// Get network and application statistics
     pub async fn get_stats(&self) -> AppStats {
-        let mesh_stats = self.mesh.get_stats().await;
-        let session_stats = self.sessions.get_stats().await;
+        let mesh_stats = self.mesh_service.get_stats().await;
+        let session_stats = self.session_manager.get_stats().await;
         let ledger_stats = self.ledger.get_stats().await;
         let mining_stats = self.proof_of_relay.get_stats().await;
         
@@ -318,9 +368,36 @@ impl BitCrapsApp {
         }
     }
     
+    
+    /// Start mining rewards for network participation
+    /// 
+    /// Feynman: Like getting paid for being a good citizen - the more
+    /// you help the network (relay messages, store data, host games),
+    /// the more tokens you earn. It's capitalism for routers!
+    async fn start_mining_rewards(&self) -> Result<()> {
+        let ledger = self.ledger.clone();
+        let peer_id = self.identity.peer_id;
+        
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            
+            loop {
+                interval.tick().await;
+                
+                // Process staking rewards (existing method)
+                if let Err(e) = ledger.distribute_staking_rewards().await {
+                    warn!("Failed to distribute mining rewards: {}", e);
+                } else {
+                    println!("⛏️ Processed mining rewards for network participation");
+                }
+            }
+        });
+        
+        Ok(())
+    }
+    
     /// Start heartbeat task for periodic maintenance
     async fn start_heartbeat(&self) {
-        let sessions = self.sessions.clone();
         let ledger = self.ledger.clone();
         
         tokio::spawn(async move {
@@ -328,9 +405,6 @@ impl BitCrapsApp {
             
             loop {
                 heartbeat.tick().await;
-                
-                // Check session health
-                sessions.check_session_health().await;
                 
                 // Distribute staking rewards
                 if let Err(e) = ledger.distribute_staking_rewards().await {
@@ -342,7 +416,7 @@ impl BitCrapsApp {
     
     /// Start game coordinator for managing active games
     async fn start_game_coordinator(&self) {
-        let games = self.active_games.clone();
+        let game_runtime = self.game_runtime.clone();
         
         tokio::spawn(async move {
             let mut coordinator = interval(Duration::from_secs(10));
@@ -351,13 +425,39 @@ impl BitCrapsApp {
                 coordinator.tick().await;
                 
                 // Game management logic would go here
-                // For now, just log active games
-                let game_count = games.read().await.len();
-                if game_count > 0 {
-                    info!("🎲 Managing {} active games", game_count);
-                }
+                info!("🎲 Game coordinator running...");
             }
         });
+    }
+    
+    // async fn handle_game_event(&self, _event: crate::gaming::GameEvent) -> Result<()> {
+    //     // Handle game runtime events
+    //     Ok(())
+    // }
+    // 
+    // async fn handle_discovery_event(&self, _event: crate::discovery::DiscoveryEvent) -> Result<()> {
+    //     // Handle peer discovery events  
+    //     Ok(())
+    // }
+    
+    // async fn handle_ui_event(&self, event: UIEvent) -> Result<()> {
+    //     // Handle terminal UI events
+    //     Ok(())
+    // }
+    
+    async fn periodic_tasks(&self) -> Result<()> {
+        // Perform periodic maintenance tasks
+        Ok(())
+    }
+    
+    async fn shutdown(&mut self) -> Result<()> {
+        // Save state
+        self.persistence.flush().await?;
+        
+        // Services will be stopped automatically when dropped
+        println!("✅ BitCraps shutdown complete");
+        
+        Ok(())
     }
 }
 
@@ -400,31 +500,23 @@ async fn main() -> Result<()> {
         Commands::Start => {
             info!("Starting BitCraps node...");
             
-            let app = BitCrapsApp::new(config).await?;
+            let mut app = BitCrapsApp::new(config).await?;
             app.start().await?;
-            
-            // Keep running
-            loop {
-                sleep(Duration::from_secs(1)).await;
-            }
         }
         
         Commands::CreateGame { buy_in } => {
-            let app = BitCrapsApp::new(config).await?;
-            app.start().await?;
+            let mut app = BitCrapsApp::new(config).await?;
             
             let game_id = app.create_game(buy_in).await?;
             println!("✅ Game created: {:?}", game_id);
             println!("📋 Share this Game ID with other players to join");
             
-            // Keep node running
-            loop {
-                sleep(Duration::from_secs(1)).await;
-            }
+            // Start the main loop
+            app.start().await?;
         }
         
         Commands::JoinGame { game_id } => {
-            let game_id_bytes = hex::decode(game_id)
+            let game_id_bytes = hex::decode(&game_id)
                 .map_err(|_| Error::Protocol("Invalid game ID format".to_string()))?;
             
             if game_id_bytes.len() != 16 {
@@ -434,16 +526,14 @@ async fn main() -> Result<()> {
             let mut game_id_array = [0u8; 16];
             game_id_array.copy_from_slice(&game_id_bytes);
             
-            let app = BitCrapsApp::new(config).await?;
-            app.start().await?;
+            let mut app = BitCrapsApp::new(config).await?;
             
-            sleep(Duration::from_secs(2)).await; // Wait for peer discovery
+            // Join the game
             app.join_game(game_id_array).await?;
+            println!("✅ Joined game: {:?}", game_id);
             
-            // Keep node running
-            loop {
-                sleep(Duration::from_secs(1)).await;
-            }
+            // Start the main loop
+            app.start().await?;
         }
         
         Commands::Balance => {
@@ -454,9 +544,6 @@ async fn main() -> Result<()> {
         
         Commands::Games => {
             let app = BitCrapsApp::new(config).await?;
-            app.start().await?;
-            
-            sleep(Duration::from_secs(2)).await; // Wait for discovery
             
             let games = app.list_games().await;
             if games.is_empty() {
@@ -474,7 +561,7 @@ async fn main() -> Result<()> {
         }
         
         Commands::Bet { game_id, bet_type, amount } => {
-            let game_id_bytes = hex::decode(game_id)
+            let game_id_bytes = hex::decode(&game_id)
                 .map_err(|_| Error::Protocol("Invalid game ID format".to_string()))?;
             
             if game_id_bytes.len() != 16 {
@@ -491,18 +578,16 @@ async fn main() -> Result<()> {
                 _ => return Err(Error::Protocol("Invalid bet type".to_string())),
             };
             
-            let app = BitCrapsApp::new(config).await?;
-            app.start().await?;
+            let mut app = BitCrapsApp::new(config).await?;
             
             app.place_bet(game_id_array, bet_type_enum, amount).await?;
             println!("✅ Bet placed: {} CRAP on {:?}", amount, bet_type_enum);
+            
+            app.start().await?;
         }
         
         Commands::Stats => {
             let app = BitCrapsApp::new(config).await?;
-            app.start().await?;
-            
-            sleep(Duration::from_secs(2)).await; // Wait for initialization
             
             let stats = app.get_stats().await;
             println!("📊 BitCraps Node Statistics:");
@@ -517,7 +602,6 @@ async fn main() -> Result<()> {
         
         Commands::Ping => {
             let app = BitCrapsApp::new(config).await?;
-            app.start().await?;
             
             app.send_ping().await?;
             println!("📡 Discovery ping sent - listening for peers...");

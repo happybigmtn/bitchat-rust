@@ -44,11 +44,12 @@ pub type PeerId = [u8; 32];
 /// Game identifier - 16 bytes UUID
 pub type GameId = [u8; 16];
 
-/// Helper function to create a new GameId
+/// Helper function to create a new GameId using cryptographic randomness
 pub fn new_game_id() -> GameId {
     let mut game_id = [0u8; 16];
-    use rand::RngCore;
-    rand::thread_rng().fill_bytes(&mut game_id);
+    use rand::{RngCore, CryptoRng};
+    let mut rng = rand::thread_rng();
+    rng.fill_bytes(&mut game_id);
     game_id
 }
 
@@ -223,7 +224,18 @@ pub struct CrapTokens {
 }
 
 impl CrapTokens {
-    pub fn new(amount: u64) -> Self {
+    pub fn new(amount: u64) -> crate::error::Result<Self> {
+        if amount == 0 {
+            return Err(crate::error::Error::InvalidData("Token amount cannot be zero".to_string()));
+        }
+        if amount > u64::MAX / 2 {
+            return Err(crate::error::Error::InvalidData("Token amount too large".to_string()));
+        }
+        Ok(Self { amount })
+    }
+    
+    /// Create tokens without validation (for internal use)
+    pub fn new_unchecked(amount: u64) -> Self {
         Self { amount }
     }
     
@@ -231,14 +243,38 @@ impl CrapTokens {
         self.amount
     }
     
-    pub fn from_crap(crap: f64) -> Self {
-        Self {
-            amount: (crap * 1_000_000.0) as u64, // 1 CRAP = 1,000,000 units
+    pub fn from_crap(crap: f64) -> crate::error::Result<Self> {
+        if crap < 0.0 {
+            return Err(crate::error::Error::InvalidData("CRAP amount cannot be negative".to_string()));
         }
+        if crap > (u64::MAX as f64 / 2.0) / 1_000_000.0 {
+            return Err(crate::error::Error::InvalidData("CRAP amount too large".to_string()));
+        }
+        
+        let amount = (crap * 1_000_000.0) as u64;
+        if amount == 0 && crap > 0.0 {
+            return Err(crate::error::Error::InvalidData("CRAP amount too small (below minimum unit)".to_string()));
+        }
+        
+        Ok(Self { amount })
     }
     
     pub fn to_crap(&self) -> f64 {
         self.amount as f64 / 1_000_000.0
+    }
+    
+    /// Add tokens with overflow checking
+    pub fn checked_add(&self, other: &CrapTokens) -> crate::error::Result<CrapTokens> {
+        self.amount.checked_add(other.amount)
+            .map(|amount| CrapTokens { amount })
+            .ok_or_else(|| crate::error::Error::InvalidData("Token addition overflow".to_string()))
+    }
+    
+    /// Subtract tokens with underflow checking
+    pub fn checked_sub(&self, other: &CrapTokens) -> crate::error::Result<CrapTokens> {
+        self.amount.checked_sub(other.amount)
+            .map(|amount| CrapTokens { amount })
+            .ok_or_else(|| crate::error::Error::InsufficientBalance)
     }
 }
 
@@ -252,10 +288,27 @@ pub struct DiceRoll {
 }
 
 impl DiceRoll {
-    pub fn new(die1: u8, die2: u8) -> Self {
+    pub fn new(die1: u8, die2: u8) -> crate::error::Result<Self> {
+        // Validate dice values
+        if die1 < 1 || die1 > 6 {
+            return Err(crate::error::Error::InvalidData(format!("Invalid die1 value: {}, must be 1-6", die1)));
+        }
+        if die2 < 1 || die2 > 6 {
+            return Err(crate::error::Error::InvalidData(format!("Invalid die2 value: {}, must be 1-6", die2)));
+        }
+        
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
+            .as_secs();
+        Ok(Self { die1, die2, timestamp })
+    }
+    
+    /// Create dice roll without validation (for internal use)
+    pub fn new_unchecked(die1: u8, die2: u8) -> Self {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_secs();
         Self { die1, die2, timestamp }
     }
@@ -289,6 +342,70 @@ pub struct Bet {
     pub bet_type: BetType,
     pub amount: CrapTokens,
     pub timestamp: u64,
+}
+
+impl Bet {
+    /// Create a new bet with validation
+    pub fn new(
+        id: [u8; 16],
+        game_id: GameId,
+        player: PeerId,
+        bet_type: BetType,
+        amount: CrapTokens,
+    ) -> crate::error::Result<Self> {
+        // Validate bet amount
+        if amount.amount < MIN_BET_AMOUNT {
+            return Err(crate::error::Error::InvalidBet(
+                format!("Bet amount {} below minimum {}", amount.amount, MIN_BET_AMOUNT)
+            ));
+        }
+        if amount.amount > MAX_BET_AMOUNT {
+            return Err(crate::error::Error::InvalidBet(
+                format!("Bet amount {} exceeds maximum {}", amount.amount, MAX_BET_AMOUNT)
+            ));
+        }
+        
+        // Validate bet amount is not zero
+        if amount.amount == 0 {
+            return Err(crate::error::Error::InvalidBet(
+                "Bet amount cannot be zero".to_string()
+            ));
+        }
+        
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
+            .as_secs();
+        
+        Ok(Self {
+            id,
+            game_id,
+            player,
+            bet_type,
+            amount,
+            timestamp,
+        })
+    }
+    
+    /// Validate if this bet type is allowed in the current game phase
+    pub fn is_valid_for_phase(&self, phase: &crate::protocol::craps::GamePhase) -> bool {
+        use crate::protocol::craps::GamePhase;
+        
+        match phase {
+            GamePhase::ComeOut => {
+                // Most bets allowed on comeout, except some odds bets
+                !matches!(self.bet_type, BetType::OddsPass | BetType::OddsDontPass)
+            },
+            GamePhase::Point => {
+                // All bets allowed during point phase
+                true
+            },
+            GamePhase::Ended | GamePhase::GameEnded => {
+                // No new bets allowed in ended games
+                false
+            },
+        }
+    }
 }
 
 /// Cryptographic commitment for fair randomness
@@ -494,7 +611,7 @@ impl BitchatPacket {
     pub fn get_dice_roll(&self) -> Option<DiceRoll> {
         let tlv = self.get_tlv(TLV_TYPE_DICE_VALUE)?;
         if tlv.value.len() >= 2 {
-            Some(DiceRoll::new(tlv.value[0], tlv.value[1]))
+            DiceRoll::new(tlv.value[0], tlv.value[1]).ok()
         } else {
             None
         }

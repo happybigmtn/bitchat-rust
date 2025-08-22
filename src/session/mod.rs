@@ -16,6 +16,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
+use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce, AeadCore, AeadInPlace, KeyInit};
+use rand::{RngCore, CryptoRng};
 
 use crate::protocol::PeerId;
 use crate::crypto::BitchatKeypair;
@@ -39,6 +41,8 @@ pub struct BitchatSession {
     pub local_keypair: BitchatKeypair,
     pub state: SessionState,
     pub metrics: SessionMetrics,
+    encryption_key: [u8; 32],
+    nonce_counter: u64,
 }
 
 /// Session metrics and limits
@@ -112,6 +116,9 @@ impl BitchatSession {
     ) -> Result<Self> {
         let session_id = Self::generate_session_id();
         
+        // Generate session encryption key from keypair
+        let encryption_key = Self::derive_encryption_key(&local_keypair, &peer_id);
+        
         Ok(Self {
             session_id,
             peer_id,
@@ -124,16 +131,41 @@ impl BitchatSession {
                 bytes_sent: 0,
                 bytes_received: 0,
             },
+            encryption_key,
+            nonce_counter: 0,
         })
     }
     
-    /// Encrypt and send message (simplified)
+    /// Encrypt and send message using ChaCha20-Poly1305
     pub fn encrypt_message(&mut self, plaintext: &[u8]) -> Result<Vec<u8>> {
-        // Simplified encryption - just return the plaintext with a header
-        // In production, would use proper encryption
-        let mut result = Vec::new();
-        result.extend_from_slice(b"ENCRYPTED:");
-        result.extend_from_slice(plaintext);
+        // Input validation
+        if plaintext.is_empty() {
+            return Err(Error::InvalidData("Cannot encrypt empty message".to_string()));
+        }
+        if plaintext.len() > 1024 * 1024 {
+            return Err(Error::InvalidData("Message too large for encryption".to_string()));
+        }
+        
+        // Create cipher with session key
+        let key = Key::from_slice(&self.encryption_key);
+        let cipher = ChaCha20Poly1305::new(key);
+        
+        // Generate unique nonce for this message
+        self.nonce_counter += 1;
+        let mut nonce_bytes = [0u8; 12];
+        nonce_bytes[..8].copy_from_slice(&self.nonce_counter.to_le_bytes());
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        
+        // Encrypt plaintext
+        let mut buffer = plaintext.to_vec();
+        let tag = cipher.encrypt_in_place_detached(nonce, b"", &mut buffer)
+            .map_err(|e| Error::Crypto(format!("Encryption failed: {}", e)))?;
+        
+        // Construct result: nonce (12 bytes) + tag (16 bytes) + ciphertext
+        let mut result = Vec::with_capacity(12 + 16 + buffer.len());
+        result.extend_from_slice(&nonce_bytes);
+        result.extend_from_slice(&tag);
+        result.extend_from_slice(&buffer);
         
         self.metrics.message_count += 1;
         self.metrics.bytes_sent += result.len() as u64;
@@ -142,17 +174,35 @@ impl BitchatSession {
         Ok(result)
     }
     
-    /// Decrypt received message (simplified)
+    /// Decrypt received message using ChaCha20-Poly1305
     pub fn decrypt_message(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>> {
-        // Simplified decryption - just remove the header
-        if ciphertext.starts_with(b"ENCRYPTED:") {
-            let plaintext = ciphertext[10..].to_vec();
-            self.metrics.bytes_received += ciphertext.len() as u64;
-            self.metrics.last_activity = Instant::now();
-            Ok(plaintext)
-        } else {
-            Err(Error::Crypto("Invalid encrypted message".to_string()))
+        // Input validation
+        if ciphertext.len() < 28 {
+            return Err(Error::Crypto("Ciphertext too short (minimum 28 bytes: 12 nonce + 16 tag)".to_string()));
         }
+        if ciphertext.len() > 1024 * 1024 + 28 {
+            return Err(Error::Crypto("Ciphertext too large".to_string()));
+        }
+        
+        // Extract nonce, tag, and encrypted data
+        let nonce_bytes = &ciphertext[..12];
+        let tag_bytes = &ciphertext[12..28];
+        let encrypted_data = &ciphertext[28..];
+        
+        // Create cipher with session key
+        let key = Key::from_slice(&self.encryption_key);
+        let cipher = ChaCha20Poly1305::new(key);
+        let nonce = Nonce::from_slice(nonce_bytes);
+        
+        // Decrypt data
+        let mut buffer = encrypted_data.to_vec();
+        cipher.decrypt_in_place_detached(nonce, b"", &mut buffer, tag_bytes.into())
+            .map_err(|e| Error::Crypto(format!("Decryption failed: {}", e)))?;
+        
+        self.metrics.bytes_received += ciphertext.len() as u64;
+        self.metrics.last_activity = Instant::now();
+        
+        Ok(buffer)
     }
     
     /// Check session health
@@ -197,12 +247,28 @@ impl BitchatSession {
         SessionStatus::Active
     }
     
-    /// Generate session ID
+    /// Generate session ID using cryptographic randomness
     fn generate_session_id() -> SessionId {
         let mut session_id = [0u8; 16];
-        use rand::RngCore;
-        rand::thread_rng().fill_bytes(&mut session_id);
+        use rand::{RngCore, CryptoRng};
+        let mut rng = rand::thread_rng();
+        rng.fill_bytes(&mut session_id);
         session_id
+    }
+    
+    /// Derive encryption key from keypair and peer ID
+    fn derive_encryption_key(keypair: &BitchatKeypair, peer_id: &PeerId) -> [u8; 32] {
+        use sha2::{Sha256, Digest};
+        
+        let mut hasher = Sha256::new();
+        hasher.update(b"BITCRAPS_SESSION_KEY_V1");
+        hasher.update(keypair.secret_key_bytes());
+        hasher.update(peer_id);
+        
+        let result = hasher.finalize();
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&result);
+        key
     }
 }
 
@@ -348,6 +414,33 @@ mod tests {
         assert!(matches!(session.state, SessionState::Active));
     }
     
+    #[test]
+    fn test_encryption_decryption() {
+        let keypair = BitchatKeypair::generate();
+        let peer_id = [1u8; 32];
+        let mut session = BitchatSession::new_initiator(peer_id, keypair).unwrap();
+        
+        let plaintext = b"Hello, secure world!";
+        let ciphertext = session.encrypt_message(plaintext).unwrap();
+        let decrypted = session.decrypt_message(&ciphertext).unwrap();
+        
+        assert_eq!(plaintext, decrypted.as_slice());
+    }
+    
+    #[test]
+    fn test_encryption_input_validation() {
+        let keypair = BitchatKeypair::generate();
+        let peer_id = [1u8; 32];
+        let mut session = BitchatSession::new_initiator(peer_id, keypair).unwrap();
+        
+        // Test empty message
+        assert!(session.encrypt_message(&[]).is_err());
+        
+        // Test oversized message
+        let large_message = vec![0u8; 1024 * 1024 + 1];
+        assert!(session.encrypt_message(&large_message).is_err());
+    }
+    
     #[tokio::test]
     async fn test_session_manager() {
         let manager = SessionManager::new(SessionLimits::default());
@@ -364,5 +457,23 @@ mod tests {
         
         let stats = manager.get_stats().await;
         assert_eq!(stats.active_sessions, 1);
+    }
+    
+    #[tokio::test]
+    async fn test_encrypted_message_through_manager() {
+        let manager = SessionManager::new(SessionLimits::default());
+        
+        let keypair = BitchatKeypair::generate();
+        let peer_id = [1u8; 32];
+        let session = BitchatSession::new_initiator(peer_id, keypair).unwrap();
+        let session_id = session.session_id;
+        
+        manager.add_session(session).await;
+        
+        let plaintext = b"Test message through manager";
+        let ciphertext = manager.send_encrypted_message(&session_id, plaintext).await.unwrap();
+        let decrypted = manager.process_encrypted_message(&session_id, &ciphertext).await.unwrap();
+        
+        assert_eq!(plaintext, decrypted.as_slice());
     }
 }

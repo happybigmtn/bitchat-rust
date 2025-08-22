@@ -126,7 +126,7 @@ impl GameRuntime {
             config,
             games: Arc::new(RwLock::new(HashMap::new())),
             player_balances: Arc::new(RwLock::new(HashMap::new())),
-            treasury_balance: Arc::new(RwLock::new(CrapTokens::new(1_000_000_000))), // 1B initial
+            treasury_balance: Arc::new(RwLock::new(CrapTokens::new_unchecked(1_000_000_000))), // 1B initial
             event_tx,
             command_rx,
             stats: Arc::new(RwLock::new(GameStats::default())),
@@ -210,7 +210,7 @@ impl GameRuntime {
             game,
             created_at: Instant::now(),
             last_activity: Instant::now(),
-            total_pot: CrapTokens::new(0),
+            total_pot: CrapTokens::new_unchecked(0),
             rounds_played: 0,
             is_suspended: false,
         };
@@ -232,14 +232,14 @@ impl GameRuntime {
     async fn join_game(&self, game_id: GameId, player: PeerId, buy_in: CrapTokens) -> Result<()> {
         // Check player balance
         let mut balances = self.player_balances.write().await;
-        let balance = balances.entry(player).or_insert(CrapTokens::new(0));
+        let balance = balances.entry(player).or_insert(CrapTokens::new_unchecked(0));
         
         if balance.amount() < buy_in.amount() {
             return Err(Error::InsufficientBalance);
         }
         
         // Deduct buy-in
-        *balance = CrapTokens::new(balance.amount() - buy_in.amount());
+        *balance = CrapTokens::new_unchecked(balance.amount() - buy_in.amount());
         
         // Add to game
         let mut games = self.games.write().await;
@@ -251,7 +251,7 @@ impl GameRuntime {
         }
         
         let _ = game.game.add_player(player);
-        game.total_pot = CrapTokens::new(game.total_pot.amount() + buy_in.amount());
+        game.total_pot = CrapTokens::new_unchecked(game.total_pot.amount() + buy_in.amount());
         game.last_activity = Instant::now();
         
         // Emit event
@@ -277,15 +277,15 @@ impl GameRuntime {
         }
         
         // Deduct bet amount
-        *balance = CrapTokens::new(balance.amount() - bet.amount.amount());
+        *balance = CrapTokens::new_unchecked(balance.amount() - bet.amount.amount());
         
         // Add bet to game
         let mut games = self.games.write().await;
         let game = games.get_mut(&game_id)
             .ok_or_else(|| Error::GameNotFound)?;
         
-        game.game.place_bet(player, bet.clone()).map_err(|e| Error::ValidationError(e))?;
-        game.total_pot = CrapTokens::new(game.total_pot.amount() + bet.amount.amount());
+        game.game.place_bet(player, bet.clone()).map_err(|e| Error::ValidationError(e.to_string()))?;
+        game.total_pot = CrapTokens::new_unchecked(game.total_pot.amount() + bet.amount.amount());
         game.last_activity = Instant::now();
         
         // Update stats
@@ -313,7 +313,9 @@ impl GameRuntime {
         );
         
         // Process roll
-        let resolutions = game.game.process_roll(roll);
+        // Extract the roll value for later use
+        let dice_roll = roll?;
+        let resolutions = game.game.process_roll(dice_roll);
         game.last_activity = Instant::now();
         game.rounds_played += 1;
         
@@ -326,8 +328,8 @@ impl GameRuntime {
                 super::craps::BetResolution::Won { player, payout, .. } => {
                     // Add payout to player balance
                     let mut balances = self.player_balances.write().await;
-                    let balance = balances.entry(player).or_insert(CrapTokens::new(0));
-                    *balance = CrapTokens::new(balance.amount() + payout.amount());
+                    let balance = balances.entry(player).or_insert(CrapTokens::new_unchecked(0));
+                    *balance = CrapTokens::new_unchecked(balance.amount() + payout.amount());
                     
                     winners.push((player, payout.amount()));
                     total_payout += payout.amount();
@@ -338,8 +340,8 @@ impl GameRuntime {
                 super::craps::BetResolution::Push { player, amount, .. } => {
                     // Return bet to player
                     let mut balances = self.player_balances.write().await;
-                    let balance = balances.entry(player).or_insert(CrapTokens::new(0));
-                    *balance = CrapTokens::new(balance.amount() + amount.amount());
+                    let balance = balances.entry(player).or_insert(CrapTokens::new_unchecked(0));
+                    *balance = CrapTokens::new_unchecked(balance.amount() + amount.amount());
                 }
             }
         }
@@ -348,7 +350,7 @@ impl GameRuntime {
         if total_payout > 0 {
             let rake = (total_payout as f32 * self.config.treasury_rake) as u64;
             let mut treasury = self.treasury_balance.write().await;
-            *treasury = CrapTokens::new(treasury.amount() + rake);
+            *treasury = CrapTokens::new_unchecked(treasury.amount() + rake);
             
             // Update stats
             self.stats.write().await.treasury_rake_collected += rake;
@@ -361,7 +363,7 @@ impl GameRuntime {
         }
         
         // Emit events
-        let _ = self.event_tx.send(GameEvent::DiceRolled { game_id, roll });
+        let _ = self.event_tx.send(GameEvent::DiceRolled { game_id, roll: dice_roll });
         let _ = self.event_tx.send(GameEvent::RoundComplete { game_id, winners });
         
         // Check if game should end
@@ -520,7 +522,7 @@ impl GameRuntime {
         self.player_balances.read().await
             .get(player)
             .copied()
-            .unwrap_or_else(|| CrapTokens::new(0))
+            .unwrap_or_else(|| CrapTokens::new_unchecked(0))
     }
 }
 

@@ -44,6 +44,14 @@ impl MessagePool {
     }
 }
 
+// Simple message header placeholder
+#[derive(Debug, Clone)]
+pub struct MessageHeader {
+    pub msg_type: u8,
+    pub length: u32,
+    pub timestamp: u64,
+}
+
 // Zero-copy message passing
 pub struct ZeroCopyMessage {
     pub header: MessageHeader,

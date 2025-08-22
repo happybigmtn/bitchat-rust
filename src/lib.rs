@@ -18,10 +18,16 @@ pub mod protocol;     // Core protocol and binary serialization
 pub mod crypto;       // Cryptographic foundations
 pub mod transport;    // Network transport layer (Bluetooth mesh)
 pub mod mesh;         // Mesh networking coordination
+pub mod discovery;    // Peer discovery (Bluetooth, DHT)
+pub mod coordinator;  // Network coordination and monitoring
 // Gaming is now integrated into protocol module (protocol/craps.rs and protocol/runtime.rs)
 pub mod session;      // Session management with Noise protocol
 pub mod token;        // Token economics and CRAP tokens
 pub mod ui;           // User interface (CLI and TUI)
+pub mod platform;     // Platform-specific integrations (Android, iOS)
+pub mod monitoring;   // Production monitoring and metrics
+pub mod optimization; // Performance optimizations
+pub mod persistence;  // Data persistence layer
 
 // Re-export commonly used types for easy access
 pub use error::{Error, Result};
@@ -37,6 +43,12 @@ pub use transport::{
 };
 pub use mesh::{
     MeshService, MeshPeer,
+};
+pub use discovery::{
+    BluetoothDiscovery, DhtDiscovery, DiscoveredPeer, DhtPeer,
+};
+pub use coordinator::{
+    MultiTransportCoordinator, NetworkMonitor, NetworkTopology, HealthMetrics,
 };
 pub use protocol::craps::{
     CrapsGame, GamePhase,
@@ -54,6 +66,10 @@ pub use token::{
 pub use ui::{
     Cli, Commands,
 };
+pub use monitoring::{
+    NetworkDashboard, NetworkMetrics, HealthCheck,
+};
+pub use persistence::PersistenceManager;
 
 /// Application configuration
 #[derive(Debug, Clone)]

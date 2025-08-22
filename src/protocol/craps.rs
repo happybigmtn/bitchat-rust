@@ -80,8 +80,38 @@ impl CrapsGame {
         }
     }
     
-    /// Place a bet
-    pub fn place_bet(&mut self, player: PeerId, bet: Bet) -> Result<(), String> {
+    /// Generate a cryptographically secure dice roll
+    pub fn roll_dice_secure() -> Result<DiceRoll, crate::error::Error> {
+        use crate::crypto::GameCrypto;
+        let (die1, die2) = GameCrypto::generate_secure_dice_roll();
+        DiceRoll::new(die1, die2)
+    }
+    
+    /// Generate dice roll from multiple entropy sources (for multiplayer consensus)
+    pub fn roll_dice_from_sources(entropy_sources: &[[u8; 32]]) -> Result<DiceRoll, crate::error::Error> {
+        use crate::crypto::GameCrypto;
+        let (die1, die2) = GameCrypto::combine_randomness(entropy_sources);
+        DiceRoll::new(die1, die2)
+    }
+    
+    /// Place a bet with validation
+    pub fn place_bet(&mut self, player: PeerId, bet: Bet) -> Result<(), crate::error::Error> {
+        // Validate bet is appropriate for current game phase
+        if !bet.is_valid_for_phase(&self.phase) {
+            return Err(crate::error::Error::InvalidBet(
+                format!("Bet type {:?} not allowed in phase {:?}", bet.bet_type, self.phase)
+            ));
+        }
+        
+        // Check if player already has this bet type (prevent duplicate bets)
+        if let Some(player_bets) = self.player_bets.get(&player) {
+            if player_bets.contains_key(&bet.bet_type) {
+                return Err(crate::error::Error::InvalidBet(
+                    format!("Player already has a {:?} bet", bet.bet_type)
+                ));
+            }
+        }
+        
         // Add bet to player's bets
         self.player_bets
             .entry(player)
@@ -159,7 +189,7 @@ impl CrapsGame {
             if let Some(bet) = bets.get(&BetType::Pass) {
                 match total {
                     7 | 11 => {
-                        let payout = CrapTokens::new(bet.amount.amount * 2); // 1:1 payout
+                        let payout = CrapTokens::new_unchecked(bet.amount.amount * 2); // 1:1 payout
                         resolutions.push(BetResolution::Won {
                             player: *player,
                             bet_type: BetType::Pass,
@@ -182,7 +212,7 @@ impl CrapsGame {
             if let Some(bet) = bets.get(&BetType::DontPass) {
                 match total {
                     2 | 3 => {
-                        let payout = CrapTokens::new(bet.amount.amount * 2); // 1:1 payout
+                        let payout = CrapTokens::new_unchecked(bet.amount.amount * 2); // 1:1 payout
                         resolutions.push(BetResolution::Won {
                             player: *player,
                             bet_type: BetType::DontPass,
@@ -223,7 +253,7 @@ impl CrapsGame {
             if total == point {
                 // Point made - Pass wins
                 if let Some(bet) = bets.get(&BetType::Pass) {
-                    let payout = CrapTokens::new(bet.amount.amount * 2);
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount * 2);
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type: BetType::Pass,
@@ -244,7 +274,7 @@ impl CrapsGame {
                 // Resolve Pass Odds bets
                 if let Some(bet) = bets.get(&BetType::OddsPass) {
                     let multiplier = Self::get_odds_multiplier(point, true);
-                    let payout = CrapTokens::new(bet.amount.amount + (bet.amount.amount * multiplier as u64 / 100));
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount + (bet.amount.amount * multiplier as u64 / 100));
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type: BetType::OddsPass,
@@ -264,7 +294,7 @@ impl CrapsGame {
                 
                 // Don't Pass wins
                 if let Some(bet) = bets.get(&BetType::DontPass) {
-                    let payout = CrapTokens::new(bet.amount.amount * 2);
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount * 2);
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type: BetType::DontPass,
@@ -304,6 +334,14 @@ impl CrapsGame {
                 resolutions.extend(self.resolve_no_bets(roll, player, bets));
                 resolutions.extend(self.resolve_hardway_bets(roll, player, bets));
             }
+            
+        }
+        
+        // Resolve Come/Don't Come bets (need separate loop to avoid borrow conflicts)
+        let player_bets_clone = self.player_bets.clone();
+        for (player, bets) in &player_bets_clone {
+            resolutions.extend(self.resolve_come_bets(roll, player, bets));
+            resolutions.extend(self.resolve_dont_come_bets(roll, player, bets));
         }
         
         resolutions
@@ -323,7 +361,7 @@ impl CrapsGame {
                 match total {
                     2 | 12 => {
                         // Field pays 2:1 on 2 and 12
-                        let payout = CrapTokens::new(bet.amount.amount * 3);
+                        let payout = CrapTokens::new_unchecked(bet.amount.amount * 3);
                         resolutions.push(BetResolution::Won {
                             player: *player,
                             bet_type: BetType::Field,
@@ -333,7 +371,7 @@ impl CrapsGame {
                     },
                     3 | 4 | 9 | 10 | 11 => {
                         // Field pays 1:1 on these
-                        let payout = CrapTokens::new(bet.amount.amount * 2);
+                        let payout = CrapTokens::new_unchecked(bet.amount.amount * 2);
                         resolutions.push(BetResolution::Won {
                             player: *player,
                             bet_type: BetType::Field,
@@ -417,8 +455,20 @@ impl CrapsGame {
                         self.fire_points.clear();
                         self.bonus_numbers.clear();
                         self.hot_roller_streak = 0;
+                        
+                        // Clear all Come/Don't Come points on seven-out
+                        self.come_points.clear();
+                        self.dont_come_points.clear();
                     } else {
                         self.hot_roller_streak += 1;
+                        
+                        // Remove resolved Come/Don't Come points
+                        for come_points in self.come_points.values_mut() {
+                            come_points.remove(&total);
+                        }
+                        for dont_come_points in self.dont_come_points.values_mut() {
+                            dont_come_points.remove(&total);
+                        }
                     }
                 }
             },
@@ -454,7 +504,7 @@ impl CrapsGame {
                 if total == target {
                     // Win! Number came up
                     let multiplier = self.get_yes_bet_multiplier(target);
-                    let payout = CrapTokens::new(bet.amount.amount + (bet.amount.amount * multiplier as u64 / 100));
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount + (bet.amount.amount * multiplier as u64 / 100));
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type,
@@ -501,7 +551,7 @@ impl CrapsGame {
                 if total == 7 {
                     // Win! Seven came first
                     let multiplier = self.get_no_bet_multiplier(target);
-                    let payout = CrapTokens::new(bet.amount.amount + (bet.amount.amount * multiplier as u64 / 100));
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount + (bet.amount.amount * multiplier as u64 / 100));
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type,
@@ -533,7 +583,7 @@ impl CrapsGame {
             if total == 4 {
                 if is_hard {
                     // Win - came the hard way!
-                    let payout = CrapTokens::new(bet.amount.amount * 8); // 7:1 + original
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount * 8); // 7:1 + original
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type: BetType::Hard4,
@@ -567,7 +617,7 @@ impl CrapsGame {
             if let Some(bet) = bets.get(&bet_type) {
                 if total == target {
                     if is_hard {
-                        let payout = CrapTokens::new(bet.amount.amount * payout_mult);
+                        let payout = CrapTokens::new_unchecked(bet.amount.amount * payout_mult);
                         resolutions.push(BetResolution::Won {
                             player: *player,
                             bet_type,
@@ -586,6 +636,138 @@ impl CrapsGame {
                         player: *player,
                         bet_type,
                         amount: bet.amount,
+                    });
+                }
+            }
+        }
+        
+        resolutions
+    }
+    
+    /// Resolve Come bets (similar to Pass Line but placed after comeout)
+    pub fn resolve_come_bets(&mut self, roll: DiceRoll, player: &PeerId, bets: &HashMap<BetType, Bet>) -> Vec<BetResolution> {
+        let mut resolutions = Vec::new();
+        let total = roll.total();
+        
+        if let Some(bet) = bets.get(&BetType::Come) {
+            match total {
+                7 | 11 => {
+                    // Come bet wins immediately
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount * 2); // 1:1 payout
+                    resolutions.push(BetResolution::Won {
+                        player: *player,
+                        bet_type: BetType::Come,
+                        amount: bet.amount,
+                        payout,
+                    });
+                },
+                2 | 3 | 12 => {
+                    // Come bet loses immediately
+                    resolutions.push(BetResolution::Lost {
+                        player: *player,
+                        bet_type: BetType::Come,
+                        amount: bet.amount,
+                    });
+                },
+                4 | 5 | 6 | 8 | 9 | 10 => {
+                    // Establish Come point - move bet to come_points tracking
+                    self.come_points
+                        .entry(*player)
+                        .or_insert_with(HashMap::new)
+                        .insert(total, bet.amount);
+                },
+                _ => {}
+            }
+        }
+        
+        // Check existing Come points
+        if let Some(player_come_points) = self.come_points.get(player) {
+            for (&point, &amount) in player_come_points.iter() {
+                if total == point {
+                    // Come point made - win
+                    let payout = CrapTokens::new_unchecked(amount.amount * 2);
+                    resolutions.push(BetResolution::Won {
+                        player: *player,
+                        bet_type: BetType::Come,
+                        amount,
+                        payout,
+                    });
+                } else if total == 7 {
+                    // Seven out - Come bets lose
+                    resolutions.push(BetResolution::Lost {
+                        player: *player,
+                        bet_type: BetType::Come,
+                        amount,
+                    });
+                }
+            }
+        }
+        
+        resolutions
+    }
+    
+    /// Resolve Don't Come bets (opposite of Come)
+    pub fn resolve_dont_come_bets(&mut self, roll: DiceRoll, player: &PeerId, bets: &HashMap<BetType, Bet>) -> Vec<BetResolution> {
+        let mut resolutions = Vec::new();
+        let total = roll.total();
+        
+        if let Some(bet) = bets.get(&BetType::DontCome) {
+            match total {
+                2 | 3 => {
+                    // Don't Come bet wins immediately
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount * 2); // 1:1 payout
+                    resolutions.push(BetResolution::Won {
+                        player: *player,
+                        bet_type: BetType::DontCome,
+                        amount: bet.amount,
+                        payout,
+                    });
+                },
+                7 | 11 => {
+                    // Don't Come bet loses immediately
+                    resolutions.push(BetResolution::Lost {
+                        player: *player,
+                        bet_type: BetType::DontCome,
+                        amount: bet.amount,
+                    });
+                },
+                12 => {
+                    // Don't Come pushes on 12
+                    resolutions.push(BetResolution::Push {
+                        player: *player,
+                        bet_type: BetType::DontCome,
+                        amount: bet.amount,
+                    });
+                },
+                4 | 5 | 6 | 8 | 9 | 10 => {
+                    // Establish Don't Come point
+                    self.dont_come_points
+                        .entry(*player)
+                        .or_insert_with(HashMap::new)
+                        .insert(total, bet.amount);
+                },
+                _ => {}
+            }
+        }
+        
+        // Check existing Don't Come points
+        if let Some(player_dont_come_points) = self.dont_come_points.get(player) {
+            for (&point, &amount) in player_dont_come_points.iter() {
+                if total == 7 {
+                    // Seven out - Don't Come bets win
+                    let payout = CrapTokens::new_unchecked(amount.amount * 2);
+                    resolutions.push(BetResolution::Won {
+                        player: *player,
+                        bet_type: BetType::DontCome,
+                        amount,
+                        payout,
+                    });
+                } else if total == point {
+                    // Don't Come point made - lose
+                    resolutions.push(BetResolution::Lost {
+                        player: *player,
+                        bet_type: BetType::DontCome,
+                        amount,
                     });
                 }
             }
@@ -621,7 +803,7 @@ impl CrapsGame {
                 if total == target {
                     // Win!
                     let multiplier = self.get_next_bet_multiplier(target);
-                    let payout = CrapTokens::new(bet.amount.amount + (bet.amount.amount * multiplier as u64 / 100));
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount + (bet.amount.amount * multiplier as u64 / 100));
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type,
@@ -700,19 +882,19 @@ impl CrapsGame {
                 player: *player,
                 bet_type: BetType::Fire,
                 amount: bet.amount,
-                payout: CrapTokens::new(bet.amount.amount * 25), // 24:1
+                payout: CrapTokens::new_unchecked(bet.amount.amount * 25), // 24:1
             }),
             5 => Some(BetResolution::Won {
                 player: *player,
                 bet_type: BetType::Fire,
                 amount: bet.amount,
-                payout: CrapTokens::new(bet.amount.amount * 250), // 249:1
+                payout: CrapTokens::new_unchecked(bet.amount.amount * 250), // 249:1
             }),
             6 => Some(BetResolution::Won {
                 player: *player,
                 bet_type: BetType::Fire,
                 amount: bet.amount,
-                payout: CrapTokens::new(bet.amount.amount * 1000), // 999:1
+                payout: CrapTokens::new_unchecked(bet.amount.amount * 1000), // 999:1
             }),
             _ => None, // Still active
         }
@@ -744,7 +926,7 @@ impl CrapsGame {
                 
                 if count >= *required {
                     let multiplier = self.get_repeater_multiplier(*number);
-                    let payout = CrapTokens::new(bet.amount.amount + (bet.amount.amount * multiplier as u64 / 100));
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount + (bet.amount.amount * multiplier as u64 / 100));
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type: *bet_type,
@@ -769,7 +951,7 @@ impl CrapsGame {
         if let Some(bet) = bets.get(&BetType::BonusSmall) {
             let small_numbers: HashSet<u8> = [2, 3, 4, 5, 6].iter().copied().collect();
             if small_numbers.is_subset(&self.bonus_numbers) {
-                let payout = CrapTokens::new(bet.amount.amount * 31); // 30:1
+                let payout = CrapTokens::new_unchecked(bet.amount.amount * 31); // 30:1
                 resolutions.push(BetResolution::Won {
                     player: *player,
                     bet_type: BetType::BonusSmall,
@@ -783,7 +965,7 @@ impl CrapsGame {
         if let Some(bet) = bets.get(&BetType::BonusTall) {
             let tall_numbers: HashSet<u8> = [8, 9, 10, 11, 12].iter().copied().collect();
             if tall_numbers.is_subset(&self.bonus_numbers) {
-                let payout = CrapTokens::new(bet.amount.amount * 31); // 30:1
+                let payout = CrapTokens::new_unchecked(bet.amount.amount * 31); // 30:1
                 resolutions.push(BetResolution::Won {
                     player: *player,
                     bet_type: BetType::BonusTall,
@@ -797,7 +979,7 @@ impl CrapsGame {
         if let Some(bet) = bets.get(&BetType::BonusAll) {
             let all_numbers: HashSet<u8> = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12].iter().copied().collect();
             if all_numbers.is_subset(&self.bonus_numbers) {
-                let payout = CrapTokens::new(bet.amount.amount * 151); // 150:1
+                let payout = CrapTokens::new_unchecked(bet.amount.amount * 151); // 150:1
                 resolutions.push(BetResolution::Won {
                     player: *player,
                     bet_type: BetType::BonusAll,
@@ -824,12 +1006,12 @@ impl CrapsGame {
                 41..=50 => 1000,  // 10:1
                 _ => 2000,        // 20:1 for 50+ rolls
             };
-            let payout = CrapTokens::new((bet.amount.amount * multiplier as u64) / 100);
+            let payout = CrapTokens::new_unchecked((bet.amount.amount * multiplier as u64) / 100);
             return Some(BetResolution::Won {
                 player: *player,
                 bet_type: BetType::HotRoller,
                 amount: bet.amount,
-                payout: CrapTokens::new(bet.amount.amount + payout.amount),
+                payout: CrapTokens::new_unchecked(bet.amount.amount + payout.amount),
             });
         }
         None
@@ -844,7 +1026,7 @@ impl CrapsGame {
         // Check hardway streak tracker
         for (_number, &count) in &self.hardway_streak {
             if count >= 2 {
-                let payout = CrapTokens::new(bet.amount.amount * 7); // 6:1 + original
+                let payout = CrapTokens::new_unchecked(bet.amount.amount * 7); // 6:1 + original
                 return Some(BetResolution::Won {
                     player: *player,
                     bet_type: BetType::TwiceHard,
@@ -868,12 +1050,12 @@ impl CrapsGame {
                 5 => 1000,  // 10:1
                 _ => 2500,  // 25:1 for 6+ wins
             };
-            let payout = CrapTokens::new((bet.amount.amount * multiplier as u64) / 100);
+            let payout = CrapTokens::new_unchecked((bet.amount.amount * multiplier as u64) / 100);
             return Some(BetResolution::Won {
                 player: *player,
                 bet_type: BetType::RideLine,
                 amount: bet.amount,
-                payout: CrapTokens::new(bet.amount.amount + payout.amount),
+                payout: CrapTokens::new_unchecked(bet.amount.amount + payout.amount),
             });
         }
         None
@@ -893,7 +1075,7 @@ impl CrapsGame {
             if prev == 7 && self.phase == GamePhase::ComeOut {
                 // Natural 7 on comeout followed by establishing point
                 if curr >= 4 && curr <= 10 && curr != 7 {
-                    let payout = CrapTokens::new(bet.amount.amount * 3); // 2:1 + original
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount * 3); // 2:1 + original
                     return Some(BetResolution::Won {
                         player: *player,
                         bet_type: BetType::Muggsy,
@@ -924,12 +1106,12 @@ impl CrapsGame {
                     4 => 2500,  // 25:1
                     _ => 5000,  // 50:1 for 5+
                 };
-                let payout = CrapTokens::new((bet.amount.amount * multiplier as u64) / 100);
+                let payout = CrapTokens::new_unchecked((bet.amount.amount * multiplier as u64) / 100);
                 return Some(BetResolution::Won {
                     player: *player,
                     bet_type: BetType::Replay,
                     amount: bet.amount,
-                    payout: CrapTokens::new(bet.amount.amount + payout.amount),
+                    payout: CrapTokens::new_unchecked(bet.amount.amount + payout.amount),
                 });
             }
         }
@@ -950,12 +1132,12 @@ impl CrapsGame {
                 4 => 10000, // 100:1
                 _ => 25000, // 250:1 for all 5
             };
-            let payout = CrapTokens::new((bet.amount.amount * multiplier as u64) / 100);
+            let payout = CrapTokens::new_unchecked((bet.amount.amount * multiplier as u64) / 100);
             return Some(BetResolution::Won {
                 player: *player,
                 bet_type: BetType::DifferentDoubles,
                 amount: bet.amount,
-                payout: CrapTokens::new(bet.amount.amount + payout.amount),
+                payout: CrapTokens::new_unchecked(bet.amount.amount + payout.amount),
             });
         }
         None

@@ -104,10 +104,10 @@ pub struct MiningConfig {
 impl Default for MiningConfig {
     fn default() -> Self {
         Self {
-            base_reward: CrapTokens::from_crap(0.1).amount(), // 0.1 CRAP per relay
+            base_reward: CrapTokens::from_crap(0.1).unwrap_or_else(|_| CrapTokens::new_unchecked(100_000)).amount(), // 0.1 CRAP per relay
             difficulty_adjustment_interval: Duration::from_secs(3600), // 1 hour
             target_block_time: Duration::from_secs(60), // 1 minute average
-            max_supply: CrapTokens::from_crap(21_000_000.0).amount(), // 21M CRAP total
+            max_supply: CrapTokens::from_crap(21_000_000.0).unwrap_or_else(|_| CrapTokens::new_unchecked(21_000_000_000_000)).amount(), // 21M CRAP total
             halving_interval: 210_000, // Halve rewards every 210k transactions
         }
     }
@@ -192,7 +192,7 @@ impl TokenLedger {
             reputation: 0.5, // Start with neutral reputation
             last_activity: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                 .as_secs(),
         };
         
@@ -200,10 +200,12 @@ impl TokenLedger {
         
         // Initialize treasury if this is treasury address
         if peer_id == TREASURY_ADDRESS {
-            let initial_supply = CrapTokens::from_crap(1_000_000.0).amount(); // 1M CRAP for treasury
-            accounts.get_mut(&peer_id).unwrap().balance = initial_supply;
-            *self.total_supply.write().await = initial_supply;
-            *self.treasury_balance.write().await = initial_supply;
+            let initial_supply = CrapTokens::from_crap(1_000_000.0).unwrap_or_else(|_| CrapTokens::new_unchecked(1_000_000_000_000)).amount(); // 1M CRAP for treasury
+            if let Some(treasury_account) = accounts.get_mut(&peer_id) {
+                treasury_account.balance = initial_supply;
+                *self.total_supply.write().await = initial_supply;
+                *self.treasury_balance.write().await = initial_supply;
+            }
         }
         
         log::info!("Created account for peer: {:?}", peer_id);
@@ -255,7 +257,7 @@ impl TokenLedger {
         self.transactions.write().await.push(transaction);
         
         log::info!("Game bet: {} CRAP from {:?} for game {:?}", 
-                  CrapTokens::new(amount).to_crap(), player, game_id);
+                  CrapTokens::new_unchecked(amount).to_crap(), player, game_id);
         
         Ok(tx_id)
     }
@@ -307,7 +309,7 @@ impl TokenLedger {
         self.transactions.write().await.push(transaction);
         
         log::info!("Game payout: {} CRAP to {:?} from game {:?}", 
-                  CrapTokens::new(amount).to_crap(), winner, game_id);
+                  CrapTokens::new_unchecked(amount).to_crap(), winner, game_id);
         
         Ok(tx_id)
     }
