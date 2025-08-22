@@ -12,7 +12,15 @@
 - Add proper test setup and teardown patterns
 
 ## Overview
-Comprehensive testing, performance optimization, and production deployment preparation for the BitChat P2P messaging system, including specialized gaming fairness testing and economic simulations for BitCraps casino operations.
+
+**Feynman Explanation**: Week 6 is about "quality control and grand opening preparation" for our
+decentralized casino. Imagine you've built this massive casino (weeks 1-5) - now you need to test
+every slot machine (unit tests), run full casino nights with fake money (integration tests),
+check that the house edge is correct (fairness testing), make sure we can handle Saturday night
+crowds (load testing), and train the staff for opening night (deployment). Testing is like having
+quality inspectors check every dice, every card deck, and every betting system before real money flows.
+
+Comprehensive testing, performance optimization, and production deployment preparation for the BitCraps P2P casino system, including specialized gaming fairness testing and economic simulations for BitCraps casino operations.
 
 ## Day 1: Unit Testing Framework and Test Coverage
 
@@ -42,6 +50,11 @@ mod unit_tests {
 ### Core Component Tests
 ```rust
 // tests/unit_tests/crypto_tests.rs
+/// Test cryptographic key generation
+/// 
+/// Feynman: This is like checking that our casino's ID card printer works.
+/// Every player and dealer needs a unique, unforgeable ID (keypair).
+/// We test that the machine produces IDs of the right size and format.
 #[tokio::test]
 async fn test_key_generation() {
     let keypair = Encryption::generate_keypair();
@@ -49,6 +62,12 @@ async fn test_key_generation() {
     assert!(keypair.private_key.len() == 32);
 }
 
+/// Test message encryption and decryption round-trip
+/// 
+/// Feynman: This tests our "secret message system" - like passing notes
+/// in class where only the intended recipient can read them. Alice writes
+/// a note, locks it with Bob's public padlock (only Bob has the key),
+/// and we verify Bob can unlock and read the original message.
 #[tokio::test]
 async fn test_message_encryption_decryption() {
     let alice_keys = Encryption::generate_keypair();

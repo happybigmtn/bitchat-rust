@@ -12,7 +12,12 @@
 
 ## Overview
 
-Week 2 focuses on building the network transport layer and mesh management components that enable BitChat to communicate across different network mediums with enhanced scalability and security features. This updated version includes Kademlia DHT for O(log n) routing, eclipse attack mitigation with redundant paths, and PoW identity generation for sybil resistance.
+**Feynman Explanation**: Week 2 is about "roads and traffic control" for our casino network. 
+Imagine a city where every building (node) needs to talk to every other building. 
+Instead of building direct roads between all buildings (O(n²) connections), we build 
+a smart highway system with intersections (Kademlia DHT) that routes messages efficiently.
+We also add "security checkpoints" (PoW identity) and "backup routes" (eclipse prevention)
+to ensure bad actors can't block or control the roads.
 
 ## Project Context Recap
 
@@ -26,15 +31,85 @@ Week 2 builds the **network layer** with advanced scalability and security featu
 
 ---
 
-## Day 1: Transport Trait Abstraction & UDP Implementation
+## Day 1: Transport Trait Abstraction
 
 ### Goals
 - Define transport layer abstraction
-- Implement UDP transport with connection pooling
-- Create transport discovery mechanisms
-- Build basic error handling and timeouts
+- Support multiple transport types (TCP, UDP, Bluetooth)
+- Create unified interface for all network operations
+- Build async/await support for concurrent operations
 
-*[Day 1 implementation remains the same as original - UDP transport with trait abstraction]*
+### Implementation
+
+```rust
+// src/transport/traits.rs
+
+use std::net::SocketAddr;
+use async_trait::async_trait;
+use serde::{Serialize, Deserialize};
+use crate::protocol::{PeerId, ProtocolResult};
+
+/// Transport address types
+/// 
+/// Feynman: Think of these as different "postal systems" - 
+/// TCP is like registered mail (reliable), UDP is like postcards (fast but unreliable),
+/// Bluetooth is like passing notes in class (short range, direct)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum TransportAddress {
+    Tcp(SocketAddr),      // Reliable, ordered delivery
+    Udp(SocketAddr),      // Fast, unordered delivery
+    Bluetooth(String),    // Short-range mesh
+    Mesh(PeerId),        // Abstract mesh routing
+}
+
+/// Events that can occur on a transport
+/// 
+/// Feynman: These are the "news reports" from our network -
+/// who joined, who left, what messages arrived
+#[derive(Debug, Clone)]
+pub enum TransportEvent {
+    Connected { peer_id: PeerId, address: TransportAddress },
+    Disconnected { peer_id: PeerId, reason: String },
+    DataReceived { peer_id: PeerId, data: Vec<u8> },
+    Error { peer_id: Option<PeerId>, error: String },
+}
+
+/// Core transport trait - defines what any transport must do
+/// 
+/// Feynman: This is the "job description" for any transport.
+/// Whether you're TCP, UDP, or carrier pigeon, you must be able
+/// to do these basic operations.
+#[async_trait]
+pub trait Transport: Send + Sync {
+    /// Start listening on the specified address
+    /// Feynman: "Open your mailbox for incoming messages"
+    async fn listen(&mut self, address: TransportAddress) -> ProtocolResult<()>;
+    
+    /// Connect to a peer at the specified address
+    /// Feynman: "Establish a phone line to another node"
+    async fn connect(&mut self, address: TransportAddress) -> ProtocolResult<PeerId>;
+    
+    /// Send data to a connected peer
+    /// Feynman: "Put a letter in the mail to a specific person"
+    async fn send(&mut self, peer_id: PeerId, data: Vec<u8>) -> ProtocolResult<()>;
+    
+    /// Disconnect from a peer
+    /// Feynman: "Hang up the phone"
+    async fn disconnect(&mut self, peer_id: PeerId) -> ProtocolResult<()>;
+    
+    /// Check if connected to a peer
+    /// Feynman: "Is the phone line still active?"
+    fn is_connected(&self, peer_id: &PeerId) -> bool;
+    
+    /// Get list of connected peers
+    /// Feynman: "Who's in my address book with active connections?"
+    fn connected_peers(&self) -> Vec<PeerId>;
+    
+    /// Receive the next transport event
+    /// Feynman: "Check the mailbox for new messages or connection updates"
+    async fn next_event(&mut self) -> Option<TransportEvent>;
+}
+```
 
 ---
 
@@ -54,21 +129,23 @@ Week 2 builds the **network layer** with advanced scalability and security featu
 
 ```rust
 // src/transport/kademlia.rs
+
 use std::collections::{HashMap, BTreeMap};
 use std::net::SocketAddr;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, RwLock as TokioRwLock};
-use tokio::time::{timeout, interval};
+use tokio::sync::{mpsc, RwLock};
+use tokio::time::interval;
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
-
-use super::traits::{TransportAddress, TransportEvent};
-use super::tcp::TcpTransport;
-use crate::protocol::{PeerId, ProtocolResult, ProtocolError, BinaryProtocol, BitchatPacket};
-use crate::protocol::constants::*;
+use crate::protocol::{PeerId, ProtocolResult};
 
 /// Kademlia node ID - 256-bit identifier
+/// 
+/// Feynman: Every node gets a "phone number" - a unique 256-bit ID.
+/// The magic is that we can calculate "distance" between IDs using XOR.
+/// Close IDs have similar bit patterns, far IDs are very different.
+/// This creates a natural "neighborhood" structure in the network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId([u8; 32]);
 
@@ -78,7 +155,8 @@ impl NodeId {
     }
     
     pub fn from_peer_id(peer_id: &PeerId) -> Self {
-        Self(peer_id.as_bytes())
+        // Feynman: Convert a peer's identity into their DHT "address"
+        Self(*peer_id.as_bytes())
     }
     
     pub fn as_bytes(&self) -> &[u8; 32] {
@@ -86,6 +164,11 @@ impl NodeId {
     }
     
     /// Calculate XOR distance between two node IDs
+    /// 
+    /// Feynman: XOR distance is like "how different are these two binary numbers?"
+    /// If two IDs are identical, XOR gives all zeros (distance = 0).
+    /// The more bits that differ, the larger the distance.
+    /// This creates a metric space where we can navigate efficiently.
     pub fn distance(&self, other: &NodeId) -> NodeDistance {
         let mut distance = [0u8; 32];
         for i in 0..32 {
@@ -95,6 +178,10 @@ impl NodeId {
     }
     
     /// Find the bucket index for this node ID relative to another
+    /// 
+    /// Feynman: Buckets are like "area codes" - nodes at similar distances
+    /// go in the same bucket. Bucket 0 = very far, Bucket 255 = very close.
+    /// We keep more details about nearby nodes (smaller buckets) than distant ones.
     pub fn bucket_index(&self, other: &NodeId) -> usize {
         let distance = self.distance(other);
         distance.leading_zeros()
@@ -1282,5 +1369,312 @@ impl PowIntegrationManager {
 - **PoW Identities**: Strong protection against mass peer generation
 - **Redundant Paths**: Multiple routing options prevent targeted disruption
 - **Real-time Monitoring**: Continuous analysis of network health and security
+
+---
+
+## Day 6: Bluetooth Mesh Transport Implementation
+
+### Goals
+- Implement actual Bluetooth LE transport for mesh networking
+- Create GATT service for BitCraps protocol
+- Build peer discovery via BLE advertisements
+- Support both central and peripheral roles
+
+### Dependencies
+```toml
+# Add to Cargo.toml
+btleplug = "0.11"  # Cross-platform Bluetooth LE
+bluer = "0.17"     # Linux BlueZ support
+uuid = "1.6"
+```
+
+### Bluetooth Transport Implementation
+
+```rust
+// src/transport/bluetooth.rs
+use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
+use btleplug::platform::{Adapter, Manager, Peripheral};
+use futures::stream::StreamExt;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::{mpsc, RwLock};
+use uuid::Uuid;
+
+use crate::protocol::{PeerId, BitchatPacket};
+use super::{Transport, TransportAddress, TransportEvent};
+
+/// BitCraps GATT Service UUID
+const BITCRAPS_SERVICE_UUID: Uuid = Uuid::from_u128(0x12345678_1234_5678_1234_567812345678);
+const BITCRAPS_RX_CHAR_UUID: Uuid = Uuid::from_u128(0x12345678_1234_5678_1234_567812345679);
+const BITCRAPS_TX_CHAR_UUID: Uuid = Uuid::from_u128(0x12345678_1234_5678_1234_567812345680);
+
+/// Bluetooth mesh transport implementation
+/// 
+/// Feynman: This is like creating a network of walkie-talkies where each
+/// casino has a short-range radio. Messages hop from radio to radio until
+/// they reach their destination. Bluetooth LE is perfect for this because
+/// it's low power and works on all phones.
+pub struct BluetoothTransport {
+    manager: Manager,
+    adapter: Option<Adapter>,
+    connections: Arc<RwLock<HashMap<PeerId, Peripheral>>>,
+    event_sender: mpsc::UnboundedSender<TransportEvent>,
+    event_receiver: mpsc::UnboundedReceiver<TransportEvent>,
+    local_peer_id: PeerId,
+    is_scanning: Arc<RwLock<bool>>,
+}
+
+impl BluetoothTransport {
+    pub async fn new(local_peer_id: PeerId) -> Result<Self, Box<dyn std::error::Error>> {
+        let manager = Manager::new().await?;
+        let adapters = manager.adapters().await?;
+        let adapter = adapters.into_iter().next()
+            .ok_or("No Bluetooth adapter found")?;
+        
+        let (event_sender, event_receiver) = mpsc::unbounded_channel();
+        
+        Ok(Self {
+            manager,
+            adapter: Some(adapter),
+            connections: Arc::new(RwLock::new(HashMap::new())),
+            event_sender,
+            event_receiver,
+            local_peer_id,
+            is_scanning: Arc::new(RwLock::new(false)),
+        })
+    }
+    
+    /// Start advertising as a BitCraps node
+    /// 
+    /// Feynman: This is like putting up a neon sign saying "Casino Here!"
+    /// Other devices scanning for BitCraps nodes will see our advertisement
+    /// and can connect to play.
+    pub async fn start_advertising(&self) -> Result<(), Box<dyn std::error::Error>> {
+        // In production, would use platform-specific BLE advertising APIs
+        // This is simplified for illustration
+        println!("Starting BitCraps BLE advertising with peer_id: {:?}", self.local_peer_id);
+        Ok(())
+    }
+    
+    /// Scan for other BitCraps nodes
+    /// 
+    /// Feynman: This is like walking around the casino district looking
+    /// for other casinos' neon signs. When we find one advertising BitCraps,
+    /// we can connect and join their game network.
+    pub async fn scan_for_peers(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let adapter = self.adapter.as_ref().ok_or("No adapter")?;
+        
+        *self.is_scanning.write().await = true;
+        
+        adapter.start_scan(ScanFilter::default()).await?;
+        
+        let mut events = adapter.events().await?;
+        let connections = self.connections.clone();
+        let event_sender = self.event_sender.clone();
+        let is_scanning = self.is_scanning.clone();
+        
+        tokio::spawn(async move {
+            while *is_scanning.read().await {
+                if let Some(event) = events.next().await {
+                    // Check if device advertises BitCraps service
+                    // In production, would parse advertisement data
+                    println!("Found BLE device: {:?}", event);
+                }
+            }
+        });
+        
+        Ok(())
+    }
+    
+    /// Send packet over Bluetooth to peer
+    async fn send_over_ble(
+        &self,
+        peer_id: PeerId,
+        packet: &BitchatPacket,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let connections = self.connections.read().await;
+        
+        if let Some(peripheral) = connections.get(&peer_id) {
+            // Serialize packet
+            let data = packet.serialize();
+            
+            // Write to TX characteristic
+            peripheral.write(
+                &BITCRAPS_TX_CHAR_UUID,
+                &data,
+                btleplug::api::WriteType::WithoutResponse,
+            ).await?;
+            
+            Ok(())
+        } else {
+            Err("Peer not connected".into())
+        }
+    }
+}
+
+#[async_trait]
+impl Transport for BluetoothTransport {
+    async fn listen(&mut self, address: TransportAddress) -> Result<(), Box<dyn std::error::Error>> {
+        match address {
+            TransportAddress::Bluetooth(name) => {
+                println!("Listening as Bluetooth device: {}", name);
+                self.start_advertising().await
+            }
+            _ => Err("Invalid address type for Bluetooth transport".into()),
+        }
+    }
+    
+    async fn connect(&mut self, address: TransportAddress) -> Result<PeerId, Box<dyn std::error::Error>> {
+        match address {
+            TransportAddress::Bluetooth(device_id) => {
+                // Connect to specific Bluetooth device
+                // In production, would resolve device_id to actual peripheral
+                println!("Connecting to Bluetooth device: {}", device_id);
+                
+                // Return peer ID after successful connection
+                Ok([0u8; 32]) // Placeholder
+            }
+            _ => Err("Invalid address type for Bluetooth transport".into()),
+        }
+    }
+    
+    async fn send(&mut self, peer_id: PeerId, data: Vec<u8>) -> Result<(), Box<dyn std::error::Error>> {
+        // Create packet from data
+        let packet = BitchatPacket::deserialize(&mut data.into())
+            .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+        
+        self.send_over_ble(peer_id, &packet).await
+    }
+    
+    async fn disconnect(&mut self, peer_id: PeerId) -> Result<(), Box<dyn std::error::Error>> {
+        let mut connections = self.connections.write().await;
+        
+        if let Some(peripheral) = connections.remove(&peer_id) {
+            peripheral.disconnect().await?;
+            
+            self.event_sender.send(TransportEvent::Disconnected {
+                peer_id,
+                reason: "User requested disconnect".to_string(),
+            }).map_err(|_| "Event channel closed")?;
+        }
+        
+        Ok(())
+    }
+    
+    fn is_connected(&self, peer_id: &PeerId) -> bool {
+        // Check synchronously using try_read
+        if let Ok(connections) = self.connections.try_read() {
+            connections.contains_key(peer_id)
+        } else {
+            false
+        }
+    }
+    
+    fn connected_peers(&self) -> Vec<PeerId> {
+        if let Ok(connections) = self.connections.try_read() {
+            connections.keys().copied().collect()
+        } else {
+            Vec::new()
+        }
+    }
+    
+    async fn next_event(&mut self) -> Option<TransportEvent> {
+        self.event_receiver.recv().await
+    }
+}
+
+/// Bluetooth mesh network coordinator
+/// 
+/// Feynman: This is the "air traffic controller" for our Bluetooth casino
+/// network. It manages who's connected, routes messages between casinos,
+/// and ensures messages reach their destination even if they have to hop
+/// through multiple intermediate casinos.
+pub struct BluetoothMeshCoordinator {
+    transport: BluetoothTransport,
+    routing_table: Arc<RwLock<HashMap<PeerId, Vec<PeerId>>>>,
+    message_cache: Arc<RwLock<HashMap<u64, Instant>>>,
+}
+
+impl BluetoothMeshCoordinator {
+    pub async fn new(local_peer_id: PeerId) -> Result<Self, Box<dyn std::error::Error>> {
+        let transport = BluetoothTransport::new(local_peer_id).await?;
+        
+        Ok(Self {
+            transport,
+            routing_table: Arc::new(RwLock::new(HashMap::new())),
+            message_cache: Arc::new(RwLock::new(HashMap::new())),
+        })
+    }
+    
+    /// Route message through mesh network
+    /// 
+    /// Feynman: Like a game of telephone - if Alice can't directly reach
+    /// Charlie, she tells Bob, who tells Charlie. The routing table keeps
+    /// track of who can reach whom.
+    pub async fn route_message(
+        &self,
+        packet: &BitchatPacket,
+        target: PeerId,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Check if we have direct connection
+        if self.transport.is_connected(&target) {
+            return self.transport.send(target, packet.serialize().to_vec()).await;
+        }
+        
+        // Find route through mesh
+        let routing_table = self.routing_table.read().await;
+        if let Some(next_hops) = routing_table.get(&target) {
+            // Send to first available next hop
+            for next_hop in next_hops {
+                if self.transport.is_connected(next_hop) {
+                    return self.transport.send(*next_hop, packet.serialize().to_vec()).await;
+                }
+            }
+        }
+        
+        // No route found - broadcast to all peers
+        let peers = self.transport.connected_peers();
+        for peer in peers {
+            let _ = self.transport.send(peer, packet.serialize().to_vec()).await;
+        }
+        
+        Ok(())
+    }
+}
+```
+
+### Platform-Specific Bluetooth Implementation
+
+```rust
+// src/transport/bluetooth_android.rs
+#[cfg(target_os = "android")]
+mod android {
+    use jni::JNIEnv;
+    use jni::objects::{JClass, JObject};
+    
+    /// Android-specific Bluetooth implementation using JNI
+    /// 
+    /// Feynman: On Android, we need to talk to the Java Bluetooth APIs.
+    /// JNI is like a translator between Rust and Java - we ask Java to
+    /// do Bluetooth things and it tells us the results.
+    pub struct AndroidBluetoothTransport {
+        // JNI environment and Bluetooth manager references
+    }
+}
+
+// src/transport/bluetooth_ios.rs  
+#[cfg(target_os = "ios")]
+mod ios {
+    use objc::runtime::Object;
+    
+    /// iOS-specific Bluetooth implementation using Core Bluetooth
+    /// 
+    /// Feynman: On iPhone, we talk to Core Bluetooth through Objective-C.
+    /// It's like having an interpreter who speaks Apple's language.
+    pub struct IOSBluetoothTransport {
+        // Core Bluetooth manager references
+    }
+}
+```
 
 These enhancements provide BitChat with enterprise-grade scalability and security while maintaining the decentralized, peer-to-peer architecture.

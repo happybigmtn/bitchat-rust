@@ -12,7 +12,13 @@
 
 ## Overview
 
-Week 3 focuses on building the sophisticated mesh service architecture that makes BitChat unique. Based on the Android implementation's mesh components, we'll create a complete mesh networking system with advanced message handling, deduplication, security management, and IRC-style channel management. This week transforms the protocol foundations from Weeks 1 and 2 into a production-ready mesh networking system.
+**Feynman Explanation**: Week 3 is about building the "post office" for our decentralized casino city. 
+Imagine thousands of casinos all trying to talk at once - we need traffic controllers (mesh service), 
+mail sorters (message handlers), security guards (anti-cheat), and department managers (component coordinators).
+The mesh service is like a well-organized post office that knows how to route every letter, detect forgeries,
+and ensure no message gets lost or duplicated.
+
+Week 3 focuses on building the sophisticated mesh service architecture that makes BitCraps unique. Based on the Android implementation's mesh components, we'll create a complete mesh networking system with advanced message handling, deduplication, security management, and IRC-style channel management. This week transforms the protocol foundations from Weeks 1 and 2 into a production-ready mesh networking system.
 
 ## Project Context Recap
 
@@ -266,6 +272,13 @@ impl Default for MeshServiceConfig {
 }
 
 impl MeshService {
+    /// Create a new mesh service coordinating all networking components
+    /// 
+    /// Feynman: This is like hiring a master coordinator for our casino network.
+    /// They manage the security team (SecurityManager), the mail room (MessageHandler),
+    /// the chat rooms (ChannelManager), and keep track of who's playing (SessionManager).
+    /// The coordinator uses an event system like a PA system - anyone can announce
+    /// events and everyone who needs to know will hear about it.
     pub fn new(
         session_manager: BitchatSessionManager,
         transport_manager: TransportManager,
@@ -4760,6 +4773,509 @@ MeshService (Orchestrator)
 - **Scalability**: Supports 50+ concurrent peers per node
 
 ### Next Steps for Production
+
+1. **Persistence**: Add database storage for channels and message history
+2. **Network Layer**: Integrate with actual Bluetooth LE and WiFi transports
+3. **UI Integration**: Build terminal or graphical user interfaces
+4. **Mobile Support**: Android/iOS integration points
+
+---
+
+## Day 6: CRAP Token Mining and Ledger System
+
+### Goals
+- Implement CRAP token mining through network participation
+- Create distributed ledger for token balances
+- Build proof-of-relay consensus mechanism
+- Integrate treasury as automatic participant
+
+### Token System Architecture
+
+```rust
+// src/token/crap_token.rs
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use serde::{Serialize, Deserialize};
+use sha2::{Sha256, Digest};
+
+use crate::protocol::PeerId;
+
+/// CRAP Token constants matching Bitcoin-style economics
+/// 
+/// Feynman: Like Bitcoin, we have a fixed supply of 21 million tokens.
+/// But instead of wasting electricity on puzzles, you earn tokens by
+/// actually helping the network - relaying messages, storing data, and
+/// running games. It's "proof of useful work" instead of "proof of waste".
+pub const MAX_SUPPLY: u64 = 21_000_000_000_000; // 21M with 6 decimals
+pub const INITIAL_REWARD: u64 = 50_000_000; // 50 CRAP tokens
+pub const HALVING_INTERVAL: u64 = 210_000; // Blocks between halvings
+pub const BLOCK_TIME: u64 = 600; // 10 minutes in seconds
+pub const TREASURY_ADDRESS: PeerId = [0xFF; 32]; // Special treasury address
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Block {
+    pub height: u64,
+    pub timestamp: u64,
+    pub prev_hash: [u8; 32],
+    pub merkle_root: [u8; 32],
+    pub transactions: Vec<Transaction>,
+    pub miner: PeerId,
+    pub nonce: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Transaction {
+    pub id: [u8; 32],
+    pub from: PeerId,
+    pub to: PeerId,
+    pub amount: u64,
+    pub fee: u64,
+    pub tx_type: TransactionType,
+    pub signature: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TransactionType {
+    Transfer,
+    GameBet { game_id: [u8; 16], bet_type: u8 },
+    GamePayout { game_id: [u8; 16], roll: (u8, u8) },
+    RelayReward { messages_relayed: u32 },
+    StorageReward { bytes_stored: u64 },
+    TreasuryDeposit,
+    TreasuryWithdraw,
+}
+
+/// Token ledger maintaining all balances
+/// 
+/// Feynman: This is like the casino's accounting book - it tracks every
+/// chip (token) in existence. Unlike a regular casino where the house
+/// can print more chips, our ledger enforces the 21 million limit.
+/// Every transaction is recorded and signed, creating an audit trail.
+pub struct TokenLedger {
+    balances: Arc<RwLock<HashMap<PeerId, u64>>>,
+    blocks: Arc<RwLock<Vec<Block>>>,
+    pending_transactions: Arc<RwLock<Vec<Transaction>>>,
+    current_supply: Arc<RwLock<u64>>,
+}
+
+impl TokenLedger {
+    pub fn new() -> Self {
+        let mut balances = HashMap::new();
+        // Treasury starts with initial supply for game liquidity
+        balances.insert(TREASURY_ADDRESS, 1_000_000_000_000); // 1M CRAP
+        
+        Self {
+            balances: Arc::new(RwLock::new(balances)),
+            blocks: Arc::new(RwLock::new(Vec::new())),
+            pending_transactions: Arc::new(RwLock::new(Vec::new())),
+            current_supply: Arc::new(RwLock::new(1_000_000_000_000)),
+        }
+    }
+    
+    /// Calculate mining reward based on block height
+    /// 
+    /// Feynman: Like Bitcoin, rewards halve every 210,000 blocks.
+    /// This creates scarcity over time - early participants get more,
+    /// encouraging early adoption while ensuring long-term sustainability.
+    pub fn calculate_block_reward(height: u64) -> u64 {
+        let halvings = height / HALVING_INTERVAL;
+        if halvings >= 64 {
+            return 0; // No more rewards after 64 halvings
+        }
+        INITIAL_REWARD >> halvings
+    }
+    
+    /// Process a relay reward for forwarding messages
+    /// 
+    /// Feynman: Instead of mining by solving puzzles, you "mine" by
+    /// being a good network citizen. Forward messages? Get paid.
+    /// Store data for offline users? Get paid. It's capitalism for routers!
+    pub async fn process_relay_reward(
+        &self,
+        peer: PeerId,
+        messages_relayed: u32,
+    ) -> Result<Transaction, String> {
+        let reward = (messages_relayed as u64) * 1000; // 0.001 CRAP per message
+        
+        let mut supply = self.current_supply.write().await;
+        if *supply + reward > MAX_SUPPLY {
+            return Err("Would exceed max supply".to_string());
+        }
+        
+        let tx = Transaction {
+            id: Self::generate_tx_id(&peer, reward),
+            from: TREASURY_ADDRESS,
+            to: peer,
+            amount: reward,
+            fee: 0,
+            tx_type: TransactionType::RelayReward { messages_relayed },
+            signature: Vec::new(), // Would be signed by consensus
+        };
+        
+        // Update balances
+        let mut balances = self.balances.write().await;
+        *balances.entry(peer).or_insert(0) += reward;
+        *supply += reward;
+        
+        // Add to pending transactions
+        self.pending_transactions.write().await.push(tx.clone());
+        
+        Ok(tx)
+    }
+    
+    /// Process a game bet, deducting from player and adding to treasury
+    /// 
+    /// Feynman: When you bet, your tokens go into the treasury's vault.
+    /// If you win, the treasury pays out. The treasury always participates
+    /// to ensure there's liquidity for payouts - it's the "house" in our casino.
+    pub async fn process_game_bet(
+        &self,
+        player: PeerId,
+        amount: u64,
+        game_id: [u8; 16],
+        bet_type: u8,
+    ) -> Result<Transaction, String> {
+        let mut balances = self.balances.write().await;
+        
+        // Check player balance
+        let player_balance = balances.get(&player).copied().unwrap_or(0);
+        if player_balance < amount {
+            return Err("Insufficient balance".to_string());
+        }
+        
+        // Transfer to treasury
+        *balances.get_mut(&player).unwrap() -= amount;
+        *balances.entry(TREASURY_ADDRESS).or_insert(0) += amount;
+        
+        let tx = Transaction {
+            id: Self::generate_tx_id(&player, amount),
+            from: player,
+            to: TREASURY_ADDRESS,
+            amount,
+            fee: 0,
+            tx_type: TransactionType::GameBet { game_id, bet_type },
+            signature: Vec::new(),
+        };
+        
+        self.pending_transactions.write().await.push(tx.clone());
+        
+        Ok(tx)
+    }
+    
+    /// Process a game payout from treasury to winner
+    pub async fn process_game_payout(
+        &self,
+        winner: PeerId,
+        amount: u64,
+        game_id: [u8; 16],
+        roll: (u8, u8),
+    ) -> Result<Transaction, String> {
+        let mut balances = self.balances.write().await;
+        
+        // Check treasury balance
+        let treasury_balance = balances.get(&TREASURY_ADDRESS).copied().unwrap_or(0);
+        if treasury_balance < amount {
+            return Err("Insufficient treasury balance".to_string());
+        }
+        
+        // Transfer from treasury
+        *balances.get_mut(&TREASURY_ADDRESS).unwrap() -= amount;
+        *balances.entry(winner).or_insert(0) += amount;
+        
+        let tx = Transaction {
+            id: Self::generate_tx_id(&winner, amount),
+            from: TREASURY_ADDRESS,
+            to: winner,
+            amount,
+            fee: 0,
+            tx_type: TransactionType::GamePayout { game_id, roll },
+            signature: Vec::new(),
+        };
+        
+        self.pending_transactions.write().await.push(tx.clone());
+        
+        Ok(tx)
+    }
+    
+    /// Get balance for a peer
+    pub async fn get_balance(&self, peer: &PeerId) -> u64 {
+        self.balances.read().await.get(peer).copied().unwrap_or(0)
+    }
+    
+    /// Get treasury balance
+    pub async fn get_treasury_balance(&self) -> u64 {
+        self.get_balance(&TREASURY_ADDRESS).await
+    }
+    
+    fn generate_tx_id(peer: &PeerId, amount: u64) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(peer);
+        hasher.update(amount.to_be_bytes());
+        hasher.update(std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+            .to_be_bytes());
+        
+        let result = hasher.finalize();
+        let mut id = [0u8; 32];
+        id.copy_from_slice(&result);
+        id
+    }
+}
+
+/// Proof of Relay consensus mechanism
+/// 
+/// Feynman: Instead of proving you wasted electricity (Proof of Work)
+/// or proving you're rich (Proof of Stake), you prove you're useful.
+/// The more messages you relay, data you store, and games you facilitate,
+/// the more likely you are to mine the next block and earn rewards.
+pub struct ProofOfRelay {
+    relay_scores: Arc<RwLock<HashMap<PeerId, u64>>>,
+    storage_scores: Arc<RwLock<HashMap<PeerId, u64>>>,
+    game_scores: Arc<RwLock<HashMap<PeerId, u64>>>,
+}
+
+impl ProofOfRelay {
+    pub fn new() -> Self {
+        Self {
+            relay_scores: Arc::new(RwLock::new(HashMap::new())),
+            storage_scores: Arc::new(RwLock::new(HashMap::new())),
+            game_scores: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+    
+    /// Update relay score for a peer
+    pub async fn update_relay_score(&self, peer: PeerId, messages: u32) {
+        let mut scores = self.relay_scores.write().await;
+        *scores.entry(peer).or_insert(0) += messages as u64;
+    }
+    
+    /// Update storage score for a peer
+    pub async fn update_storage_score(&self, peer: PeerId, bytes: u64) {
+        let mut scores = self.storage_scores.write().await;
+        *scores.entry(peer).or_insert(0) += bytes;
+    }
+    
+    /// Update game hosting score
+    pub async fn update_game_score(&self, peer: PeerId, games_hosted: u32) {
+        let mut scores = self.game_scores.write().await;
+        *scores.entry(peer).or_insert(0) += games_hosted as u64;
+    }
+    
+    /// Select next block miner based on proof of relay scores
+    /// 
+    /// Feynman: Think of this like a lottery where your tickets are
+    /// earned by being helpful. The more you help the network, the
+    /// more lottery tickets you get. But it's still random who wins,
+    /// so no one can monopolize block production.
+    pub async fn select_block_producer(&self, seed: &[u8; 32]) -> PeerId {
+        let relay = self.relay_scores.read().await;
+        let storage = self.storage_scores.read().await;
+        let games = self.game_scores.read().await;
+        
+        // Calculate total scores
+        let mut total_scores: HashMap<PeerId, u64> = HashMap::new();
+        
+        for (peer, score) in relay.iter() {
+            *total_scores.entry(*peer).or_insert(0) += score;
+        }
+        
+        for (peer, score) in storage.iter() {
+            *total_scores.entry(*peer).or_insert(0) += score / 1000; // Weight storage less
+        }
+        
+        for (peer, score) in games.iter() {
+            *total_scores.entry(*peer).or_insert(0) += score * 10; // Weight games more
+        }
+        
+        // Weighted random selection
+        let total_weight: u64 = total_scores.values().sum();
+        if total_weight == 0 {
+            return [0u8; 32]; // Default to null peer
+        }
+        
+        // Use seed for deterministic randomness
+        let mut hasher = Sha256::new();
+        hasher.update(seed);
+        let hash = hasher.finalize();
+        let random = u64::from_be_bytes(hash[0..8].try_into().unwrap());
+        let target = random % total_weight;
+        
+        let mut accumulator = 0u64;
+        for (peer, score) in total_scores.iter() {
+            accumulator += score;
+            if accumulator > target {
+                return *peer;
+            }
+        }
+        
+        [0u8; 32] // Shouldn't reach here
+    }
+}
+```
+
+### Treasury Integration in Game Runtime
+
+```rust
+// src/gaming/treasury_participant.rs
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+use crate::protocol::{PeerId, GameId, Bet, BetType, DiceRoll};
+use crate::token::{TokenLedger, TREASURY_ADDRESS};
+
+/// Treasury bot that automatically participates in games
+/// 
+/// Feynman: The treasury is like a robot dealer that's always at the table.
+/// When players start a game, the treasury automatically joins to ensure
+/// there's always someone to bet against and enough liquidity for payouts.
+/// It follows strict rules - never cheats, always pays winners.
+pub struct TreasuryParticipant {
+    ledger: Arc<TokenLedger>,
+    active_games: Arc<RwLock<HashMap<GameId, TreasuryGameState>>>,
+    risk_limit: u64, // Maximum exposure per game
+}
+
+#[derive(Debug, Clone)]
+struct TreasuryGameState {
+    game_id: GameId,
+    total_exposure: u64,
+    player_bets: HashMap<PeerId, Vec<Bet>>,
+    treasury_bets: Vec<Bet>,
+}
+
+impl TreasuryParticipant {
+    pub fn new(ledger: Arc<TokenLedger>) -> Self {
+        Self {
+            ledger,
+            active_games: Arc::new(RwLock::new(HashMap::new())),
+            risk_limit: 1_000_000_000_000, // 1M CRAP max exposure per game
+        }
+    }
+    
+    /// Automatically join a game when players create one
+    /// 
+    /// Feynman: Like a casino employee who must play at every table
+    /// to ensure there's action. The treasury doesn't gamble for fun -
+    /// it provides liquidity and takes the opposite side of player bets
+    /// to ensure a functioning market.
+    pub async fn auto_join_game(&self, game_id: GameId) -> Result<(), String> {
+        let treasury_balance = self.ledger.get_treasury_balance().await;
+        
+        if treasury_balance < self.risk_limit {
+            return Err("Insufficient treasury balance for game".to_string());
+        }
+        
+        let mut games = self.active_games.write().await;
+        games.insert(game_id, TreasuryGameState {
+            game_id,
+            total_exposure: 0,
+            player_bets: HashMap::new(),
+            treasury_bets: Vec::new(),
+        });
+        
+        println!("Treasury joined game {:?} with {} CRAP available", 
+                 game_id, treasury_balance / 1_000_000);
+        
+        Ok(())
+    }
+    
+    /// React to player bets by taking opposite positions
+    /// 
+    /// Feynman: The treasury acts as a "market maker" - when someone
+    /// bets Pass, it might bet Don't Pass to balance the action.
+    /// This ensures there's always someone to win from and lose to.
+    pub async fn handle_player_bet(
+        &self,
+        game_id: GameId,
+        player: PeerId,
+        bet: Bet,
+    ) -> Result<Vec<Bet>, String> {
+        let mut games = self.active_games.write().await;
+        let game = games.get_mut(&game_id)
+            .ok_or("Game not found")?;
+        
+        // Record player bet
+        game.player_bets.entry(player).or_insert(Vec::new()).push(bet.clone());
+        
+        // Calculate treasury's counter-bet
+        let counter_bets = self.calculate_counter_bets(&bet, game.total_exposure).await?;
+        
+        // Update exposure
+        for counter_bet in &counter_bets {
+            game.total_exposure += counter_bet.amount.amount();
+            game.treasury_bets.push(counter_bet.clone());
+        }
+        
+        Ok(counter_bets)
+    }
+    
+    /// Calculate counter-bets to balance the action
+    async fn calculate_counter_bets(
+        &self,
+        player_bet: &Bet,
+        current_exposure: u64,
+    ) -> Result<Vec<Bet>, String> {
+        let mut counter_bets = Vec::new();
+        
+        // Simple strategy: take opposite of line bets
+        let counter_type = match player_bet.bet_type {
+            BetType::Pass => Some(BetType::DontPass),
+            BetType::DontPass => Some(BetType::Pass),
+            BetType::Come => Some(BetType::DontCome),
+            BetType::DontCome => Some(BetType::Come),
+            _ => None, // Don't counter other bets for now
+        };
+        
+        if let Some(bet_type) = counter_type {
+            // Only counter if within risk limits
+            if current_exposure + player_bet.amount.amount() <= self.risk_limit {
+                counter_bets.push(Bet {
+                    id: [0u8; 16], // Generate proper ID
+                    game_id: player_bet.game_id,
+                    player: TREASURY_ADDRESS,
+                    bet_type,
+                    amount: player_bet.amount,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                });
+            }
+        }
+        
+        Ok(counter_bets)
+    }
+    
+    /// Process game resolution and handle payouts
+    pub async fn process_game_result(
+        &self,
+        game_id: GameId,
+        final_roll: DiceRoll,
+        winners: Vec<(PeerId, u64)>,
+    ) -> Result<(), String> {
+        // Process payouts through the ledger
+        for (winner, amount) in winners {
+            if winner != TREASURY_ADDRESS {
+                // Pay out to player
+                self.ledger.process_game_payout(
+                    winner,
+                    amount,
+                    game_id,
+                    (final_roll.die1, final_roll.die2),
+                ).await?;
+            }
+        }
+        
+        // Clean up game state
+        self.active_games.write().await.remove(&game_id);
+        
+        Ok(())
+    }
+}
+```
 
 1. **Persistence**: Add database storage for channels and message history
 2. **Network Layer**: Integrate with actual Bluetooth LE and WiFi transports
