@@ -12,6 +12,7 @@ use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier};
 use rand::{RngCore, thread_rng};
 use sha2::{Sha256, Digest};
 use hmac::{Hmac, Mac};
+use pbkdf2::pbkdf2_hmac;
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::{PeerId, GameId};
@@ -397,43 +398,19 @@ impl GameCrypto {
 }
 
 impl KeyDerivation {
-    /// Derive key using simple PBKDF2-like construction
+    /// Derive key using secure PBKDF2 with established library
+    /// Uses minimum 100,000 iterations for modern security standards
     pub fn derive_key_pbkdf2(
         password: &[u8],
         salt: &[u8],
         iterations: u32,
         output_length: usize,
     ) -> Result<Vec<u8>> {
-        let mut output = Vec::new();
-        let mut counter = 1u32;
+        // Ensure minimum security: at least 100,000 iterations
+        let secure_iterations = std::cmp::max(iterations, 100_000);
         
-        while output.len() < output_length {
-            let mut hmac = Hmac::<Sha256>::new_from_slice(password)
-                .map_err(|e| Error::Crypto(format!("HMAC key error: {}", e)))?;
-            hmac.update(salt);
-            hmac.update(&counter.to_be_bytes());
-            
-            let mut intermediate = hmac.finalize().into_bytes().to_vec();
-            let mut result = intermediate.clone();
-            
-            for _ in 1..iterations {
-                hmac = Hmac::<Sha256>::new_from_slice(password)
-                    .map_err(|e| Error::Crypto(format!("HMAC key error: {}", e)))?;
-                hmac.update(&intermediate);
-                intermediate = hmac.finalize().into_bytes().to_vec();
-                
-                for (i, byte) in intermediate.iter().enumerate() {
-                    if i < result.len() {
-                        result[i] ^= byte;
-                    }
-                }
-            }
-            
-            output.extend_from_slice(&result);
-            counter += 1;
-        }
-        
-        output.truncate(output_length);
+        let mut output = vec![0u8; output_length];
+        pbkdf2_hmac::<Sha256>(password, salt, secure_iterations, &mut output);
         Ok(output)
     }
     
@@ -788,5 +765,33 @@ mod tests {
         
         assert!(die1 >= 1 && die1 <= 6);
         assert!(die2 >= 1 && die2 <= 6);
+    }
+    
+    #[test]
+    fn test_pbkdf2_key_derivation() {
+        let password = b"test_password";
+        let salt = b"test_salt_123";
+        let iterations = 50_000; // Will be increased to 100k minimum
+        let output_length = 32;
+        
+        let result = KeyDerivation::derive_key_pbkdf2(password, salt, iterations, output_length);
+        assert!(result.is_ok());
+        
+        let key = result.unwrap();
+        assert_eq!(key.len(), output_length);
+        
+        // Ensure different passwords produce different keys
+        let result2 = KeyDerivation::derive_key_pbkdf2(b"different_password", salt, iterations, output_length);
+        assert!(result2.is_ok());
+        
+        let key2 = result2.unwrap();
+        assert_ne!(key, key2);
+        
+        // Ensure same password produces same key
+        let result3 = KeyDerivation::derive_key_pbkdf2(password, salt, iterations, output_length);
+        assert!(result3.is_ok());
+        
+        let key3 = result3.unwrap();
+        assert_eq!(key, key3);
     }
 }

@@ -18,14 +18,16 @@ pub mod android {
         nickname: JString,
         difficulty: jlong,
     ) -> jlong {
-        // Convert Java strings to Rust
-        let data_dir: String = env.get_string(data_dir)
-            .expect("Invalid data_dir")
-            .into();
+        // Convert Java strings to Rust with proper error handling
+        let data_dir: String = match env.get_string(data_dir) {
+            Ok(s) => s.into(),
+            Err(_) => return 0,
+        };
         
-        let nickname: String = env.get_string(nickname)
-            .expect("Invalid nickname")
-            .into();
+        let nickname: String = match env.get_string(nickname) {
+            Ok(s) => s.into(),
+            Err(_) => return 0,
+        };
         
         // Start BitCraps node
         let config = AppConfig {
@@ -36,10 +38,17 @@ pub mod android {
         };
         
         // Return handle to app instance
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
-        let app = rt.block_on(async {
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(_) => return 0,
+        };
+        
+        let app = match rt.block_on(async {
             BitCrapsApp::new(config).await
-        }).expect("Failed to create app");
+        }) {
+            Ok(app) => app,
+            Err(_) => return 0,
+        };
         
         Box::into_raw(Box::new((rt, app))) as jlong
     }
@@ -51,20 +60,30 @@ pub mod android {
         app_ptr: jlong,
         buy_in: jlong,
     ) -> JString {
+        // Validate app pointer
+        if app_ptr == 0 {
+            return JObject::null().into();
+        }
+        
         let (rt, app) = unsafe { &mut *(app_ptr as *mut (tokio::runtime::Runtime, BitCrapsApp)) };
         
         // Create game
-        let game_id = rt.block_on(async {
+        let game_id = match rt.block_on(async {
             app.game_runtime.create_game(
                 app.identity.peer_id,
                 8,
                 CrapTokens::new_unchecked(buy_in as u64),
             ).await
-        }).expect("Failed to create game");
+        }) {
+            Ok(id) => id,
+            Err(_) => return JObject::null().into(),
+        };
         
         // Return game ID as string
-        env.new_string(format!("{:?}", game_id))
-            .expect("Failed to create string")
+        match env.new_string(format!("{:?}", game_id)) {
+            Ok(string) => string,
+            Err(_) => JObject::null().into(),
+        }
     }
     
     #[no_mangle]
@@ -74,11 +93,17 @@ pub mod android {
         app_ptr: jlong,
         game_id: JString,
     ) -> jboolean {
+        // Validate app pointer
+        if app_ptr == 0 {
+            return false as jboolean;
+        }
+        
         let (rt, app) = unsafe { &mut *(app_ptr as *mut (tokio::runtime::Runtime, BitCrapsApp)) };
         
-        let game_id_str: String = env.get_string(game_id)
-            .expect("Invalid game_id")
-            .into();
+        let game_id_str: String = match env.get_string(game_id) {
+            Ok(s) => s.into(),
+            Err(_) => return false as jboolean,
+        };
         
         // Parse game ID from hex string
         let game_id_bytes = match hex::decode(game_id_str) {
@@ -104,6 +129,11 @@ pub mod android {
         _class: JClass,
         app_ptr: jlong,
     ) -> jlong {
+        // Validate app pointer
+        if app_ptr == 0 {
+            return 0;
+        }
+        
         let (rt, app) = unsafe { &mut *(app_ptr as *mut (tokio::runtime::Runtime, BitCrapsApp)) };
         
         let balance = rt.block_on(async {
@@ -119,7 +149,11 @@ pub mod android {
         _class: JClass,
         app_ptr: jlong,
     ) {
-        let boxed = unsafe { Box::from_raw(app_ptr as *mut (tokio::runtime::Runtime, BitCrapsApp)) };
-        // Automatically dropped
+        // Validate app pointer before deallocation
+        if app_ptr != 0 {
+            // Safe: we verified the pointer is not null
+            let boxed = unsafe { Box::from_raw(app_ptr as *mut (tokio::runtime::Runtime, BitCrapsApp)) };
+            // Automatically dropped
+        }
     }
 }

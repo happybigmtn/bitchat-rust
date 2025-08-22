@@ -14,6 +14,11 @@ pub mod ios {
         nickname: *const c_char,
         difficulty: i32,
     ) -> *mut (tokio::runtime::Runtime, BitCrapsApp) {
+        // Validate input pointers
+        if data_dir.is_null() || nickname.is_null() {
+            return std::ptr::null_mut();
+        }
+        
         // Convert C strings to Rust
         let data_dir = unsafe {
             CStr::from_ptr(data_dir)
@@ -164,6 +169,7 @@ pub mod ios {
         app_ptr: *mut (tokio::runtime::Runtime, BitCrapsApp),
     ) {
         if !app_ptr.is_null() {
+            // Safe: we verified the pointer is not null
             let _ = unsafe { Box::from_raw(app_ptr) };
         }
     }

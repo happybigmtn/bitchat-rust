@@ -362,7 +362,9 @@ impl MeshService {
             }
             _ => {
                 // Queue for processing by components
-                self.message_queue.enqueue(packet).await;
+                if let Err(e) = self.message_queue.enqueue(packet) {
+                    log::warn!("Failed to enqueue message: {}", e);
+                }
             }
         }
         
@@ -504,11 +506,13 @@ impl MeshService {
         
         tokio::spawn(async move {
             while *is_running.read().await {
-                if let Some(packet) = message_queue.dequeue().await {
+                if let Some(packet) = message_queue.dequeue() {
                     // Process with appropriate component
                     let _ = components.process_packet(packet).await;
+                } else {
+                    // No messages available, sleep briefly to avoid busy waiting
+                    tokio::time::sleep(Duration::from_millis(10)).await;
                 }
-                tokio::time::sleep(Duration::from_millis(10)).await;
             }
         });
     }

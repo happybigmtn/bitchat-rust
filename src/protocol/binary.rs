@@ -277,6 +277,15 @@ impl BinarySerializable for DiceRoll {
         let die1 = buf.get_u8();
         let die2 = buf.get_u8();
         let timestamp = buf.get_u64();
+        
+        // Validate dice values are between 1 and 6 inclusive
+        if die1 < 1 || die1 > 6 {
+            return Err(Error::Serialization(format!("Invalid die1 value: {}, must be 1-6", die1)));
+        }
+        if die2 < 1 || die2 > 6 {
+            return Err(Error::Serialization(format!("Invalid die2 value: {}, must be 1-6", die2)));
+        }
+        
         Ok(DiceRoll { die1, die2, timestamp })
     }
     
@@ -307,7 +316,7 @@ mod tests {
     #[test]
     fn test_dice_roll_serialization() {
         let mut buf = BytesMut::new();
-        let roll = DiceRoll::new(3, 4);
+        let roll = DiceRoll::new(3, 4).unwrap();
         
         roll.serialize(&mut buf).unwrap();
         assert_eq!(buf.len(), 10);
@@ -316,5 +325,72 @@ mod tests {
         let decoded = DiceRoll::deserialize(&mut slice).unwrap();
         assert_eq!(decoded.die1, 3);
         assert_eq!(decoded.die2, 4);
+    }
+    
+    #[test]
+    fn test_dice_roll_validation() {
+        
+        let mut buf = BytesMut::new();
+        
+        // Test invalid die1 value (0)
+        buf.put_u8(0);  // die1 = 0 (invalid)
+        buf.put_u8(3);  // die2 = 3 (valid)
+        buf.put_u64(12345);  // timestamp
+        
+        let mut slice = &buf[..];
+        let result = DiceRoll::deserialize(&mut slice);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid die1 value: 0"));
+        
+        buf.clear();
+        
+        // Test invalid die1 value (7)
+        buf.put_u8(7);  // die1 = 7 (invalid)
+        buf.put_u8(3);  // die2 = 3 (valid)
+        buf.put_u64(12345);  // timestamp
+        
+        let mut slice = &buf[..];
+        let result = DiceRoll::deserialize(&mut slice);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid die1 value: 7"));
+        
+        buf.clear();
+        
+        // Test invalid die2 value (0)
+        buf.put_u8(3);  // die1 = 3 (valid)
+        buf.put_u8(0);  // die2 = 0 (invalid)
+        buf.put_u64(12345);  // timestamp
+        
+        let mut slice = &buf[..];
+        let result = DiceRoll::deserialize(&mut slice);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid die2 value: 0"));
+        
+        buf.clear();
+        
+        // Test invalid die2 value (8)
+        buf.put_u8(3);  // die1 = 3 (valid)
+        buf.put_u8(8);  // die2 = 8 (invalid)
+        buf.put_u64(12345);  // timestamp
+        
+        let mut slice = &buf[..];
+        let result = DiceRoll::deserialize(&mut slice);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid die2 value: 8"));
+        
+        buf.clear();
+        
+        // Test valid values
+        buf.put_u8(1);  // die1 = 1 (valid)
+        buf.put_u8(6);  // die2 = 6 (valid)
+        buf.put_u64(12345);  // timestamp
+        
+        let mut slice = &buf[..];
+        let result = DiceRoll::deserialize(&mut slice);
+        assert!(result.is_ok());
+        let roll = result.unwrap();
+        assert_eq!(roll.die1, 1);
+        assert_eq!(roll.die2, 6);
+        assert_eq!(roll.timestamp, 12345);
     }
 }

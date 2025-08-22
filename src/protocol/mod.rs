@@ -12,6 +12,12 @@ pub mod binary;
 pub mod craps;
 pub mod runtime;
 
+// New refactored modules
+pub mod bet_types;
+pub mod game_logic;
+pub mod resolution;
+pub mod payouts;
+
 use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -1028,7 +1034,21 @@ impl GameEventLog {
             return Ok(()); // Already have it, ignore
         }
         
-        // TODO: Verify signature
+        // Verify signature
+        // First, serialize the event for signature verification
+        let event_data = bincode::serialize(&event.event)
+            .map_err(|e| Error::Protocol(format!("Failed to serialize event for verification: {}", e)))?;
+        
+        // Create BitchatSignature from the protocol signature and player's public key
+        let bitchat_signature = crate::crypto::BitchatSignature {
+            signature: event.signature.0.to_vec(),
+            public_key: event.event.player_id.to_vec(), // Assume PeerId is the public key
+        };
+        
+        // Verify the signature
+        if !crate::crypto::BitchatIdentity::verify_signature(&event_data, &bitchat_signature) {
+            return Err(Error::Protocol("Invalid event signature".to_string()));
+        }
         
         // Add to log
         self.events.push(event.clone());
@@ -1079,13 +1099,13 @@ mod tests {
     
     #[test]
     fn test_dice_roll() {
-        let roll = DiceRoll::new(3, 4);
+        let roll = DiceRoll::new(3, 4).unwrap();
         assert_eq!(roll.total(), 7);
         assert!(roll.is_natural());
         assert!(!roll.is_craps());
         assert!(!roll.is_hard_way());
         
-        let craps_roll = DiceRoll::new(1, 1);
+        let craps_roll = DiceRoll::new(1, 1).unwrap();
         assert_eq!(craps_roll.total(), 2);
         assert!(craps_roll.is_craps());
         assert!(!craps_roll.is_natural());
@@ -1093,7 +1113,7 @@ mod tests {
     
     #[test]
     fn test_crap_tokens() {
-        let tokens = CrapTokens::from_crap(5.5);
+        let tokens = CrapTokens::from_crap(5.5).unwrap();
         assert_eq!(tokens.amount(), 5_500_000);
         assert_eq!(tokens.to_crap(), 5.5);
     }

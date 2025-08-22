@@ -19,12 +19,32 @@ const BITCRAPS_SERVICE_UUID: Uuid = Uuid::from_u128(0x12345678_1234_5678_1234_56
 const BITCRAPS_RX_CHAR_UUID: Uuid = Uuid::from_u128(0x12345678_1234_5678_1234_567812345679);
 const BITCRAPS_TX_CHAR_UUID: Uuid = Uuid::from_u128(0x12345678_1234_5678_1234_567812345680);
 
+/// Connection limits for Bluetooth transport
+#[derive(Debug, Clone)]
+pub struct BluetoothConnectionLimits {
+    pub max_concurrent_connections: usize,
+    pub max_connection_attempts_per_minute: usize,
+    pub connection_timeout: Duration,
+}
+
+impl Default for BluetoothConnectionLimits {
+    fn default() -> Self {
+        Self {
+            max_concurrent_connections: 50,
+            max_connection_attempts_per_minute: 20,
+            connection_timeout: Duration::from_secs(30),
+        }
+    }
+}
+
 /// Bluetooth mesh transport implementation
 #[allow(dead_code)]
 pub struct BluetoothTransport {
     manager: Manager,
     adapter: Option<Adapter>,
     connections: Arc<RwLock<HashMap<PeerId, Peripheral>>>,
+    connection_limits: BluetoothConnectionLimits,
+    connection_attempts: Arc<RwLock<Vec<Instant>>>,
     event_sender: mpsc::UnboundedSender<TransportEvent>,
     event_receiver: mpsc::UnboundedReceiver<TransportEvent>,
     local_peer_id: PeerId,
@@ -44,22 +64,101 @@ struct DiscoveredPeer {
 
 impl BluetoothTransport {
     pub async fn new(local_peer_id: PeerId) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::new_with_limits(local_peer_id, BluetoothConnectionLimits::default()).await
+    }
+    
+    pub async fn new_with_limits(
+        local_peer_id: PeerId,
+        limits: BluetoothConnectionLimits,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let manager = Manager::new().await?;
         let adapters = manager.adapters().await?;
         let adapter = adapters.into_iter().next();
         
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
         
-        Ok(Self {
+        let transport = Self {
             manager,
             adapter,
             connections: Arc::new(RwLock::new(HashMap::new())),
+            connection_limits: limits,
+            connection_attempts: Arc::new(RwLock::new(Vec::new())),
             event_sender,
             event_receiver,
             local_peer_id,
             is_scanning: Arc::new(RwLock::new(false)),
             discovered_peers: Arc::new(RwLock::new(HashMap::new())),
-        })
+        };
+        
+        // Start cleanup task for connection attempts
+        transport.start_connection_cleanup_task();
+        
+        Ok(transport)
+    }
+    
+    /// Start background task to clean up old connection attempts
+    fn start_connection_cleanup_task(&self) {
+        let connection_attempts = self.connection_attempts.clone();
+        
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let cutoff = Instant::now() - Duration::from_secs(60);
+                
+                let mut attempts = connection_attempts.write().await;
+                attempts.retain(|&timestamp| timestamp > cutoff);
+            }
+        });
+    }
+    
+    /// Check if a new connection is allowed based on Bluetooth-specific limits (internal)
+    async fn check_bluetooth_connection_limits_internal(&self) -> Result<(), Box<dyn std::error::Error>> {
+        // Check concurrent connection limit
+        let connections = self.connections.read().await;
+        if connections.len() >= self.connection_limits.max_concurrent_connections {
+            return Err(format!(
+                "Bluetooth connection rejected: Maximum concurrent connections ({}) exceeded",
+                self.connection_limits.max_concurrent_connections
+            ).into());
+        }
+        
+        // Check rate limiting
+        let now = Instant::now();
+        let one_minute_ago = now - Duration::from_secs(60);
+        let attempts = self.connection_attempts.read().await;
+        
+        let recent_attempts = attempts
+            .iter()
+            .filter(|&&timestamp| timestamp > one_minute_ago)
+            .count();
+        
+        if recent_attempts >= self.connection_limits.max_connection_attempts_per_minute {
+            return Err(format!(
+                "Bluetooth connection rejected: Rate limit exceeded ({} attempts/minute)",
+                self.connection_limits.max_connection_attempts_per_minute
+            ).into());
+        }
+        
+        Ok(())
+    }
+    
+    /// Check if a new connection is allowed based on Bluetooth-specific limits (test-only public wrapper)
+    #[cfg(test)]
+    pub async fn check_bluetooth_connection_limits(&self) -> Result<(), Box<dyn std::error::Error>> {
+        self.check_bluetooth_connection_limits_internal().await
+    }
+    
+    /// Record a connection attempt for rate limiting (internal)
+    async fn record_bluetooth_connection_attempt_internal(&self) {
+        let mut attempts = self.connection_attempts.write().await;
+        attempts.push(Instant::now());
+    }
+    
+    /// Record a connection attempt for rate limiting (test-only public wrapper)
+    #[cfg(test)]
+    pub async fn record_bluetooth_connection_attempt(&self) {
+        self.record_bluetooth_connection_attempt_internal().await;
     }
     
     /// Start advertising as a BitCraps node
@@ -152,32 +251,72 @@ impl BluetoothTransport {
         });
     }
     
-    /// Connect to a discovered peer
+    /// Connect to a discovered peer with connection limits enforced
     async fn connect_to_peripheral(&self, device_id: &str) -> Result<PeerId, Box<dyn std::error::Error>> {
+        // Check connection limits before attempting to connect
+        self.check_bluetooth_connection_limits_internal().await?;
+        
+        // Record the connection attempt
+        self.record_bluetooth_connection_attempt_internal().await;
+        
+        log::info!("Connecting to Bluetooth device: {} (within limits)", device_id);
+        
         // This is a simplified implementation
         // In practice, would:
         // 1. Get peripheral by device ID
-        // 2. Connect to peripheral
+        // 2. Connect to peripheral with timeout
         // 3. Discover services and characteristics
         // 4. Subscribe to notifications
         // 5. Exchange peer IDs
         // 6. Return the peer's PeerId
         
-        log::info!("Connecting to Bluetooth device: {}", device_id);
+        // Simulate connection timeout protection
+        let connection_future = async {
+            // Placeholder - would implement actual BLE connection
+            let peer_id = [0u8; 32]; // Would get actual peer ID during handshake
+            
+            // In real implementation, would store the peripheral connection
+            // self.connections.write().await.insert(peer_id, peripheral);
+            
+            Result::<PeerId, Box<dyn std::error::Error>>::Ok(peer_id)
+        };
         
-        // Placeholder - would implement actual BLE connection
-        let peer_id = [0u8; 32]; // Would get actual peer ID during handshake
+        // Apply connection timeout
+        let peer_id = tokio::time::timeout(
+            self.connection_limits.connection_timeout,
+            connection_future
+        ).await
+        .map_err(|_| "Bluetooth connection timeout")??
+        ;
         
-        // Store connection
-        // self.connections.write().await.insert(peer_id, peripheral);
-        
-        // Send connection event
+        // Send connection event only on successful connection
         let _ = self.event_sender.send(TransportEvent::Connected {
             peer_id,
             address: TransportAddress::Bluetooth(device_id.to_string()),
         });
         
+        log::info!("Successfully connected to Bluetooth device: {} (peer_id: {:?})", device_id, peer_id);
+        
         Ok(peer_id)
+    }
+    
+    /// Get Bluetooth connection statistics
+    pub async fn bluetooth_stats(&self) -> BluetoothStats {
+        let connections = self.connections.read().await;
+        let attempts = self.connection_attempts.read().await;
+        
+        let now = Instant::now();
+        let recent_attempts = attempts
+            .iter()
+            .filter(|&&timestamp| now.duration_since(timestamp) < Duration::from_secs(60))
+            .count();
+        
+        BluetoothStats {
+            active_connections: connections.len(),
+            max_connections: self.connection_limits.max_concurrent_connections,
+            recent_connection_attempts: recent_attempts,
+            rate_limit: self.connection_limits.max_connection_attempts_per_minute,
+        }
     }
 }
 
@@ -186,7 +325,8 @@ impl Transport for BluetoothTransport {
     async fn listen(&mut self, address: TransportAddress) -> Result<(), Box<dyn std::error::Error>> {
         match address {
             TransportAddress::Bluetooth(name) => {
-                log::info!("Listening as Bluetooth device: {}", name);
+                log::info!("Listening as Bluetooth device: {} (max connections: {})", 
+                          name, self.connection_limits.max_concurrent_connections);
                 self.start_advertising().await?;
                 self.scan_for_peers().await?;
                 Ok(())
@@ -198,6 +338,7 @@ impl Transport for BluetoothTransport {
     async fn connect(&mut self, address: TransportAddress) -> Result<PeerId, Box<dyn std::error::Error>> {
         match address {
             TransportAddress::Bluetooth(device_id) => {
+                // Connection limits are checked inside connect_to_peripheral
                 self.connect_to_peripheral(&device_id).await
             }
             _ => Err("Invalid address type for Bluetooth transport".into()),
@@ -216,12 +357,25 @@ impl Transport for BluetoothTransport {
         let mut connections = self.connections.write().await;
         
         if let Some(peripheral) = connections.remove(&peer_id) {
-            peripheral.disconnect().await?;
-            
-            let _ = self.event_sender.send(TransportEvent::Disconnected {
-                peer_id,
-                reason: "User requested disconnect".to_string(),
-            });
+            match peripheral.disconnect().await {
+                Ok(_) => {
+                    log::info!("Successfully disconnected from peer: {:?}", peer_id);
+                    let _ = self.event_sender.send(TransportEvent::Disconnected {
+                        peer_id,
+                        reason: "User requested disconnect".to_string(),
+                    });
+                }
+                Err(e) => {
+                    log::error!("Error disconnecting from peer {:?}: {}", peer_id, e);
+                    let _ = self.event_sender.send(TransportEvent::Error {
+                        peer_id: Some(peer_id),
+                        error: format!("Disconnect failed: {}", e),
+                    });
+                    return Err(Box::new(e));
+                }
+            }
+        } else {
+            log::warn!("Attempted to disconnect from unknown peer: {:?}", peer_id);
         }
         
         Ok(())
@@ -246,6 +400,15 @@ impl Transport for BluetoothTransport {
     async fn next_event(&mut self) -> Option<TransportEvent> {
         self.event_receiver.recv().await
     }
+}
+
+/// Bluetooth connection statistics
+#[derive(Debug, Clone)]
+pub struct BluetoothStats {
+    pub active_connections: usize,
+    pub max_connections: usize,
+    pub recent_connection_attempts: usize,
+    pub rate_limit: usize,
 }
 
 /// Bluetooth mesh network coordinator

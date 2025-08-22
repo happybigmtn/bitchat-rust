@@ -11,10 +11,15 @@ pub mod traits;
 pub mod kademlia;
 pub mod pow_identity;
 
+#[cfg(test)]
+mod connection_limits_test;
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
+use tokio::time::interval;
 use serde::{Serialize, Deserialize};
 
 use crate::protocol::{PeerId, BitchatPacket};
@@ -41,24 +46,171 @@ pub enum TransportEvent {
     Error { peer_id: Option<PeerId>, error: String },
 }
 
+/// Connection limits configuration
+#[derive(Debug, Clone)]
+pub struct ConnectionLimits {
+    /// Maximum total connections allowed
+    pub max_total_connections: usize,
+    /// Maximum connections per peer address
+    pub max_connections_per_peer: usize,
+    /// Rate limit: max new connections per time window
+    pub max_new_connections_per_minute: usize,
+    /// Connection attempt cooldown period
+    pub connection_cooldown: Duration,
+}
+
+impl Default for ConnectionLimits {
+    fn default() -> Self {
+        Self {
+            max_total_connections: 100,
+            max_connections_per_peer: 3,
+            max_new_connections_per_minute: 10,
+            connection_cooldown: Duration::from_secs(60),
+        }
+    }
+}
+
+/// Connection tracking for rate limiting
+#[derive(Debug, Clone)]
+struct ConnectionAttempt {
+    timestamp: Instant,
+    peer_address: TransportAddress,
+}
+
 /// Transport coordinator managing multiple transport types
 #[allow(dead_code)]
 pub struct TransportCoordinator {
     bluetooth: Option<Arc<RwLock<BluetoothTransport>>>,
     connections: Arc<RwLock<HashMap<PeerId, TransportAddress>>>,
+    connection_counts_per_address: Arc<RwLock<HashMap<TransportAddress, usize>>>,
+    connection_attempts: Arc<RwLock<Vec<ConnectionAttempt>>>,
+    connection_limits: ConnectionLimits,
     event_sender: mpsc::UnboundedSender<TransportEvent>,
     event_receiver: Arc<RwLock<mpsc::UnboundedReceiver<TransportEvent>>>,
 }
 
 impl TransportCoordinator {
     pub fn new() -> Self {
+        Self::new_with_limits(ConnectionLimits::default())
+    }
+    
+    pub fn new_with_limits(limits: ConnectionLimits) -> Self {
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
         
-        Self {
+        let coordinator = Self {
             bluetooth: None,
             connections: Arc::new(RwLock::new(HashMap::new())),
+            connection_counts_per_address: Arc::new(RwLock::new(HashMap::new())),
+            connection_attempts: Arc::new(RwLock::new(Vec::new())),
+            connection_limits: limits,
             event_sender,
             event_receiver: Arc::new(RwLock::new(event_receiver)),
+        };
+        
+        // Start cleanup task for connection attempts
+        coordinator.start_cleanup_task();
+        
+        coordinator
+    }
+    
+    /// Start background task to clean up old connection attempts
+    fn start_cleanup_task(&self) {
+        let connection_attempts = self.connection_attempts.clone();
+        let cleanup_interval = Duration::from_secs(60); // Clean up every minute
+        
+        tokio::spawn(async move {
+            let mut interval = interval(cleanup_interval);
+            loop {
+                interval.tick().await;
+                let cutoff = Instant::now() - Duration::from_secs(300); // Keep last 5 minutes
+                
+                let mut attempts = connection_attempts.write().await;
+                attempts.retain(|attempt| attempt.timestamp > cutoff);
+            }
+        });
+    }
+    
+    /// Check if a new connection is allowed based on limits
+    async fn check_connection_limits(&self, address: &TransportAddress) -> Result<()> {
+        // Check total connection limit
+        let connections = self.connections.read().await;
+        if connections.len() >= self.connection_limits.max_total_connections {
+            return Err(Error::Network(format!(
+                "Connection rejected: Maximum total connections ({}) exceeded",
+                self.connection_limits.max_total_connections
+            )));
+        }
+        
+        // Check per-peer connection limit
+        let connection_counts = self.connection_counts_per_address.read().await;
+        if let Some(&count) = connection_counts.get(address) {
+            if count >= self.connection_limits.max_connections_per_peer {
+                return Err(Error::Network(format!(
+                    "Connection rejected: Maximum connections per peer ({}) exceeded for {:?}",
+                    self.connection_limits.max_connections_per_peer, address
+                )));
+            }
+        }
+        
+        // Check rate limiting
+        let now = Instant::now();
+        let rate_limit_window = Duration::from_secs(60); // 1 minute window
+        let attempts = self.connection_attempts.read().await;
+        
+        let recent_attempts = attempts
+            .iter()
+            .filter(|attempt| now.duration_since(attempt.timestamp) < rate_limit_window)
+            .count();
+        
+        if recent_attempts >= self.connection_limits.max_new_connections_per_minute {
+            return Err(Error::Network(format!(
+                "Connection rejected: Rate limit exceeded ({} connections/minute)",
+                self.connection_limits.max_new_connections_per_minute
+            )));
+        }
+        
+        // Check connection cooldown for this specific address
+        let last_attempt_for_address = attempts
+            .iter()
+            .filter(|attempt| attempt.peer_address == *address)
+            .max_by_key(|attempt| attempt.timestamp);
+            
+        if let Some(last_attempt) = last_attempt_for_address {
+            if now.duration_since(last_attempt.timestamp) < self.connection_limits.connection_cooldown {
+                return Err(Error::Network(format!(
+                    "Connection rejected: Cooldown period active for {:?} ({}s remaining)",
+                    address,
+                    (self.connection_limits.connection_cooldown - now.duration_since(last_attempt.timestamp)).as_secs()
+                )));
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Record a connection attempt for rate limiting
+    async fn record_connection_attempt(&self, address: &TransportAddress) {
+        let mut attempts = self.connection_attempts.write().await;
+        attempts.push(ConnectionAttempt {
+            timestamp: Instant::now(),
+            peer_address: address.clone(),
+        });
+    }
+    
+    /// Update connection counts when a connection is established
+    async fn increment_connection_count(&self, address: &TransportAddress) {
+        let mut counts = self.connection_counts_per_address.write().await;
+        *counts.entry(address.clone()).or_insert(0) += 1;
+    }
+    
+    /// Update connection counts when a connection is closed
+    async fn decrement_connection_count(&self, address: &TransportAddress) {
+        let mut counts = self.connection_counts_per_address.write().await;
+        if let Some(count) = counts.get_mut(address) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                counts.remove(address);
+            }
         }
     }
     
@@ -84,14 +236,40 @@ impl TransportCoordinator {
     
     /// Connect to a peer via the best available transport
     pub async fn connect_to_peer(&self, peer_id: PeerId, address: TransportAddress) -> Result<()> {
+        // Check connection limits before attempting to connect
+        self.check_connection_limits(&address).await?;
+        
+        // Record the connection attempt
+        self.record_connection_attempt(&address).await;
+        
         match address {
             TransportAddress::Bluetooth(_) => {
                 if let Some(bluetooth) = &self.bluetooth {
                     let mut bt = bluetooth.write().await;
-                    bt.connect(address.clone()).await
-                        .map_err(|e| Error::Network(format!("Bluetooth connect failed: {}", e)))?;
                     
-                    self.connections.write().await.insert(peer_id, address);
+                    // Attempt the connection
+                    match bt.connect(address.clone()).await {
+                        Ok(_) => {
+                            // Connection successful - update tracking
+                            self.connections.write().await.insert(peer_id, address.clone());
+                            self.increment_connection_count(&address).await;
+                            
+                            // Send connection event
+                            let _ = self.event_sender.send(TransportEvent::Connected {
+                                peer_id,
+                                address: address.clone(),
+                            });
+                        }
+                        Err(e) => {
+                            // Connection failed - send error event
+                            let error_msg = format!("Bluetooth connect failed: {}", e);
+                            let _ = self.event_sender.send(TransportEvent::Error {
+                                peer_id: Some(peer_id),
+                                error: error_msg.clone(),
+                            });
+                            return Err(Error::Network(error_msg));
+                        }
+                    }
                 }
             }
             _ => {
@@ -100,6 +278,68 @@ impl TransportCoordinator {
         }
         
         Ok(())
+    }
+    
+    /// Disconnect from a peer and update connection tracking
+    pub async fn disconnect_from_peer(&self, peer_id: PeerId) -> Result<()> {
+        let mut connections = self.connections.write().await;
+        
+        if let Some(address) = connections.remove(&peer_id) {
+            // Decrement connection count for this address
+            self.decrement_connection_count(&address).await;
+            
+            // Perform actual disconnect based on transport type
+            match address {
+                TransportAddress::Bluetooth(_) => {
+                    if let Some(bluetooth) = &self.bluetooth {
+                        let mut bt = bluetooth.write().await;
+                        bt.disconnect(peer_id).await
+                            .map_err(|e| Error::Network(format!("Bluetooth disconnect failed: {}", e)))?;
+                    }
+                }
+                _ => {
+                    return Err(Error::Network("Unsupported transport type".to_string()));
+                }
+            }
+            
+            // Send disconnection event
+            let _ = self.event_sender.send(TransportEvent::Disconnected {
+                peer_id,
+                reason: "User requested disconnect".to_string(),
+            });
+        }
+        
+        Ok(())
+    }
+    
+    /// Get current connection limits configuration
+    pub fn connection_limits(&self) -> &ConnectionLimits {
+        &self.connection_limits
+    }
+    
+    /// Update connection limits (takes effect for new connections)
+    pub fn update_connection_limits(&mut self, limits: ConnectionLimits) {
+        self.connection_limits = limits;
+    }
+    
+    /// Get connection statistics
+    pub async fn connection_stats(&self) -> ConnectionStats {
+        let connections = self.connections.read().await;
+        let counts = self.connection_counts_per_address.read().await;
+        let attempts = self.connection_attempts.read().await;
+        
+        let now = Instant::now();
+        let recent_attempts = attempts
+            .iter()
+            .filter(|attempt| now.duration_since(attempt.timestamp) < Duration::from_secs(60))
+            .count();
+        
+        ConnectionStats {
+            total_connections: connections.len(),
+            connections_by_address: counts.clone(),
+            recent_connection_attempts: recent_attempts,
+            connection_limit: self.connection_limits.max_total_connections,
+        }
     }
     
     /// Send data to a peer
@@ -177,4 +417,13 @@ impl Default for TransportStats {
             error_count: 0,
         }
     }
+}
+
+/// Connection statistics for DoS protection monitoring
+#[derive(Debug, Clone)]
+pub struct ConnectionStats {
+    pub total_connections: usize,
+    pub connections_by_address: HashMap<TransportAddress, usize>,
+    pub recent_connection_attempts: usize,
+    pub connection_limit: usize,
 }

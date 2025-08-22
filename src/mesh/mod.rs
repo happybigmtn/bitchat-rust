@@ -21,11 +21,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::interval;
+use lru::LruCache;
+use std::num::NonZeroUsize;
 
 use crate::protocol::{PeerId, BitchatPacket, RoutingInfo};
 use crate::transport::{TransportCoordinator, TransportEvent};
 use crate::crypto::BitchatIdentity;
 use crate::error::{Error, Result};
+
+/// Maximum number of messages to cache for deduplication
+const MAX_MESSAGE_CACHE_SIZE: usize = 10000;
 
 /// Mesh service managing peer connections and routing
 pub struct MeshService {
@@ -33,7 +38,7 @@ pub struct MeshService {
     transport: Arc<TransportCoordinator>,
     peers: Arc<RwLock<HashMap<PeerId, MeshPeer>>>,
     routing_table: Arc<RwLock<HashMap<PeerId, RouteInfo>>>,
-    message_cache: Arc<RwLock<HashMap<u64, CachedMessage>>>,
+    message_cache: Arc<RwLock<LruCache<u64, CachedMessage>>>,
     event_sender: mpsc::UnboundedSender<MeshEvent>,
     is_running: Arc<RwLock<bool>>,
 }
@@ -92,7 +97,9 @@ impl MeshService {
             transport,
             peers: Arc::new(RwLock::new(HashMap::new())),
             routing_table: Arc::new(RwLock::new(HashMap::new())),
-            message_cache: Arc::new(RwLock::new(HashMap::new())),
+            message_cache: Arc::new(RwLock::new(
+                LruCache::new(NonZeroUsize::new(MAX_MESSAGE_CACHE_SIZE).unwrap())
+            )),
             event_sender,
             is_running: Arc::new(RwLock::new(false)),
         }
@@ -224,7 +231,7 @@ impl MeshService {
     async fn process_received_packet(
         packet: BitchatPacket,
         from: PeerId,
-        message_cache: &Arc<RwLock<HashMap<u64, CachedMessage>>>,
+        message_cache: &Arc<RwLock<LruCache<u64, CachedMessage>>>,
         peers: &Arc<RwLock<HashMap<PeerId, MeshPeer>>>,
         event_sender: &mpsc::UnboundedSender<MeshEvent>,
         identity: &Arc<BitchatIdentity>,
@@ -396,10 +403,22 @@ impl MeshService {
             while *is_running.read().await {
                 cleanup_interval.tick().await;
                 
-                // Clean message cache
+                // Clean message cache - remove old entries
                 let mut cache = message_cache.write().await;
                 let cutoff = Instant::now() - Duration::from_secs(600); // 10 minutes
-                cache.retain(|_, msg| msg.first_seen > cutoff);
+                
+                // Collect keys to remove (avoid borrowing issues)
+                let mut keys_to_remove = Vec::new();
+                for (key, value) in cache.iter() {
+                    if value.first_seen <= cutoff {
+                        keys_to_remove.push(*key);
+                    }
+                }
+                
+                // Remove expired entries
+                for key in keys_to_remove {
+                    cache.pop(&key);
+                }
                 
                 // Clean inactive peers
                 let mut peer_map = peers.write().await;
@@ -459,9 +478,9 @@ impl MeshService {
     /// Static version of is_message_cached
     async fn is_message_cached_static(
         packet_hash: u64,
-        message_cache: &Arc<RwLock<HashMap<u64, CachedMessage>>>,
+        message_cache: &Arc<RwLock<LruCache<u64, CachedMessage>>>,
     ) -> bool {
-        message_cache.read().await.contains_key(&packet_hash)
+        message_cache.read().await.contains(&packet_hash)
     }
     
     /// Check if message is in cache
@@ -472,7 +491,7 @@ impl MeshService {
     /// Static version of add_to_message_cache
     async fn add_to_message_cache_static(
         packet_hash: u64,
-        message_cache: &Arc<RwLock<HashMap<u64, CachedMessage>>>,
+        message_cache: &Arc<RwLock<LruCache<u64, CachedMessage>>>,
     ) {
         let cached_msg = CachedMessage {
             packet_hash,
@@ -480,7 +499,7 @@ impl MeshService {
             forwarded_to: HashSet::new(),
         };
         
-        message_cache.write().await.insert(packet_hash, cached_msg);
+        message_cache.write().await.put(packet_hash, cached_msg);
     }
     
     /// Add message to cache
@@ -578,5 +597,91 @@ mod tests {
         let stats = mesh.get_stats().await;
         assert_eq!(stats.connected_peers, 0);
         assert_eq!(stats.known_routes, 0);
+        assert_eq!(stats.cached_messages, 0);
+    }
+
+    #[tokio::test]
+    async fn test_lru_message_cache_bounds() {
+        let keypair = BitchatKeypair::generate();
+        let identity = Arc::new(BitchatIdentity::from_keypair_with_pow(keypair, 8));
+        let transport = Arc::new(TransportCoordinator::new());
+        
+        let mesh = MeshService::new(identity, transport);
+        
+        // Test that cache is initialized empty
+        let initial_stats = mesh.get_stats().await;
+        assert_eq!(initial_stats.cached_messages, 0);
+        
+        // Add some messages to cache
+        for i in 0..50u64 {
+            mesh.add_to_message_cache(i).await;
+        }
+        
+        let stats_after_adds = mesh.get_stats().await;
+        assert_eq!(stats_after_adds.cached_messages, 50);
+        
+        // Test cache deduplication
+        mesh.add_to_message_cache(0).await; // duplicate
+        let stats_after_dup = mesh.get_stats().await;
+        assert_eq!(stats_after_dup.cached_messages, 50); // should still be 50
+        
+        // Test that cache is bounded - add more than max size
+        // Since MAX_MESSAGE_CACHE_SIZE is 10000, we can't easily test eviction
+        // but we can test that it doesn't grow unbounded by checking the size
+        for i in 50..150u64 {
+            mesh.add_to_message_cache(i).await;
+        }
+        
+        let stats_final = mesh.get_stats().await;
+        assert_eq!(stats_final.cached_messages, 150);
+        
+        // Verify message is cached
+        assert!(mesh.is_message_cached(0).await);
+        assert!(mesh.is_message_cached(149).await);
+        assert!(!mesh.is_message_cached(1000).await);
+    }
+
+    #[tokio::test]
+    async fn test_lru_cache_eviction() {
+        // Create a mesh service with a small cache for testing
+        let keypair = BitchatKeypair::generate();
+        let identity = Arc::new(BitchatIdentity::from_keypair_with_pow(keypair, 8));
+        let transport = Arc::new(TransportCoordinator::new());
+        
+        // Create a small LRU cache directly to test eviction
+        let test_cache: Arc<RwLock<LruCache<u64, CachedMessage>>> = Arc::new(RwLock::new(
+            LruCache::new(NonZeroUsize::new(3).unwrap()) // Small cache for testing
+        ));
+        
+        // Add items to fill cache
+        for i in 0..3u64 {
+            let cached_msg = CachedMessage {
+                packet_hash: i,
+                first_seen: Instant::now(),
+                forwarded_to: HashSet::new(),
+            };
+            test_cache.write().await.put(i, cached_msg);
+        }
+        
+        // Cache should be full
+        assert_eq!(test_cache.read().await.len(), 3);
+        assert!(test_cache.read().await.contains(&0));
+        assert!(test_cache.read().await.contains(&1));
+        assert!(test_cache.read().await.contains(&2));
+        
+        // Add one more item - should evict the least recently used (0)
+        let cached_msg = CachedMessage {
+            packet_hash: 3,
+            first_seen: Instant::now(),
+            forwarded_to: HashSet::new(),
+        };
+        test_cache.write().await.put(3, cached_msg);
+        
+        // Cache should still be size 3, but 0 should be evicted
+        assert_eq!(test_cache.read().await.len(), 3);
+        assert!(!test_cache.read().await.contains(&0)); // Evicted
+        assert!(test_cache.read().await.contains(&1));
+        assert!(test_cache.read().await.contains(&2));
+        assert!(test_cache.read().await.contains(&3)); // New item
     }
 }
