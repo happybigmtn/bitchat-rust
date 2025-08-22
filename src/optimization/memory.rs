@@ -5,6 +5,7 @@ use bytes::{Bytes, BytesMut};
 use bitvec::prelude::*;
 use memmap2::{MmapMut, MmapOptions};
 use std::fs::OpenOptions;
+use std::os::unix::fs::OpenOptionsExt;
 use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 use crate::protocol::PeerId;
 
@@ -278,20 +279,64 @@ pub struct MmapStorage {
 
 impl MmapStorage {
     pub fn new(file_path: String, capacity_mb: usize) -> Result<Self, std::io::Error> {
-        let capacity = capacity_mb * 1024 * 1024; // Convert MB to bytes
+        // Validate capacity to prevent excessive allocations
+        const MAX_CAPACITY_MB: usize = 1024; // 1GB max
+        const MIN_CAPACITY_MB: usize = 1; // 1MB min
         
-        // Create or open file
+        if capacity_mb > MAX_CAPACITY_MB {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Capacity {}MB exceeds maximum {}MB", capacity_mb, MAX_CAPACITY_MB)
+            ));
+        }
+        
+        if capacity_mb < MIN_CAPACITY_MB {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Capacity {}MB below minimum {}MB", capacity_mb, MIN_CAPACITY_MB)
+            ));
+        }
+        
+        let capacity = capacity_mb
+            .checked_mul(1024)
+            .and_then(|kb| kb.checked_mul(1024))
+            .ok_or_else(|| std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Capacity overflow"
+            ))?;
+        
+        // Validate file path
+        if file_path.is_empty() || file_path.contains('\0') {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Invalid file path"
+            ));
+        }
+        
+        // Create or open file with proper permissions
         let file = OpenOptions::new()
             .create(true)
             .read(true)
             .write(true)
+            .mode(0o600) // Restrict to owner only
             .open(&file_path)?;
         
-        // Set file size
+        // Set file size with validation
         file.set_len(capacity as u64)?;
         
-        // Create memory map
+        // Verify file size was set correctly
+        let metadata = file.metadata()?;
+        if metadata.len() != capacity as u64 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Failed to set file size correctly"
+            ));
+        }
+        
+        // Create memory map with safety checks
         let mmap = unsafe {
+            // SAFETY: We've validated the file exists, has the correct size,
+            // and we have exclusive access through the file handle
             MmapOptions::new()
                 .len(capacity)
                 .map_mut(&file)?
@@ -312,6 +357,24 @@ impl MmapStorage {
             return Ok(false);
         }
         
+        // Validate key and data sizes
+        const MAX_KEY_SIZE: usize = 1024; // 1KB max key
+        const MAX_DATA_SIZE: usize = 10 * 1024 * 1024; // 10MB max data
+        
+        if key.is_empty() || key.len() > MAX_KEY_SIZE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Invalid key size: {}", key.len())
+            ));
+        }
+        
+        if data.len() > MAX_DATA_SIZE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Data size {} exceeds maximum {}MB", data.len(), MAX_DATA_SIZE / 1024 / 1024)
+            ));
+        }
+        
         // Determine if we should compress
         let (final_data, compressed) = if data.len() > self.compress_threshold {
             (compress_prepend_size(data), true)
@@ -319,38 +382,93 @@ impl MmapStorage {
             (data.to_vec(), false)
         };
         
-        // Calculate required space: key_len(4) + key + compressed_flag(1) + data_len(4) + data
-        let required_space = 4 + key.len() + 1 + 4 + final_data.len();
+        // Calculate required space with overflow checking
+        let required_space = 4_usize
+            .checked_add(key.len())
+            .and_then(|n| n.checked_add(1))
+            .and_then(|n| n.checked_add(4))
+            .and_then(|n| n.checked_add(final_data.len()))
+            .ok_or_else(|| std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Integer overflow in space calculation"
+            ))?;
         
-        if self.used + required_space > self.capacity {
+        // Check available space with overflow protection
+        let new_used = self.used.checked_add(required_space)
+            .ok_or_else(|| std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Integer overflow in used space"
+            ))?;
+        
+        if new_used > self.capacity {
             return Ok(false); // Not enough space
         }
         
         let mmap = self.mmap.as_mut().unwrap();
         let mut offset = self.used;
         
+        // Bounds check before each write
+        if offset + 4 > self.capacity {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Buffer overflow prevented in key length write"
+            ));
+        }
+        
         // Write key length
         let key_len = key.len() as u32;
         mmap[offset..offset + 4].copy_from_slice(&key_len.to_le_bytes());
         offset += 4;
         
+        // Bounds check for key
+        if offset + key.len() > self.capacity {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Buffer overflow prevented in key write"
+            ));
+        }
+        
         // Write key
         mmap[offset..offset + key.len()].copy_from_slice(key);
         offset += key.len();
         
+        // Bounds check for compression flag
+        if offset + 1 > self.capacity {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Buffer overflow prevented in flag write"
+            ));
+        }
+        
         // Write compression flag
         mmap[offset] = if compressed { 1 } else { 0 };
         offset += 1;
+        
+        // Bounds check for data length
+        if offset + 4 > self.capacity {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Buffer overflow prevented in data length write"
+            ));
+        }
         
         // Write data length
         let data_len = final_data.len() as u32;
         mmap[offset..offset + 4].copy_from_slice(&data_len.to_le_bytes());
         offset += 4;
         
+        // Final bounds check for data
+        if offset + final_data.len() > self.capacity {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Buffer overflow prevented in data write"
+            ));
+        }
+        
         // Write data
         mmap[offset..offset + final_data.len()].copy_from_slice(&final_data);
         
-        self.used += required_space;
+        self.used = new_used;
         Ok(true)
     }
     

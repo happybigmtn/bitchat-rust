@@ -5,7 +5,7 @@
 //! cached resolution results for maximum efficiency.
 
 use std::collections::HashMap;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, RwLock};
 use once_cell::sync::Lazy;
 use serde::{Serialize, Deserialize};
 
@@ -18,8 +18,10 @@ use crate::error::Result;
 /// This eliminates runtime calculations for maximum performance
 static PAYOUT_LOOKUP_TABLE: Lazy<PayoutLookupTable> = Lazy::new(|| PayoutLookupTable::new());
 
-/// Bet resolution cache to avoid re-computing identical scenarios
-static mut RESOLUTION_CACHE: Lazy<ResolutionCache> = Lazy::new(|| ResolutionCache::new());
+/// Thread-safe bet resolution cache to avoid re-computing identical scenarios
+static RESOLUTION_CACHE: Lazy<RwLock<ResolutionCache>> = Lazy::new(|| {
+    RwLock::new(ResolutionCache::new())
+});
 
 /// Ultra-fast bet resolution engine
 pub struct EfficientBetResolver {
@@ -456,9 +458,9 @@ impl EfficientBetResolver {
         // Create cache key
         let cache_key = self.create_cache_key(state, dice_roll, active_bets);
         
-        // Check resolution cache first
-        unsafe {
-            if let Some(cached_result) = RESOLUTION_CACHE.get(&cache_key) {
+        // Check resolution cache first (thread-safe)
+        if let Ok(cache) = RESOLUTION_CACHE.read() {
+            if let Some(cached_result) = cache.get(&cache_key) {
                 self.cache_hits += 1;
                 return Ok(cached_result.clone());
             }
@@ -476,9 +478,9 @@ impl EfficientBetResolver {
             }
         }
         
-        // Cache the result
-        unsafe {
-            RESOLUTION_CACHE.insert(cache_key, resolutions.clone());
+        // Cache the result (thread-safe)
+        if let Ok(mut cache) = RESOLUTION_CACHE.write() {
+            cache.insert(cache_key, resolutions.clone());
         }
         
         Ok(resolutions)
@@ -704,26 +706,30 @@ impl EfficientBetResolver {
     
     /// Get performance statistics
     pub fn get_stats(&self) -> BetResolverStats {
-        unsafe {
-            BetResolverStats {
-                total_resolutions: self.total_resolutions,
-                cache_hits: self.cache_hits,
-                cache_misses: self.cache_misses,
-                cache_hit_rate: if self.total_resolutions > 0 {
-                    self.cache_hits as f64 / self.total_resolutions as f64
-                } else { 0.0 },
-                resolution_cache_hit_rate: RESOLUTION_CACHE.hit_rate(),
-                special_bet_cache_size: self.special_bet_cache.len(),
-                lookup_table_size: std::mem::size_of::<PayoutLookupTable>(),
-            }
+        let cache_hit_rate = if let Ok(cache) = RESOLUTION_CACHE.read() {
+            cache.hit_rate()
+        } else {
+            0.0
+        };
+        
+        BetResolverStats {
+            total_resolutions: self.total_resolutions,
+            cache_hits: self.cache_hits,
+            cache_misses: self.cache_misses,
+            cache_hit_rate: if self.total_resolutions > 0 {
+                self.cache_hits as f64 / self.total_resolutions as f64
+            } else { 0.0 },
+            resolution_cache_hit_rate: cache_hit_rate,
+            special_bet_cache_size: self.special_bet_cache.len(),
+            lookup_table_size: std::mem::size_of::<PayoutLookupTable>(),
         }
     }
     
     /// Clear all caches (for testing or memory management)
     pub fn clear_caches(&mut self) {
         self.special_bet_cache.clear();
-        unsafe {
-            RESOLUTION_CACHE = Lazy::new(|| ResolutionCache::new());
+        if let Ok(mut cache) = RESOLUTION_CACHE.write() {
+            cache.clear();
         }
     }
 }

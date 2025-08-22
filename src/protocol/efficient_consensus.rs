@@ -5,7 +5,7 @@
 //! and cached consensus rounds for maximum efficiency.
 
 use std::collections::{HashMap, VecDeque, BTreeMap};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock, Mutex};
 use sha2::{Sha256, Digest};
 use serde::{Serialize, Deserialize};
 use once_cell::sync::Lazy;
@@ -41,7 +41,7 @@ pub struct CompactCommitment {
 }
 
 /// Efficient entropy combination using XOR folding
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct EntropyAggregator {
     /// Accumulated entropy from all sources
     accumulated_entropy: [u8; 32],
@@ -49,8 +49,8 @@ pub struct EntropyAggregator {
     /// Count of entropy sources combined
     source_count: u32,
     
-    /// XOR cache for frequently used combinations
-    xor_cache: HashMap<u64, [u8; 32]>,
+    /// Thread-safe XOR cache for frequently used combinations
+    xor_cache: Arc<RwLock<HashMap<u64, [u8; 32]>>>,
 }
 
 /// Optimized consensus round with caching
@@ -175,8 +175,24 @@ impl MerkleTree {
         }
         
         let leaf_count = leaves.len();
-        // Calculate total nodes needed for complete binary tree
-        let total_nodes = 2 * leaf_count - 1;
+        
+        // Validate leaf count to prevent overflow
+        const MAX_MERKLE_LEAVES: usize = usize::MAX / 4; // Conservative limit
+        if leaf_count > MAX_MERKLE_LEAVES {
+            return Err(Error::Protocol(format!("Too many Merkle tree leaves: {}", leaf_count)));
+        }
+        
+        // Calculate total nodes needed for complete binary tree with overflow checking
+        let total_nodes = leaf_count
+            .checked_mul(2)
+            .and_then(|n| n.checked_sub(1))
+            .ok_or_else(|| Error::Protocol("Integer overflow in Merkle tree size calculation".into()))?;
+        
+        // Additional safety check
+        if total_nodes > 100_000_000 {
+            return Err(Error::Protocol(format!("Merkle tree too large: {} nodes", total_nodes)));
+        }
+        
         let mut nodes = vec![[0u8; 32]; total_nodes];
         
         // Copy leaves to the beginning of nodes array
@@ -248,7 +264,12 @@ impl MerkleTree {
             path.push(self.nodes[sibling_idx]);
             
             if is_right {
-                directions |= 1u64 << path.len() - 1;
+                // Safe bit shift with bounds checking
+                if path.len() > 0 && path.len() <= 64 {
+                    directions |= 1u64 << (path.len() - 1);
+                } else if path.len() > 64 {
+                    return Err(Error::Protocol("Merkle proof path too long".into()));
+                }
             }
             
             // Move to parent in next level
@@ -301,7 +322,7 @@ impl EntropyAggregator {
         Self {
             accumulated_entropy: [0u8; 32],
             source_count: 0,
-            xor_cache: HashMap::new(),
+            xor_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
     
@@ -314,9 +335,11 @@ impl EntropyAggregator {
         
         self.source_count += 1;
         
-        // Add to XOR cache for future lookups
+        // Add to XOR cache for future lookups (thread-safe)
         let cache_key = self.calculate_cache_key(entropy);
-        self.xor_cache.insert(cache_key, self.accumulated_entropy);
+        if let Ok(mut cache) = self.xor_cache.write() {
+            cache.insert(cache_key, self.accumulated_entropy);
+        }
         
         Ok(())
     }

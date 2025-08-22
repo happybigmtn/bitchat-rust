@@ -201,8 +201,17 @@ impl CompactGameState {
     
     /// Set last dice roll in packed format
     pub fn set_last_roll(&mut self, roll: DiceRoll) {
-        let packed = (roll.die1 as u16 & 0x7) | ((roll.die2 as u16 & 0x7) << 3);
-        self.last_roll = packed;
+        // Validate dice values are in valid range (1-6)
+        if roll.die1 < 1 || roll.die1 > 6 || roll.die2 < 1 || roll.die2 > 6 {
+            // Invalid dice values, clamp to valid range
+            let die1 = roll.die1.clamp(1, 6);
+            let die2 = roll.die2.clamp(1, 6);
+            let packed = ((die1 - 1) as u16 & 0x7) | (((die2 - 1) as u16 & 0x7) << 3);
+            self.last_roll = packed;
+        } else {
+            let packed = ((roll.die1 - 1) as u16 & 0x7) | (((roll.die2 - 1) as u16 & 0x7) << 3);
+            self.last_roll = packed;
+        }
     }
     
     /// Get Fire points made
@@ -212,7 +221,9 @@ impl CompactGameState {
     
     /// Set Fire points made
     pub fn set_fire_points(&mut self, count: u8) {
-        self.special_state[0] = (self.special_state[0] & !0x3F) | (count as u16 & 0x3F);
+        // Limit to 6 bits (max value 63)
+        let safe_count = count.min(63);
+        self.special_state[0] = (self.special_state[0] & !0x3F) | (safe_count as u16 & 0x3F);
     }
     
     /// Get bonus numbers rolled (11-bit mask for numbers 2-12)
@@ -222,8 +233,14 @@ impl CompactGameState {
     
     /// Set bonus numbers rolled
     pub fn set_bonus_numbers(&mut self, mask: u16) {
-        self.special_state[0] = (self.special_state[0] & 0x3F) | ((mask & 0x3FF) << 6);
-        self.special_state[1] = (self.special_state[1] & !0x1F) | ((mask >> 10) & 0x1F);
+        // Limit to 11 bits (max value 0x7FF)
+        let safe_mask = mask & 0x7FF;
+        
+        // Check for shift overflow prevention
+        if safe_mask <= 0x7FF {
+            self.special_state[0] = (self.special_state[0] & 0x3F) | ((safe_mask & 0x3FF) << 6);
+            self.special_state[1] = (self.special_state[1] & !0x1F) | ((safe_mask >> 10) & 0x1F);
+        }
     }
     
     /// Get hot roller streak count
@@ -233,8 +250,12 @@ impl CompactGameState {
     
     /// Set hot roller streak count
     pub fn set_hot_streak(&mut self, streak: u16) {
-        self.special_state[1] = (self.special_state[1] & 0x1F) | ((streak & 0x7FF) << 5);
-        self.special_state[2] = (self.special_state[2] & !0x7) | ((streak >> 11) & 0x7);
+        // Limit to 14 bits (max value 0x3FFF)
+        let safe_streak = streak.min(0x3FFF);
+        
+        // Safely pack the streak value
+        self.special_state[1] = (self.special_state[1] & 0x1F) | ((safe_streak & 0x7FF) << 5);
+        self.special_state[2] = (self.special_state[2] & !0x7) | ((safe_streak >> 11) & 0x7);
     }
     
     /// Create a copy-on-write clone for state mutations
@@ -246,23 +267,39 @@ impl CompactGameState {
     pub fn has_bet_type(&self, bet_type: BetType) -> bool {
         let bit_index = bet_type as u8;
         if bit_index >= 64 { return false; }
-        (self.dynamic_data.compressed_bets.bet_mask & (1u64 << bit_index)) != 0
+        
+        // Safe bit shift with bounds check
+        if bit_index < 64 {
+            (self.dynamic_data.compressed_bets.bet_mask & (1u64 << bit_index)) != 0
+        } else {
+            false
+        }
     }
     
     /// Add a bet type to the mask
     pub fn add_bet_type(&mut self, bet_type: BetType) {
         let bit_index = bet_type as u8;
         if bit_index >= 64 { return; }
-        let dynamic_data = self.make_mutable();
-        dynamic_data.compressed_bets.bet_mask |= 1u64 << bit_index;
+        
+        // Safe bit shift with overflow protection
+        if bit_index < 64 {
+            let dynamic_data = self.make_mutable();
+            dynamic_data.compressed_bets.bet_mask |= 1u64.checked_shl(bit_index as u32).unwrap_or(0);
+        }
     }
     
     /// Remove a bet type from the mask
     pub fn remove_bet_type(&mut self, bet_type: BetType) {
         let bit_index = bet_type as u8;
         if bit_index >= 64 { return; }
-        let dynamic_data = self.make_mutable();
-        dynamic_data.compressed_bets.bet_mask &= !(1u64 << bit_index);
+        
+        // Safe bit shift with overflow protection
+        if bit_index < 64 {
+            let dynamic_data = self.make_mutable();
+            if let Some(mask_bit) = 1u64.checked_shl(bit_index as u32) {
+                dynamic_data.compressed_bets.bet_mask &= !mask_bit;
+            }
+        }
     }
     
     /// Get memory usage statistics

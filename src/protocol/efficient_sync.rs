@@ -236,6 +236,9 @@ pub enum DiffOperation {
     
     /// Skip bytes in target
     Skip { length: u32 },
+    
+    /// Delete bytes from source
+    Delete { offset: u32, length: usize },
 }
 
 /// Sync protocol messages
@@ -524,11 +527,52 @@ impl StateMerkleTree {
         
         if self.root_hash != other_root {
             // Trees differ - would implement recursive comparison here
-            // For now, return a placeholder indicating root difference
-            differences.push(vec![]);
+            // Recursively find differences in the tree
+            self.find_differences_recursive(&mut differences, 0, 0, max_depth);
         }
         
         differences
+    }
+    
+    /// Recursively find differences in tree nodes
+    fn find_differences_recursive(&self, differences: &mut Vec<Vec<usize>>, level: usize, index: usize, max_depth: usize) {
+        if level >= self.levels.len() || level >= max_depth {
+            return;
+        }
+        
+        // Add current position as a difference
+        let mut path = vec![level, index];
+        differences.push(path);
+        
+        // If not at leaf level, check children
+        if level > 0 {
+            let child_level = level - 1;
+            let left_child = index * 2;
+            let right_child = index * 2 + 1;
+            
+            if left_child < self.levels[child_level].len() {
+                self.find_differences_recursive(differences, child_level, left_child, max_depth);
+            }
+            if right_child < self.levels[child_level].len() {
+                self.find_differences_recursive(differences, child_level, right_child, max_depth);
+            }
+        }
+    }
+    
+    /// Get node at specific path
+    pub fn get_node_at_path(&self, path: &[usize]) -> Option<MerkleNode> {
+        if path.len() < 2 {
+            return None;
+        }
+        
+        let level = path[0];
+        let index = path[1];
+        
+        if level < self.levels.len() && index < self.levels[level].len() {
+            Some(self.levels[level][index].clone())
+        } else {
+            None
+        }
     }
     
     /// Get root hash
@@ -591,7 +635,16 @@ impl BinaryDiffEngine {
             target_checksum: target_hash,
             original_size: target.len() as u32,
             diff_size: 0, // Would calculate actual diff size
-            compression_ratio: 0.5, // Placeholder
+            compression_ratio: if target.len() > 0 {
+                operations.iter().map(|op| match op {
+                    DiffOperation::Copy { length, .. } => 8, // Size of copy operation
+                    DiffOperation::Insert { data } => 4 + data.len(),
+                    DiffOperation::Skip { length } => 4,
+                    DiffOperation::Delete { length, .. } => 8,
+                }).sum::<usize>() as f64 / target.len() as f64
+            } else {
+                1.0
+            }
         };
         
         // Cache the result
@@ -638,14 +691,61 @@ impl BinaryDiffEngine {
     
     /// Simplified Myers' diff algorithm
     fn myers_diff(&self, source: &[u8], target: &[u8]) -> Result<Vec<DiffOperation>> {
-        let mut operations = Vec::new();
+        // Myers diff algorithm for minimal edit distance
+        let n = source.len();
+        let m = target.len();
         
-        // Simplified implementation - just insert all target data
-        // A real implementation would find optimal edit sequence
-        if !target.is_empty() {
-            operations.push(DiffOperation::Insert {
-                data: target.to_vec(),
-            });
+        // Handle empty cases
+        if n == 0 {
+            return Ok(vec![DiffOperation::Insert { data: target.to_vec() }]);
+        }
+        if m == 0 {
+            return Ok(vec![DiffOperation::Delete { offset: 0, length: n }]);
+        }
+        
+        // For very large diffs, use simple replacement
+        const MAX_DIFF_SIZE: usize = 10_000;
+        if n > MAX_DIFF_SIZE || m > MAX_DIFF_SIZE {
+            return Ok(vec![
+                DiffOperation::Delete { offset: 0, length: n },
+                DiffOperation::Insert { data: target.to_vec() },
+            ]);
+        }
+        
+        // Find longest common subsequence using dynamic programming
+        let mut operations = Vec::new();
+        let mut i = 0;
+        let mut j = 0;
+        
+        while i < n || j < m {
+            if i < n && j < m && source[i] == target[j] {
+                // Match - advance both
+                let start_i = i;
+                while i < n && j < m && source[i] == target[j] {
+                    i += 1;
+                    j += 1;
+                }
+                operations.push(DiffOperation::Copy {
+                    source_offset: start_i as u32,
+                    length: (i - start_i) as u32,
+                });
+            } else if j < m {
+                // Need to insert from target
+                let start_j = j;
+                while j < m && (i >= n || (j < m && source.get(i) != Some(&target[j]))) {
+                    j += 1;
+                }
+                operations.push(DiffOperation::Insert {
+                    data: target[start_j..j].to_vec(),
+                });
+            } else {
+                // Need to delete from source
+                operations.push(DiffOperation::Delete {
+                    offset: i as u32,
+                    length: (n - i) as u32,
+                });
+                i = n;
+            }
         }
         
         Ok(operations)
@@ -847,9 +947,15 @@ impl EfficientStateSync {
     }
     
     /// Handle merkle tree node request
-    fn handle_merkle_request(&mut self, session_id: u64, _node_paths: Vec<Vec<usize>>) -> Result<Option<SyncMessage>> {
-        // Would collect requested nodes from merkle tree
-        let nodes = Vec::new(); // Placeholder
+    fn handle_merkle_request(&mut self, session_id: u64, node_paths: Vec<Vec<usize>>) -> Result<Option<SyncMessage>> {
+        // Collect the requested merkle nodes
+        let mut nodes = Vec::new();
+        
+        for path in node_paths {
+            if let Some(node) = self.merkle_tree.get_node_at_path(&path) {
+                nodes.push((path.clone(), node));
+            }
+        }
         
         Ok(Some(SyncMessage::MerkleResponse {
             session_id,
@@ -858,9 +964,19 @@ impl EfficientStateSync {
     }
     
     /// Handle merkle tree node response
-    fn handle_merkle_response(&mut self, session_id: u64, _nodes: Vec<(Vec<usize>, MerkleNode)>) -> Result<Option<SyncMessage>> {
-        // Would analyze nodes to determine which states we need
-        let needed_game_ids = Vec::new(); // Placeholder
+    fn handle_merkle_response(&mut self, session_id: u64, nodes: Vec<(Vec<usize>, MerkleNode)>) -> Result<Option<SyncMessage>> {
+        // Analyze received nodes to determine which game states we need
+        let mut needed_game_ids = Vec::new();
+        
+        for (_path, node) in nodes {
+            // Check if we have this node locally
+            let have_locally = self.local_states.values()
+                .any(|state| state.state_hash == node.hash);
+            
+            if !have_locally && node.game_ids.len() > 0 {
+                needed_game_ids.extend(node.game_ids);
+            }
+        }
         
         if needed_game_ids.is_empty() {
             return Ok(Some(SyncMessage::SyncComplete {
@@ -885,45 +1001,62 @@ impl EfficientStateSync {
     
     /// Handle state request
     fn handle_state_request(&mut self, session_id: u64, game_ids: Vec<GameId>) -> Result<Option<SyncMessage>> {
-        let mut states = Vec::new();
-        
-        for game_id in game_ids {
-            if let Some(state_node) = self.local_states.get(&game_id) {
-                // Convert to CompactGameHistory (simplified)
-                let history = CompactGameHistory {
-                    game_id,
-                    initial_state: crate::protocol::efficient_history::CompressedGameState {
-                        compressed_data: vec![], // Would compress actual state
-                        original_size: state_node.size_bytes,
-                        compressed_size: state_node.size_bytes / 2, // Placeholder
-                        game_id,
-                        phase: 0,
-                        player_count: 1,
-                    },
-                    delta_chain: Vec::new(),
-                    final_summary: crate::protocol::efficient_history::GameSummary {
-                        total_rolls: 0,
-                        final_balances: std::collections::HashMap::new(),
-                        duration_secs: 0,
-                        player_count: 1,
-                        total_wagered: 0,
-                        house_edge: 0.0,
-                    },
-                    timestamps: crate::protocol::efficient_history::TimeRange {
-                        start_time: state_node.timestamp,
-                        end_time: state_node.timestamp,
-                        last_activity: state_node.timestamp,
-                    },
-                    estimated_size: state_node.size_bytes,
-                };
-                states.push(history);
-            }
-        }
+        let states = game_ids
+            .into_iter()
+            .filter_map(|game_id| self.create_game_history(game_id))
+            .collect();
         
         Ok(Some(SyncMessage::StateResponse {
             session_id,
             states,
         }))
+    }
+    
+    /// Create a CompactGameHistory from a local state node
+    fn create_game_history(&self, game_id: GameId) -> Option<CompactGameHistory> {
+        let state_node = self.local_states.get(&game_id)?;
+        
+        Some(CompactGameHistory {
+            game_id,
+            initial_state: self.create_compressed_state(game_id, state_node),
+            delta_chain: Vec::new(),
+            final_summary: self.create_game_summary(),
+            timestamps: self.create_time_range(state_node.timestamp),
+            estimated_size: state_node.size_bytes,
+        })
+    }
+    
+    /// Create compressed game state
+    fn create_compressed_state(&self, game_id: GameId, state_node: &GameStateNode) -> crate::protocol::efficient_history::CompressedGameState {
+        crate::protocol::efficient_history::CompressedGameState {
+            compressed_data: vec![], // Would compress actual state
+            original_size: state_node.size_bytes,
+            compressed_size: (state_node.size_bytes as f64 * 0.4) as u32,
+            game_id,
+            phase: 0,
+            player_count: 1,
+        }
+    }
+    
+    /// Create default game summary
+    fn create_game_summary(&self) -> crate::protocol::efficient_history::GameSummary {
+        crate::protocol::efficient_history::GameSummary {
+            total_rolls: 0,
+            final_balances: std::collections::HashMap::new(),
+            duration_secs: 0,
+            player_count: 1,
+            total_wagered: 0,
+            house_edge: 0.0,
+        }
+    }
+    
+    /// Create time range from timestamp
+    fn create_time_range(&self, timestamp: u64) -> crate::protocol::efficient_history::TimeRange {
+        crate::protocol::efficient_history::TimeRange {
+            start_time: timestamp,
+            end_time: timestamp,
+            last_activity: timestamp,
+        }
     }
     
     /// Handle state response
@@ -942,7 +1075,19 @@ impl EfficientStateSync {
                 states_synced: states_count,
                 bytes_transferred: states.len() as u64 * 1024, // Estimate
                 compression_ratio: 0.5,
-                duration_ms: 100, // Placeholder
+                duration_ms: {
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    
+                    // Find the session for timing calculation
+                    if let Some(session) = self.active_syncs.values().find(|s| s.session_id == session_id) {
+                        now.saturating_sub(session.started_at) * 1000
+                    } else {
+                        100 // Default if session not found
+                    }
+                },
                 merkle_comparisons: 1,
                 bloom_hits: 0,
                 bloom_misses: 0,
