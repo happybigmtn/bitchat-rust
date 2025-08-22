@@ -605,7 +605,8 @@ pub struct MerkleProof {
 impl BinaryDiffEngine {
     /// Create new binary diff engine
     pub fn new() -> Self {
-        let cache_size = std::num::NonZeroUsize::new(1000).unwrap();
+        let cache_size = std::num::NonZeroUsize::new(1000)
+            .expect("Cache size 1000 is a positive constant");
         
         Self {
             diff_cache: lru::LruCache::new(cache_size),

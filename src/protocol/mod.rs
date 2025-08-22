@@ -498,10 +498,11 @@ impl BitchatPacket {
     pub fn add_timestamp(&mut self) {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("System time is before UNIX_EPOCH - clock may be misconfigured")
             .as_secs();
         let mut buf = Vec::new();
-        buf.write_u64::<BigEndian>(timestamp).unwrap();
+        buf.write_u64::<BigEndian>(timestamp)
+            .expect("Writing to Vec should never fail");
         self.add_tlv(TLV_TYPE_TIMESTAMP, buf);
     }
     

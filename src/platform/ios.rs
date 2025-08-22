@@ -64,7 +64,11 @@ pub mod ios {
             return std::ptr::null_mut();
         }
         
-        let (rt, app) = unsafe { &mut *app_ptr };
+        let (rt, app) = unsafe { 
+            // SAFETY: We've verified app_ptr is non-null and it originates from our Box::into_raw.
+            // The pointer should be properly aligned and valid for the lifetime of this function.
+            &mut *app_ptr 
+        };
         
         let game_id = match rt.block_on(async {
             app.game_runtime.create_game(
@@ -93,7 +97,11 @@ pub mod ios {
             return false;
         }
         
-        let (rt, app) = unsafe { &mut *app_ptr };
+        let (rt, app) = unsafe { 
+            // SAFETY: We've verified app_ptr is non-null and it originates from our Box::into_raw.
+            // The pointer should be properly aligned and valid for the lifetime of this function.
+            &mut *app_ptr 
+        };
         
         let game_id_str = unsafe {
             CStr::from_ptr(game_id)
@@ -125,7 +133,11 @@ pub mod ios {
             return 0;
         }
         
-        let (rt, app) = unsafe { &mut *app_ptr };
+        let (rt, app) = unsafe { 
+            // SAFETY: We've verified app_ptr is non-null and it originates from our Box::into_raw.
+            // The pointer should be properly aligned and valid for the lifetime of this function.
+            &mut *app_ptr 
+        };
         
         rt.block_on(async {
             app.ledger.get_balance(&app.identity.peer_id).await
@@ -140,7 +152,12 @@ pub mod ios {
             return std::ptr::null_mut();
         }
         
-        let (_, app) = unsafe { &*app_ptr };
+        let (_, app) = unsafe { 
+            // SAFETY: We've verified app_ptr is non-null and it originates from our Box::into_raw.
+            // The pointer should be properly aligned and valid for the lifetime of this function.
+            // Using immutable reference since we only need to read the peer_id.
+            &*app_ptr 
+        };
         
         let peer_id_str = format!("{:?}", app.identity.peer_id);
         match CString::new(peer_id_str) {
@@ -157,7 +174,11 @@ pub mod ios {
             return false;
         }
         
-        let (rt, app) = unsafe { &mut *app_ptr };
+        let (rt, app) = unsafe { 
+            // SAFETY: We've verified app_ptr is non-null and it originates from our Box::into_raw.
+            // The pointer should be properly aligned and valid for the lifetime of this function.
+            &mut *app_ptr 
+        };
         
         rt.block_on(async {
             app.start().await
@@ -169,8 +190,12 @@ pub mod ios {
         app_ptr: *mut (tokio::runtime::Runtime, BitCrapsApp),
     ) {
         if !app_ptr.is_null() {
-            // Safe: we verified the pointer is not null
-            let _ = unsafe { Box::from_raw(app_ptr) };
+            let _ = unsafe { 
+                // SAFETY: We've verified app_ptr is non-null and it should be a valid pointer
+                // that was previously returned by Box::into_raw from this module.
+                // This reclaims ownership and allows proper cleanup.
+                Box::from_raw(app_ptr) 
+            };
         }
     }
     

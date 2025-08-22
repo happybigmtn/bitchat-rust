@@ -49,7 +49,6 @@ impl Default for MeshConfig {
 /// Feynman: Think of this as the "control tower" at an airport.
 /// It coordinates all the different services (baggage, fuel, catering)
 /// to ensure planes (messages) get where they need to go safely and efficiently.
-#[allow(dead_code)]
 pub struct MeshService {
     config: MeshConfig,
     components: Arc<ComponentManager>,
@@ -97,14 +96,12 @@ pub struct PeerCapabilities {
 }
 
 /// Routing table for efficient message forwarding
-#[allow(dead_code)]
 pub struct RoutingTable {
     routes: HashMap<PeerId, Vec<Route>>,
     direct_peers: HashMap<PeerId, DirectConnection>,
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 struct Route {
     next_hop: PeerId,
     distance: u32,
@@ -112,7 +109,6 @@ struct Route {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 struct DirectConnection {
     peer_id: PeerId,
     latency: Duration,

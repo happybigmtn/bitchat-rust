@@ -65,7 +65,11 @@ pub mod android {
             return JObject::null().into();
         }
         
-        let (rt, app) = unsafe { &mut *(app_ptr as *mut (tokio::runtime::Runtime, BitCrapsApp)) };
+        let (rt, app) = unsafe { 
+            // SAFETY: We've verified app_ptr is non-null and it originates from our Box::into_raw.
+            // The pointer should be properly aligned and valid for the lifetime of this function.
+            &mut *(app_ptr as *mut (tokio::runtime::Runtime, BitCrapsApp)) 
+        };
         
         // Create game
         let game_id = match rt.block_on(async {
@@ -98,7 +102,11 @@ pub mod android {
             return false as jboolean;
         }
         
-        let (rt, app) = unsafe { &mut *(app_ptr as *mut (tokio::runtime::Runtime, BitCrapsApp)) };
+        let (rt, app) = unsafe { 
+            // SAFETY: We've verified app_ptr is non-null and it originates from our Box::into_raw.
+            // The pointer should be properly aligned and valid for the lifetime of this function.
+            &mut *(app_ptr as *mut (tokio::runtime::Runtime, BitCrapsApp)) 
+        };
         
         let game_id_str: String = match env.get_string(game_id) {
             Ok(s) => s.into(),
@@ -134,7 +142,11 @@ pub mod android {
             return 0;
         }
         
-        let (rt, app) = unsafe { &mut *(app_ptr as *mut (tokio::runtime::Runtime, BitCrapsApp)) };
+        let (rt, app) = unsafe { 
+            // SAFETY: We've verified app_ptr is non-null and it originates from our Box::into_raw.
+            // The pointer should be properly aligned and valid for the lifetime of this function.
+            &mut *(app_ptr as *mut (tokio::runtime::Runtime, BitCrapsApp)) 
+        };
         
         let balance = rt.block_on(async {
             app.ledger.get_balance(&app.identity.peer_id).await
@@ -151,9 +163,13 @@ pub mod android {
     ) {
         // Validate app pointer before deallocation
         if app_ptr != 0 {
-            // Safe: we verified the pointer is not null
-            let boxed = unsafe { Box::from_raw(app_ptr as *mut (tokio::runtime::Runtime, BitCrapsApp)) };
-            // Automatically dropped
+            let boxed = unsafe { 
+                // SAFETY: We've verified app_ptr is non-null and it should be a valid pointer
+                // that was previously returned by Box::into_raw from this module.
+                // This reclaims ownership and allows proper cleanup.
+                Box::from_raw(app_ptr as *mut (tokio::runtime::Runtime, BitCrapsApp)) 
+            };
+            // Box is automatically dropped, performing cleanup
         }
     }
 }

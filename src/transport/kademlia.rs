@@ -137,7 +137,6 @@ pub struct Contact {
 /// phone numbers are to yours. Each bucket holds people whose numbers
 /// differ by a specific number of initial digits. The genius is that
 /// you keep more contacts who are "close" to you and fewer who are "far".
-#[allow(dead_code)]
 pub struct KBucket {
     contacts: Vec<Contact>,
     max_size: usize,

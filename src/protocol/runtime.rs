@@ -711,13 +711,16 @@ impl GameRuntime {
 /// Treasury participant that provides liquidity and takes opposite bets
 pub struct TreasuryParticipant {
     balance: Arc<RwLock<u64>>, // CRAP token balance
-    #[allow(dead_code)]
+    /// Game participation tracking - reserved for future treasury bot implementation
     game_participation: Arc<RwLock<HashMap<GameId, TreasuryPosition>>>,
-    #[allow(dead_code)]
+    /// Risk management strategy - reserved for future automated trading implementation
     strategy: TreasuryStrategy,
 }
 
-#[allow(dead_code)]
+/// Treasury position tracking for risk management
+/// 
+/// Reserved for future implementation of sophisticated treasury bot
+/// that can track positions across multiple games and manage risk exposure.
 #[derive(Debug, Clone)]
 struct TreasuryPosition {
     game_id: GameId,
@@ -726,7 +729,10 @@ struct TreasuryPosition {
     profit_loss: i64,
 }
 
-#[allow(dead_code)]
+/// Treasury trading strategy configuration
+/// 
+/// Reserved for future implementation of automated market making
+/// and risk management strategies for the treasury bot.
 #[derive(Debug, Clone)]
 struct TreasuryStrategy {
     max_exposure_per_game: u64,

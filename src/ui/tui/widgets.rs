@@ -16,22 +16,10 @@ use ratatui::buffer::Buffer;
 use ratatui::Frame;
 
 // Add missing types
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum MessageFilter {
-    All,
-    From(String),
-    Channel(String),
-    System,
-}
-
-#[allow(dead_code)]
 /// Auto-completion helper for commands and inputs
 #[derive(Debug, Clone)]
 pub struct AutoComplete {
     commands: Vec<String>,
-    peers: Vec<String>,
-    channels: Vec<String>,
-    bet_types: Vec<String>,
 }
 
 impl AutoComplete {
@@ -52,64 +40,30 @@ impl AutoComplete {
                 "/roll".to_string(),
                 "/balance".to_string(),
             ],
-            peers: Vec::new(),
-            channels: Vec::new(),
-            bet_types: vec![
-                "pass".to_string(),
-                "dontpass".to_string(),
-                "come".to_string(),
-                "dontcome".to_string(),
-                "field".to_string(),
-                "hard4".to_string(),
-                "hard6".to_string(),
-                "hard8".to_string(),
-                "hard10".to_string(),
-                "any7".to_string(),
-                "any11".to_string(),
-            ],
         }
     }
     
     pub fn complete(&self, input: &str) -> Vec<String> {
         if input.starts_with('/') {
-            self.complete_command(input)
+            self.commands
+                .iter()
+                .filter(|cmd| cmd.starts_with(input))
+                .cloned()
+                .collect()
         } else {
-            self.complete_bet_type(input)
-        }
-    }
-    
-    fn complete_command(&self, input: &str) -> Vec<String> {
-        self.commands
-            .iter()
-            .filter(|cmd| cmd.starts_with(input))
-            .cloned()
-            .collect()
-    }
-    
-    fn complete_bet_type(&self, input: &str) -> Vec<String> {
-        self.bet_types
-            .iter()
-            .filter(|bet| bet.starts_with(input))
-            .cloned()
-            .collect()
-    }
-    
-    pub fn add_peer(&mut self, peer: String) {
-        if !self.peers.contains(&peer) {
-            self.peers.push(peer);
-        }
-    }
-    
-    pub fn remove_peer(&mut self, peer: &str) {
-        self.peers.retain(|p| p != peer);
-    }
-    
-    pub fn add_channel(&mut self, channel: String) {
-        if !self.channels.contains(&channel) {
-            self.channels.push(channel);
+            Vec::new()
         }
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MessageFilter {
+    All,
+    From(String),
+    Channel(String),
+    System,
+}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -197,56 +151,6 @@ impl MessageFormatter {
     }
 }
 
-#[allow(dead_code)]
-pub struct ChatView {
-    messages: Vec<ChatMessage>,
-    scroll_offset: usize,
-    filter: MessageFilter,
-    state: ListState,
-}
-
-impl ChatView {
-    pub fn get_visible_messages(&self) -> Vec<&ChatMessage> {
-        let start = self.scroll_offset;
-        let end = std::cmp::min(start + 50, self.messages.len());
-        self.messages[start..end].iter().collect()
-    }
-    pub fn new() -> Self {
-        Self {
-            messages: Vec::new(),
-            scroll_offset: 0,
-            filter: MessageFilter::All,
-            state: ListState::default(),
-        }
-    }
-    
-    pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
-        let start = self.scroll_offset;
-        let end = std::cmp::min(start + 50, self.messages.len());
-        
-        let items: Vec<ListItem> = self.messages[start..end]
-            .iter()
-            .map(|msg| {
-                let spans = MessageFormatter::format_message(msg);
-                ListItem::new(Line::from(spans))
-            })
-            .collect();
-            
-        let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title("Chat"))
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD));
-            
-        StatefulWidget::render(list, area, buf, &mut self.state);
-    }
-    
-    pub fn scroll_up(&mut self) {
-        self.scroll_offset = self.scroll_offset.saturating_sub(1);
-    }
-    
-    pub fn scroll_down(&mut self) {
-        self.scroll_offset = (self.scroll_offset + 1).min(self.messages.len());
-    }
-}
 
 /// Specialized widget for displaying dice with visual faces
 pub struct DiceWidget {

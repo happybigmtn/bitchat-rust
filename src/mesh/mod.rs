@@ -69,7 +69,6 @@ pub struct RouteInfo {
 }
 
 /// Cached message to prevent loops
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct CachedMessage {
     packet_hash: u64,
@@ -503,25 +502,6 @@ impl MeshService {
         hash
     }
     
-    /// Static version of calculate_packet_hash
-    #[allow(dead_code)]
-    fn calculate_packet_hash_original(&self, packet: &BitchatPacket) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        
-        let mut hasher = DefaultHasher::new();
-        
-        // Hash key packet fields
-        packet.packet_type.hash(&mut hasher);
-        if let Some(sender) = packet.get_sender() {
-            sender.hash(&mut hasher);
-        }
-        if let Some(timestamp) = packet.get_timestamp() {
-            timestamp.hash(&mut hasher);
-        }
-        
-        hasher.finish()
-    }
     
     /// Static version of is_message_cached
     async fn is_message_cached_static(

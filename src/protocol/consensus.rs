@@ -524,7 +524,8 @@ impl ConsensusEngine {
             is_finalized: false,
         };
 
-        let signature_cache = LruCache::new(NonZeroUsize::new(SIGNATURE_CACHE_SIZE).unwrap());
+        let signature_cache = LruCache::new(NonZeroUsize::new(SIGNATURE_CACHE_SIZE)
+            .expect("SIGNATURE_CACHE_SIZE is a positive constant"));
         let entropy_pool = EntropyPool::new();
         let compact_signatures = HashMap::new();
         
@@ -899,8 +900,8 @@ impl ConsensusEngine {
             round_id,
             dice_roll,
             entropy_proof: reveals.values()
-                .map(|r| self.create_randomness_commitment(round_id, &r.nonce).unwrap())
-                .collect(),
+                .map(|r| self.create_randomness_commitment(round_id, &r.nonce))
+                .collect::<Result<Vec<_>, _>>()?,
         };
 
         self.propose_operation(operation)?;
