@@ -26,6 +26,7 @@ pub enum MessageFilter {
 
 #[allow(dead_code)]
 /// Auto-completion helper for commands and inputs
+#[derive(Debug, Clone)]
 pub struct AutoComplete {
     commands: Vec<String>,
     peers: Vec<String>,

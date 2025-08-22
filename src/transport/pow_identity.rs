@@ -1,7 +1,106 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::collections::HashMap;
 use sha2::{Sha256, Digest};
 use serde::{Serialize, Deserialize};
+use rand::RngCore;
 use crate::protocol::PeerId;
+
+/// Standalone Proof of Work for NodeId validation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofOfWork {
+    pub nonce: u64,
+    pub timestamp: u64, 
+    pub difficulty: u32,
+    pub hash: [u8; 32],
+}
+
+impl ProofOfWork {
+    /// Generate proof of work for given data
+    pub fn generate(data: &[u8], difficulty: u32) -> Result<Self, &'static str> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        
+        let mut nonce = 0u64;
+        let mut hasher = Sha256::new();
+        
+        // Limit attempts to prevent infinite loops
+        let max_attempts = 1_000_000;
+        
+        for _ in 0..max_attempts {
+            hasher.update(data);
+            hasher.update(&nonce.to_le_bytes());
+            hasher.update(&timestamp.to_le_bytes());
+            
+            let hash: [u8; 32] = hasher.finalize_reset().into();
+            
+            if Self::check_difficulty(&hash, difficulty) {
+                return Ok(Self {
+                    nonce,
+                    timestamp,
+                    difficulty,
+                    hash,
+                });
+            }
+            
+            nonce += 1;
+        }
+        
+        Err("Failed to generate proof of work within attempt limit")
+    }
+    
+    /// Verify proof of work
+    pub fn verify(&self, data: &[u8]) -> bool {
+        // Check timestamp is reasonable (within 24 hours)
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        
+        if self.timestamp > now + 3600 || self.timestamp < now.saturating_sub(86400) {
+            return false;
+        }
+        
+        // Verify hash
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+        hasher.update(&self.nonce.to_le_bytes());
+        hasher.update(&self.timestamp.to_le_bytes());
+        
+        let computed_hash: [u8; 32] = hasher.finalize().into();
+        
+        if computed_hash != self.hash {
+            return false;
+        }
+        
+        // Check difficulty
+        Self::check_difficulty(&self.hash, self.difficulty)
+    }
+    
+    /// Check if hash meets difficulty requirement
+    fn check_difficulty(hash: &[u8; 32], difficulty: u32) -> bool {
+        let required_zeros = difficulty / 8;
+        let remainder_bits = difficulty % 8;
+        
+        // Check full zero bytes
+        for i in 0..required_zeros as usize {
+            if i >= hash.len() || hash[i] != 0 {
+                return false;
+            }
+        }
+        
+        // Check partial byte
+        if remainder_bits > 0 && (required_zeros as usize) < hash.len() {
+            let mask = 0xFF << (8 - remainder_bits);
+            if hash[required_zeros as usize] & mask != 0 {
+                return false;
+            }
+        }
+        
+        true
+    }
+}
 
 /// Proof of Work identity - prevents Sybil attacks
 /// 
@@ -249,5 +348,3 @@ impl IdentityCache {
     }
 }
 
-// Add missing import
-use std::collections::HashMap;

@@ -9,15 +9,25 @@
 //! - Session management integration
 
 pub mod binary;
+pub mod optimized_binary;
 pub mod craps;
 pub mod runtime;
 pub mod consensus;
+pub mod compact_state;
 
 // New refactored modules
 pub mod bet_types;
 pub mod game_logic;
 pub mod resolution;
 pub mod payouts;
+
+// Efficient optimized modules
+pub mod efficient_game_state;
+pub mod efficient_bet_resolution;
+pub mod efficient_consensus;
+pub mod efficient_history;
+pub mod efficient_sync;
+pub mod benchmarks;
 
 use std::collections::HashSet;
 use std::io::{Read, Write};

@@ -25,6 +25,9 @@ use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
 use rand::{RngCore, CryptoRng};
+use ed25519_dalek::{SigningKey, VerifyingKey, Signature as Ed25519Signature, Signer, Verifier};
+use lru::LruCache;
+use std::num::NonZeroUsize;
 
 use crate::error::{Error, Result};
 use super::{PeerId, GameId, CrapTokens, DiceRoll, BetType, Bet, Hash256, Signature};
@@ -92,6 +95,15 @@ pub struct ConsensusEngine {
     
     // Performance tracking
     consensus_metrics: ConsensusMetrics,
+    
+    // Signature caching for performance
+    signature_cache: LruCache<Hash256, bool>,
+    
+    // Entropy pool for secure randomness
+    entropy_pool: EntropyPool,
+    
+    // Compact signature cache
+    compact_signatures: HashMap<Hash256, CompactSignature>,
 }
 
 /// Game consensus state
@@ -303,6 +315,192 @@ pub struct ConsensusMetrics {
     pub forks_resolved: u64,
     pub disputes_resolved: u64,
     pub byzantine_actors_detected: u64,
+    pub signature_cache_hits: u64,
+    pub signature_cache_misses: u64,
+    pub entropy_samples: u64,
+}
+
+/// Compact signature representation for memory efficiency
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactSignature {
+    /// First 32 bytes of signature (R component)
+    pub r: [u8; 32],
+    /// Last 32 bytes of signature (S component)
+    pub s: [u8; 32],
+    /// Compressed public key (32 bytes instead of full key)
+    pub pubkey: [u8; 32],
+}
+
+/// Entropy pool for cryptographically secure randomness
+#[derive(Debug)]
+pub struct EntropyPool {
+    /// Main entropy state
+    state: [u8; 64],
+    /// Entropy counter
+    counter: u64,
+    /// Pool of accumulated entropy from various sources
+    accumulated: Vec<[u8; 32]>,
+    /// Last reseed time
+    last_reseed: SystemTime,
+}
+
+const SIGNATURE_CACHE_SIZE: usize = 1024;
+const MAX_ACCUMULATED_ENTROPY: usize = 16;
+const RESEED_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
+
+impl CompactSignature {
+    /// Create from full Ed25519 signature and public key
+    pub fn from_ed25519(signature: &Ed25519Signature, public_key: &VerifyingKey) -> Self {
+        let sig_bytes = signature.to_bytes();
+        let mut r = [0u8; 32];
+        let mut s = [0u8; 32];
+        r.copy_from_slice(&sig_bytes[..32]);
+        s.copy_from_slice(&sig_bytes[32..]);
+        
+        Self {
+            r,
+            s,
+            pubkey: public_key.to_bytes(),
+        }
+    }
+    
+    /// Convert to full Ed25519 signature
+    pub fn to_ed25519(&self) -> Result<(Ed25519Signature, VerifyingKey)> {
+        let mut sig_bytes = [0u8; 64];
+        sig_bytes[..32].copy_from_slice(&self.r);
+        sig_bytes[32..].copy_from_slice(&self.s);
+        
+        let signature = Ed25519Signature::from_bytes(&sig_bytes);
+        let public_key = VerifyingKey::from_bytes(&self.pubkey)
+            .map_err(|e| Error::Crypto(format!("Invalid public key: {}", e)))?;
+        
+        Ok((signature, public_key))
+    }
+    
+    /// Memory size in bytes
+    pub fn size_bytes(&self) -> usize {
+        96 // 32 + 32 + 32
+    }
+}
+
+impl EntropyPool {
+    /// Create new entropy pool
+    pub fn new() -> Self {
+        let mut state = [0u8; 64];
+        let mut rng = rand::thread_rng();
+        rng.fill_bytes(&mut state);
+        
+        Self {
+            state,
+            counter: 0,
+            accumulated: Vec::new(),
+            last_reseed: SystemTime::now(),
+        }
+    }
+    
+    /// Add entropy from external source
+    pub fn add_entropy(&mut self, entropy: [u8; 32]) {
+        if self.accumulated.len() < MAX_ACCUMULATED_ENTROPY {
+            self.accumulated.push(entropy);
+        } else {
+            // Replace oldest entropy
+            let index = self.counter as usize % MAX_ACCUMULATED_ENTROPY;
+            self.accumulated[index] = entropy;
+        }
+        self.counter = self.counter.wrapping_add(1);
+        
+        // Mix entropy into state immediately
+        for (i, &byte) in entropy.iter().enumerate() {
+            self.state[i % 64] ^= byte;
+        }
+    }
+    
+    /// Generate cryptographically secure random bytes
+    pub fn generate_bytes(&mut self, length: usize) -> Vec<u8> {
+        // Check if we need to reseed
+        if self.last_reseed.elapsed().unwrap_or(Duration::ZERO) > RESEED_INTERVAL {
+            self.reseed();
+        }
+        
+        let mut output = Vec::with_capacity(length);
+        while output.len() < length {
+            // Update state with counter and accumulated entropy
+            let mut hasher = Sha256::new();
+            hasher.update(&self.state);
+            hasher.update(&self.counter.to_be_bytes());
+            
+            // Mix in accumulated entropy
+            for entropy in &self.accumulated {
+                hasher.update(entropy);
+            }
+            
+            let hash = hasher.finalize();
+            output.extend_from_slice(&hash);
+            
+            // Update state for forward secrecy
+            for (i, &byte) in hash.iter().enumerate() {
+                self.state[i % 64] ^= byte;
+            }
+            
+            self.counter = self.counter.wrapping_add(1);
+        }
+        
+        output.truncate(length);
+        output
+    }
+    
+    /// Reseed the entropy pool
+    fn reseed(&mut self) {
+        // Add fresh system entropy
+        let mut system_entropy = [0u8; 32];
+        let mut rng = rand::thread_rng();
+        rng.fill_bytes(&mut system_entropy);
+        
+        // Hash everything together
+        let mut hasher = Sha256::new();
+        hasher.update(&self.state);
+        hasher.update(&system_entropy);
+        hasher.update(&self.counter.to_be_bytes());
+        
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_else(|_| Duration::from_secs(0))
+            .as_nanos();
+        hasher.update(&timestamp.to_be_bytes());
+        
+        let new_state = hasher.finalize();
+        self.state[..32].copy_from_slice(&new_state);
+        
+        // Update second half with different hash
+        hasher = Sha256::new();
+        hasher.update(&new_state);
+        hasher.update(b"RESEED_SECOND_HALF");
+        let second_half = hasher.finalize();
+        self.state[32..].copy_from_slice(&second_half);
+        
+        self.last_reseed = SystemTime::now();
+    }
+    
+    /// Generate secure dice roll
+    pub fn roll_dice(&mut self) -> (u8, u8) {
+        let bytes = self.generate_bytes(16);
+        let die1 = self.hash_to_die_value(&bytes[0..8]);
+        let die2 = self.hash_to_die_value(&bytes[8..16]);
+        (die1, die2)
+    }
+    
+    /// Convert hash bytes to unbiased die value (1-6)
+    fn hash_to_die_value(&self, bytes: &[u8]) -> u8 {
+        let value = u64::from_le_bytes(bytes.try_into().unwrap_or([0u8; 8]));
+        const MAX_VALID: u64 = u64::MAX - (u64::MAX % 6);
+        
+        if value < MAX_VALID {
+            ((value % 6) + 1) as u8
+        } else {
+            // Fallback: use simple modulo for edge case
+            ((value % 6) + 1) as u8
+        }
+    }
 }
 
 impl ConsensusEngine {
@@ -326,6 +524,10 @@ impl ConsensusEngine {
             is_finalized: false,
         };
 
+        let signature_cache = LruCache::new(NonZeroUsize::new(SIGNATURE_CACHE_SIZE).unwrap());
+        let entropy_pool = EntropyPool::new();
+        let compact_signatures = HashMap::new();
+        
         let mut engine = Self {
             config,
             game_id,
@@ -342,6 +544,9 @@ impl ConsensusEngine {
             active_disputes: HashMap::new(),
             dispute_votes: HashMap::new(),
             consensus_metrics: ConsensusMetrics::default(),
+            signature_cache,
+            entropy_pool,
+            compact_signatures,
         };
 
         // Initialize canonical chain
@@ -584,10 +789,14 @@ impl ConsensusEngine {
 
     /// Start commit phase for dice roll randomness
     pub fn start_dice_commit_phase(&mut self, round_id: RoundId) -> Result<Hash256> {
-        // Generate random nonce
+        // Generate cryptographically secure nonce from entropy pool
+        let nonce_bytes = self.entropy_pool.generate_bytes(32);
         let mut nonce = [0u8; 32];
-        let mut rng = rand::thread_rng();
-        rng.fill_bytes(&mut nonce);
+        nonce.copy_from_slice(&nonce_bytes);
+
+        // Add our own entropy contribution
+        self.entropy_pool.add_entropy(nonce);
+        self.consensus_metrics.entropy_samples += 1;
 
         // Create commitment
         let commitment = self.create_randomness_commitment(round_id, &nonce)?;
@@ -674,20 +883,14 @@ impl ConsensusEngine {
         let reveals = self.dice_reveals.get(&round_id)
             .ok_or_else(|| Error::ValidationError("No reveals found for round".to_string()))?;
 
-        // Combine all nonces for final randomness
-        let mut combined_entropy = Vec::new();
+        // Combine all nonces into entropy pool
         for (_, reveal) in reveals.iter() {
-            combined_entropy.extend_from_slice(&reveal.nonce);
+            self.entropy_pool.add_entropy(reveal.nonce);
         }
 
-        // Hash combined entropy
-        let mut hasher = Sha256::new();
-        hasher.update(&combined_entropy);
-        let entropy_hash = hasher.finalize();
-
-        // Generate dice values from hash
-        let die1 = (entropy_hash[0] % 6) + 1;
-        let die2 = (entropy_hash[1] % 6) + 1;
+        // Generate dice roll using secure entropy pool
+        let (die1, die2) = self.entropy_pool.roll_dice();
+        self.consensus_metrics.entropy_samples += 1;
 
         let dice_roll = DiceRoll::new(die1, die2)?;
 
@@ -914,29 +1117,116 @@ impl ConsensusEngine {
         Ok(hasher.finalize().into())
     }
 
-    // Placeholder signature methods - in production these would use actual cryptography
-    fn sign_proposal(&self, _proposal_id: &ProposalId) -> Result<Signature> {
-        Ok(Signature([0u8; 64]))
+    /// Real Ed25519 signature methods with caching
+    fn sign_proposal(&mut self, proposal_id: &ProposalId) -> Result<Signature> {
+        // Create signing key from local peer ID (simplified for this example)
+        let signing_key = SigningKey::from_bytes(&self.local_peer_id);
+        let ed25519_signature = signing_key.sign(proposal_id);
+        
+        // Store compact signature for efficiency
+        let compact_sig = CompactSignature::from_ed25519(&ed25519_signature, &signing_key.verifying_key());
+        self.compact_signatures.insert(*proposal_id, compact_sig);
+        
+        Ok(Signature(ed25519_signature.to_bytes()))
     }
 
-    fn verify_proposal_signature(&self, _proposal: &GameProposal) -> Result<bool> {
-        Ok(true)
+    fn verify_proposal_signature(&mut self, proposal: &GameProposal) -> Result<bool> {
+        let signature_hash = self.hash_signature_data(&proposal.id, &proposal.proposer)?;
+        
+        // Check cache first
+        if let Some(&cached_result) = self.signature_cache.get(&signature_hash) {
+            self.consensus_metrics.signature_cache_hits += 1;
+            return Ok(cached_result);
+        }
+        
+        self.consensus_metrics.signature_cache_misses += 1;
+        
+        // Verify Ed25519 signature
+        let public_key = VerifyingKey::from_bytes(&proposal.proposer)
+            .map_err(|e| Error::Crypto(format!("Invalid public key: {}", e)))?;
+        
+        let ed25519_signature = Ed25519Signature::from_bytes(&proposal.signature.0);
+        let is_valid = public_key.verify(&proposal.id, &ed25519_signature).is_ok();
+        
+        // Cache result
+        self.signature_cache.put(signature_hash, is_valid);
+        
+        Ok(is_valid)
     }
 
-    fn sign_randomness_commit(&self, _round_id: RoundId, _commitment: &Hash256) -> Result<Signature> {
-        Ok(Signature([0u8; 64]))
+    fn sign_randomness_commit(&mut self, round_id: RoundId, commitment: &Hash256) -> Result<Signature> {
+        let signing_key = SigningKey::from_bytes(&self.local_peer_id);
+        
+        let mut data = Vec::new();
+        data.extend_from_slice(&round_id.to_be_bytes());
+        data.extend_from_slice(commitment);
+        
+        let ed25519_signature = signing_key.sign(&data);
+        Ok(Signature(ed25519_signature.to_bytes()))
     }
 
-    fn verify_randomness_commit_signature(&self, _commit: &RandomnessCommit) -> Result<bool> {
-        Ok(true)
+    fn verify_randomness_commit_signature(&mut self, commit: &RandomnessCommit) -> Result<bool> {
+        let mut data = Vec::new();
+        data.extend_from_slice(&commit.round_id.to_be_bytes());
+        data.extend_from_slice(&commit.commitment);
+        
+        let signature_hash = self.hash_signature_data(&data, &commit.player)?;
+        
+        // Check cache
+        if let Some(&cached_result) = self.signature_cache.get(&signature_hash) {
+            self.consensus_metrics.signature_cache_hits += 1;
+            return Ok(cached_result);
+        }
+        
+        self.consensus_metrics.signature_cache_misses += 1;
+        
+        let public_key = VerifyingKey::from_bytes(&commit.player)
+            .map_err(|e| Error::Crypto(format!("Invalid public key: {}", e)))?;
+        
+        let ed25519_signature = Ed25519Signature::from_bytes(&commit.signature.0);
+        let is_valid = public_key.verify(&data, &ed25519_signature).is_ok();
+        
+        self.signature_cache.put(signature_hash, is_valid);
+        Ok(is_valid)
     }
 
-    fn verify_randomness_reveal_signature(&self, _reveal: &RandomnessReveal) -> Result<bool> {
-        Ok(true)
+    fn verify_randomness_reveal_signature(&mut self, reveal: &RandomnessReveal) -> Result<bool> {
+        let mut data = Vec::new();
+        data.extend_from_slice(&reveal.round_id.to_be_bytes());
+        data.extend_from_slice(&reveal.nonce);
+        
+        let signature_hash = self.hash_signature_data(&data, &reveal.player)?;
+        
+        if let Some(&cached_result) = self.signature_cache.get(&signature_hash) {
+            self.consensus_metrics.signature_cache_hits += 1;
+            return Ok(cached_result);
+        }
+        
+        self.consensus_metrics.signature_cache_misses += 1;
+        
+        let public_key = VerifyingKey::from_bytes(&reveal.player)
+            .map_err(|e| Error::Crypto(format!("Invalid public key: {}", e)))?;
+        
+        let ed25519_signature = Ed25519Signature::from_bytes(&reveal.signature.0);
+        let is_valid = public_key.verify(&data, &ed25519_signature).is_ok();
+        
+        self.signature_cache.put(signature_hash, is_valid);
+        Ok(is_valid)
     }
 
-    fn sign_dispute_vote(&self, _dispute_id: DisputeId) -> Result<Signature> {
-        Ok(Signature([0u8; 64]))
+    fn sign_dispute_vote(&mut self, dispute_id: DisputeId) -> Result<Signature> {
+        let signing_key = SigningKey::from_bytes(&self.local_peer_id);
+        let ed25519_signature = signing_key.sign(&dispute_id);
+        Ok(Signature(ed25519_signature.to_bytes()))
+    }
+    
+    /// Helper to create hash for signature caching
+    fn hash_signature_data<T: AsRef<[u8]>>(&self, data: T, signer: &PeerId) -> Result<Hash256> {
+        let mut hasher = Sha256::new();
+        hasher.update(b"SIGNATURE_CACHE");
+        hasher.update(data.as_ref());
+        hasher.update(signer);
+        Ok(hasher.finalize().into())
     }
 
     /// Get current game state

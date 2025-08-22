@@ -6,7 +6,8 @@
 
 use bytes::{Buf, BufMut, BytesMut};
 use crate::error::Error;
-use super::{BetType, CrapTokens, DiceRoll};
+use super::{BetType, CrapTokens, DiceRoll, PeerId, GameId};
+use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 
 /// Binary serialization trait for network protocol
 /// 
@@ -294,6 +295,224 @@ impl BinarySerializable for DiceRoll {
     }
 }
 
+/// Compact binary format for game messages with bit packing
+/// Feynman: Every bit counts when you're sending data over slow networks
+/// We pack multiple small values into single bytes to minimize overhead
+pub struct CompactGameMessage {
+    /// Packed header: version(3) + msg_type(5) bits
+    pub header: u8,
+    /// Game and player identifiers (fixed size)
+    pub game_id: GameId,
+    pub player_id: PeerId,
+    /// Variable-length payload based on message type
+    pub payload: Vec<u8>,
+}
+
+impl CompactGameMessage {
+    /// Create new compact message
+    pub fn new(version: u8, msg_type: u8, game_id: GameId, player_id: PeerId) -> Self {
+        let header = ((version & 0x07) << 5) | (msg_type & 0x1F);
+        Self {
+            header,
+            game_id,
+            player_id,
+            payload: Vec::new(),
+        }
+    }
+    
+    /// Extract version from header
+    pub fn version(&self) -> u8 {
+        (self.header >> 5) & 0x07
+    }
+    
+    /// Extract message type from header
+    pub fn msg_type(&self) -> u8 {
+        self.header & 0x1F
+    }
+    
+    /// Add bet information with bit packing
+    /// Format: bet_type(6) + priority(2) bits, then amount as varint
+    pub fn add_bet(&mut self, bet_type: BetType, amount: CrapTokens, priority: u8) {
+        // Pack bet type (6 bits) and priority (2 bits) into single byte
+        let packed = ((bet_type as u8) & 0x3F) | ((priority & 0x03) << 6);
+        self.payload.push(packed);
+        
+        // Add amount as variable-length integer
+        self.add_varint(amount.amount());
+    }
+    
+    /// Add dice roll with compact encoding
+    /// Format: die1(3) + die2(3) + reserved(2) bits, then timestamp as varint
+    pub fn add_dice_roll(&mut self, roll: &DiceRoll) {
+        // Pack both dice values into single byte
+        let packed = ((roll.die1 - 1) & 0x07) | (((roll.die2 - 1) & 0x07) << 3);
+        self.payload.push(packed);
+        
+        // Add timestamp as varint to save space
+        self.add_varint(roll.timestamp);
+    }
+    
+    /// Add variable-length integer (saves space for small numbers)
+    fn add_varint(&mut self, mut value: u64) {
+        while value >= 0x80 {
+            self.payload.push((value as u8) | 0x80);
+            value >>= 7;
+        }
+        self.payload.push(value as u8);
+    }
+    
+    /// Read variable-length integer
+    fn read_varint(buf: &mut &[u8]) -> Result<u64, Error> {
+        let mut result = 0u64;
+        let mut shift = 0;
+        
+        loop {
+            if buf.is_empty() {
+                return Err(Error::Serialization("Unexpected end of varint".to_string()));
+            }
+            
+            let byte = buf[0];
+            *buf = &buf[1..];
+            
+            result |= ((byte & 0x7F) as u64) << shift;
+            
+            if byte & 0x80 == 0 {
+                break;
+            }
+            
+            shift += 7;
+            if shift >= 64 {
+                return Err(Error::Serialization("Varint too long".to_string()));
+            }
+        }
+        
+        Ok(result)
+    }
+    
+    /// Serialize to bytes with optional compression
+    pub fn serialize(&self, compress: bool) -> Result<Vec<u8>, Error> {
+        let mut buf = Vec::with_capacity(1 + 16 + 32 + self.payload.len());
+        
+        // Header
+        buf.push(self.header);
+        
+        // Fixed identifiers
+        buf.extend_from_slice(&self.game_id);
+        buf.extend_from_slice(&self.player_id);
+        
+        // Payload
+        if compress && self.payload.len() > 64 {
+            // Compress payload if it's large enough to benefit
+            let compressed = compress_prepend_size(&self.payload);
+            
+            // Set compression flag in header (use reserved bit)
+            buf[0] |= 0x80;
+            buf.extend_from_slice(&compressed);
+        } else {
+            buf.extend_from_slice(&self.payload);
+        }
+        
+        Ok(buf)
+    }
+    
+    /// Deserialize from bytes
+    pub fn deserialize(mut data: &[u8]) -> Result<Self, Error> {
+        if data.len() < 1 + 16 + 32 {
+            return Err(Error::Serialization("Message too short".to_string()));
+        }
+        
+        // Read header
+        let header = data[0];
+        data = &data[1..];
+        
+        // Read game ID
+        let mut game_id = [0u8; 16];
+        game_id.copy_from_slice(&data[..16]);
+        data = &data[16..];
+        
+        // Read player ID
+        let mut player_id = [0u8; 32];
+        player_id.copy_from_slice(&data[..32]);
+        data = &data[32..];
+        
+        // Read payload (with decompression if needed)
+        let payload = if header & 0x80 != 0 {
+            // Compressed payload
+            decompress_size_prepended(data)
+                .map_err(|e| Error::Serialization(format!("Decompression failed: {}", e)))?
+        } else {
+            data.to_vec()
+        };
+        
+        Ok(Self {
+            header: header & 0x7F, // Clear compression flag
+            game_id,
+            player_id,
+            payload,
+        })
+    }
+    
+    /// Extract bet from payload
+    pub fn extract_bet(&self) -> Result<Option<(BetType, CrapTokens, u8)>, Error> {
+        if self.payload.is_empty() {
+            return Ok(None);
+        }
+        
+        let mut buf = &self.payload[..];
+        
+        // Read packed bet info
+        let packed = buf[0];
+        buf = &buf[1..];
+        
+        let bet_type_val = packed & 0x3F;
+        let priority = (packed >> 6) & 0x03;
+        
+        // Convert to BetType
+        let bet_type = BetType::deserialize(&mut &[bet_type_val][..])?;
+        
+        // Read amount as varint
+        let amount = Self::read_varint(&mut buf)?;
+        let tokens = CrapTokens::new_unchecked(amount);
+        
+        Ok(Some((bet_type, tokens, priority)))
+    }
+    
+    /// Extract dice roll from payload
+    pub fn extract_dice_roll(&self) -> Result<Option<DiceRoll>, Error> {
+        if self.payload.is_empty() {
+            return Ok(None);
+        }
+        
+        let mut buf = &self.payload[..];
+        
+        // Read packed dice
+        let packed = buf[0];
+        buf = &buf[1..];
+        
+        let die1 = (packed & 0x07) + 1;
+        let die2 = ((packed >> 3) & 0x07) + 1;
+        
+        // Read timestamp
+        let timestamp = Self::read_varint(&mut buf)?;
+        
+        Ok(Some(DiceRoll { die1, die2, timestamp }))
+    }
+    
+    /// Get message size in bytes
+    pub fn size(&self) -> usize {
+        1 + 16 + 32 + self.payload.len()
+    }
+    
+    /// Calculate compression ratio if compressed
+    pub fn compression_ratio(&self, compressed_size: usize) -> f32 {
+        if self.payload.is_empty() {
+            1.0
+        } else {
+            compressed_size as f32 / self.payload.len() as f32
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -311,6 +530,32 @@ mod tests {
         let bet = BetType::Repeater12;
         bet.serialize(&mut buf).unwrap();
         assert_eq!(buf[0], 63);
+    }
+    
+    #[test]
+    fn test_compact_game_message() {
+        let game_id = [1u8; 16];
+        let player_id = [2u8; 32];
+        let mut msg = CompactGameMessage::new(1, 5, game_id, player_id);
+        
+        // Test bet addition
+        let tokens = CrapTokens::new_unchecked(100);
+        msg.add_bet(BetType::Pass, tokens, 2);
+        
+        // Serialize and deserialize
+        let serialized = msg.serialize(false).unwrap();
+        let deserialized = CompactGameMessage::deserialize(&serialized).unwrap();
+        
+        assert_eq!(deserialized.version(), 1);
+        assert_eq!(deserialized.msg_type(), 5);
+        assert_eq!(deserialized.game_id, game_id);
+        assert_eq!(deserialized.player_id, player_id);
+        
+        // Test bet extraction
+        let (bet_type, amount, priority) = deserialized.extract_bet().unwrap().unwrap();
+        assert_eq!(bet_type, BetType::Pass);
+        assert_eq!(amount.amount(), 100);
+        assert_eq!(priority, 2);
     }
     
     #[test]

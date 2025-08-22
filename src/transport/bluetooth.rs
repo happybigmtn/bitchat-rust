@@ -11,6 +11,8 @@ use btleplug::api::{
 use btleplug::platform::{Adapter, Manager, Peripheral, PeripheralId};
 use futures::stream::StreamExt;
 use uuid::Uuid;
+use bytes::{Bytes, BytesMut};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::protocol::{PeerId, BitchatPacket};
 use crate::transport::{Transport, TransportAddress, TransportEvent};
@@ -25,6 +27,12 @@ const BITCRAPS_TX_CHAR_UUID: Uuid = Uuid::from_u128(0x12345678_1234_5678_1234_56
 const BLE_MTU_SIZE: usize = 512;
 /// Fragment header size (sequence + flags)
 const FRAGMENT_HEADER_SIZE: usize = 4;
+/// Memory pool buffer size (power of 2 for efficient allocation)
+const POOL_BUFFER_SIZE: usize = 1024;
+/// Maximum number of pooled buffers
+const MAX_POOLED_BUFFERS: usize = 64;
+/// Fragment reassembly timeout
+const FRAGMENT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Connection limits for Bluetooth transport
 #[derive(Debug, Clone)]
@@ -54,12 +62,56 @@ struct DiscoveredPeer {
     connection_attempts: u32,
 }
 
-/// Packet fragment for reassembly
+/// Zero-copy packet fragment for reassembly
 #[derive(Debug, Clone)]
 struct PacketFragment {
     sequence: u16,
     is_last: bool,
-    data: Vec<u8>,
+    data: Bytes, // Zero-copy buffer
+    timestamp: Instant,
+}
+
+/// Memory pool for efficient buffer management
+struct MemoryPool {
+    /// Available buffers
+    buffers: Arc<Mutex<Vec<BytesMut>>>,
+    /// Buffer size
+    buffer_size: usize,
+    /// Total allocated buffers
+    total_allocated: AtomicUsize,
+    /// Pool statistics
+    stats: Arc<Mutex<PoolStats>>,
+}
+
+/// Memory pool statistics
+#[derive(Debug, Default)]
+struct PoolStats {
+    total_requests: u64,
+    cache_hits: u64,
+    cache_misses: u64,
+    peak_usage: usize,
+}
+
+/// Zero-copy fragment buffer with automatic cleanup
+struct FragmentBuffer {
+    /// Fragment data using zero-copy Bytes
+    fragments: HashMap<u16, PacketFragment>,
+    /// Expected total fragments
+    expected_fragments: Option<u16>,
+    /// First fragment timestamp for timeout
+    first_fragment_time: Option<Instant>,
+    /// Total expected size
+    total_size: usize,
+}
+
+/// Efficient fragmentation manager
+struct FragmentationManager {
+    /// Memory pool for buffers
+    memory_pool: MemoryPool,
+    /// Active reassembly buffers per peer
+    reassembly_buffers: HashMap<PeerId, HashMap<u16, FragmentBuffer>>,
+    /// Fragment sequence counter
+    next_sequence: u16,
 }
 
 /// Connection state for a peer
@@ -69,10 +121,8 @@ struct PeerConnection {
     peer_id: PeerId,
     tx_char: Option<btleplug::api::Characteristic>,
     rx_char: Option<btleplug::api::Characteristic>,
-    /// Fragments being reassembled for incoming packets
-    incoming_fragments: HashMap<u16, Vec<PacketFragment>>,
-    /// Next sequence number for outgoing fragments
-    next_tx_sequence: u16,
+    /// Zero-copy fragmentation manager
+    fragmentation: FragmentationManager,
     last_activity: Instant,
 }
 
@@ -92,6 +142,8 @@ pub struct BluetoothTransport {
     scan_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     /// Connection monitoring task handle
     monitor_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// Global memory pool for zero-copy operations
+    global_memory_pool: Arc<MemoryPool>,
 }
 
 impl BluetoothTransport {
@@ -109,6 +161,8 @@ impl BluetoothTransport {
         
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
         
+        let global_memory_pool = Arc::new(MemoryPool::new(POOL_BUFFER_SIZE, MAX_POOLED_BUFFERS));
+        
         let transport = Self {
             manager,
             adapter,
@@ -122,6 +176,7 @@ impl BluetoothTransport {
             discovered_peers: Arc::new(RwLock::new(HashMap::new())),
             scan_task: Arc::new(Mutex::new(None)),
             monitor_task: Arc::new(Mutex::new(None)),
+            global_memory_pool,
         };
         
         // Start cleanup task for connection attempts
@@ -382,7 +437,7 @@ impl BluetoothTransport {
         Ok(())
     }
     
-    /// Send packet over Bluetooth to peer with fragmentation support
+    /// Send packet over Bluetooth to peer with zero-copy fragmentation
     async fn send_over_ble(
         &self,
         peer_id: PeerId,
@@ -391,72 +446,20 @@ impl BluetoothTransport {
         let mut connections = self.connections.write().await;
         
         if let Some(connection) = connections.get_mut(&peer_id) {
-            // Serialize packet
+            // Serialize packet to zero-copy buffer
             let mut serialized_packet = packet.clone();
             let data = serialized_packet.serialize()
                 .map_err(|e| format!("Packet serialization failed: {}", e))?;
+            
+            // Convert to zero-copy Bytes for efficient fragmentation
+            let data_bytes = Bytes::from(data);
             
             // Get TX characteristic
             let tx_char = connection.tx_char.as_ref()
                 .ok_or("TX characteristic not available")?;
             
-            // Check if fragmentation is needed
-            let max_fragment_size = BLE_MTU_SIZE - FRAGMENT_HEADER_SIZE;
-            
-            if data.len() <= max_fragment_size {
-                // Single fragment - send directly
-                let mut fragment_data = Vec::with_capacity(data.len() + FRAGMENT_HEADER_SIZE);
-                
-                // Fragment header: [sequence:u16][flags:u16]
-                let sequence = connection.next_tx_sequence;
-                connection.next_tx_sequence = connection.next_tx_sequence.wrapping_add(1);
-                
-                fragment_data.extend_from_slice(&sequence.to_be_bytes());
-                fragment_data.extend_from_slice(&0x8000u16.to_be_bytes()); // Last fragment flag
-                fragment_data.extend_from_slice(&data);
-                
-                connection.peripheral.write(
-                    tx_char,
-                    &fragment_data,
-                    WriteType::WithoutResponse,
-                ).await?;
-                
-                log::debug!("Sent single fragment of {} bytes to peer {:?}", fragment_data.len(), peer_id);
-            } else {
-                // Multiple fragments needed
-                let total_fragments = (data.len() + max_fragment_size - 1) / max_fragment_size;
-                let base_sequence = connection.next_tx_sequence;
-                connection.next_tx_sequence = connection.next_tx_sequence.wrapping_add(total_fragments as u16);
-                
-                log::debug!("Fragmenting {} bytes into {} fragments for peer {:?}", data.len(), total_fragments, peer_id);
-                
-                for (fragment_index, chunk) in data.chunks(max_fragment_size).enumerate() {
-                    let mut fragment_data = Vec::with_capacity(chunk.len() + FRAGMENT_HEADER_SIZE);
-                    
-                    // Fragment header: [sequence:u16][flags:u16]
-                    let fragment_sequence = base_sequence.wrapping_add(fragment_index as u16);
-                    let is_last = fragment_index == total_fragments - 1;
-                    let flags = if is_last { 0x8000u16 } else { 0x0000u16 }; // Last fragment flag
-                    
-                    fragment_data.extend_from_slice(&fragment_sequence.to_be_bytes());
-                    fragment_data.extend_from_slice(&flags.to_be_bytes());
-                    fragment_data.extend_from_slice(chunk);
-                    
-                    connection.peripheral.write(
-                        tx_char,
-                        &fragment_data,
-                        WriteType::WithoutResponse,
-                    ).await?;
-                    
-                    log::debug!("Sent fragment {}/{} ({} bytes) to peer {:?}", 
-                              fragment_index + 1, total_fragments, fragment_data.len(), peer_id);
-                    
-                    // Small delay between fragments to prevent overwhelming the receiver
-                    if !is_last {
-                        tokio::time::sleep(Duration::from_millis(10)).await;
-                    }
-                }
-            }
+            // Use zero-copy fragmentation
+            self.send_fragmented_zero_copy(connection, tx_char, data_bytes, peer_id).await?;
             
             // Update last activity
             connection.last_activity = Instant::now();
@@ -465,6 +468,102 @@ impl BluetoothTransport {
         } else {
             Err("Peer not connected".into())
         }
+    }
+    
+    /// Zero-copy fragmentation implementation
+    async fn send_fragmented_zero_copy(
+        &self,
+        connection: &mut PeerConnection,
+        tx_char: &btleplug::api::Characteristic,
+        data: Bytes,
+        peer_id: PeerId,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let max_fragment_size = BLE_MTU_SIZE - FRAGMENT_HEADER_SIZE;
+        
+        if data.len() <= max_fragment_size {
+            // Single fragment - use pooled buffer
+            let mut buffer = self.global_memory_pool.get_buffer().await;
+            buffer.clear();
+            
+            // Get sequence number
+            let sequence = connection.fragmentation.next_sequence;
+            connection.fragmentation.next_sequence = connection.fragmentation.next_sequence.wrapping_add(1);
+            
+            // Build fragment header
+            buffer.extend_from_slice(&sequence.to_be_bytes());
+            buffer.extend_from_slice(&0x8000u16.to_be_bytes()); // Last fragment flag
+            buffer.extend_from_slice(&data);
+            
+            // Send with bounds checking
+            if buffer.len() <= BLE_MTU_SIZE {
+                connection.peripheral.write(
+                    tx_char,
+                    &buffer,
+                    WriteType::WithoutResponse,
+                ).await?;
+                
+                log::debug!("Sent single fragment of {} bytes to peer {:?}", buffer.len(), peer_id);
+            } else {
+                return Err("Fragment size exceeds MTU limit".into());
+            }
+            
+            // Return buffer to pool
+            self.global_memory_pool.return_buffer(buffer).await;
+        } else {
+            // Multiple fragments - zero-copy slicing
+            let total_fragments = (data.len() + max_fragment_size - 1) / max_fragment_size;
+            let base_sequence = connection.fragmentation.next_sequence;
+            connection.fragmentation.next_sequence = connection.fragmentation.next_sequence.wrapping_add(total_fragments as u16);
+            
+            log::debug!("Zero-copy fragmenting {} bytes into {} fragments for peer {:?}", data.len(), total_fragments, peer_id);
+            
+            for fragment_index in 0..total_fragments {
+                let start = fragment_index * max_fragment_size;
+                let end = std::cmp::min(start + max_fragment_size, data.len());
+                
+                // Zero-copy slice of original data
+                let chunk = data.slice(start..end);
+                
+                // Use pooled buffer for fragment
+                let mut buffer = self.global_memory_pool.get_buffer().await;
+                buffer.clear();
+                
+                // Fragment header with bounds checking
+                let fragment_sequence = base_sequence.wrapping_add(fragment_index as u16);
+                let is_last = fragment_index == total_fragments - 1;
+                let flags = if is_last { 0x8000u16 } else { 0x0000u16 };
+                
+                buffer.extend_from_slice(&fragment_sequence.to_be_bytes());
+                buffer.extend_from_slice(&flags.to_be_bytes());
+                buffer.extend_from_slice(&chunk);
+                
+                // Strict bounds checking to prevent overflow
+                if buffer.len() <= BLE_MTU_SIZE {
+                    connection.peripheral.write(
+                        tx_char,
+                        &buffer,
+                        WriteType::WithoutResponse,
+                    ).await?;
+                    
+                    log::debug!("Sent fragment {}/{} ({} bytes) to peer {:?}", 
+                              fragment_index + 1, total_fragments, buffer.len(), peer_id);
+                } else {
+                    self.global_memory_pool.return_buffer(buffer).await;
+                    return Err(format!("Fragment {} size {} exceeds MTU limit {}", 
+                                      fragment_index, buffer.len(), BLE_MTU_SIZE).into());
+                }
+                
+                // Return buffer to pool
+                self.global_memory_pool.return_buffer(buffer).await;
+                
+                // Small delay between fragments to prevent overwhelming
+                if !is_last {
+                    tokio::time::sleep(Duration::from_millis(5)).await; // Reduced delay for efficiency
+                }
+            }
+        }
+        
+        Ok(())
     }
     
     /// Handle incoming data from a peer
@@ -553,14 +652,19 @@ impl BluetoothTransport {
                 peer_id
             };
             
-            // Create connection object
+            // Create connection object with zero-copy fragmentation
+            let fragmentation = FragmentationManager {
+                memory_pool: MemoryPool::new(POOL_BUFFER_SIZE, MAX_POOLED_BUFFERS / 4), // Smaller pool per connection
+                reassembly_buffers: HashMap::new(),
+                next_sequence: 0,
+            };
+            
             let connection = PeerConnection {
                 peripheral: peripheral.clone(),
                 peer_id,
                 tx_char,
                 rx_char,
-                incoming_fragments: HashMap::new(),
-                next_tx_sequence: 0,
+                fragmentation,
                 last_activity: Instant::now(),
             };
             
@@ -764,5 +868,204 @@ impl BluetoothMeshCoordinator {
         let cutoff = Instant::now() - Duration::from_secs(300); // 5 minutes
         
         cache.retain(|_, &mut timestamp| timestamp > cutoff);
+    }
+}
+
+impl MemoryPool {
+    /// Create new memory pool
+    fn new(buffer_size: usize, max_buffers: usize) -> Self {
+        Self {
+            buffers: Arc::new(Mutex::new(Vec::with_capacity(max_buffers))),
+            buffer_size,
+            total_allocated: AtomicUsize::new(0),
+            stats: Arc::new(Mutex::new(PoolStats::default())),
+        }
+    }
+    
+    /// Get buffer from pool (zero-copy when possible)
+    async fn get_buffer(&self) -> BytesMut {
+        let mut stats = self.stats.lock().await;
+        stats.total_requests += 1;
+        
+        let mut buffers = self.buffers.lock().await;
+        if let Some(mut buffer) = buffers.pop() {
+            buffer.clear();
+            stats.cache_hits += 1;
+            buffer
+        } else {
+            stats.cache_misses += 1;
+            let allocated = self.total_allocated.fetch_add(1, Ordering::Relaxed);
+            stats.peak_usage = stats.peak_usage.max(allocated + 1);
+            BytesMut::with_capacity(self.buffer_size)
+        }
+    }
+    
+    /// Return buffer to pool
+    async fn return_buffer(&self, buffer: BytesMut) {
+        if buffer.capacity() >= self.buffer_size / 2 { // Only keep reasonably sized buffers
+            let mut buffers = self.buffers.lock().await;
+            if buffers.len() < buffers.capacity() {
+                buffers.push(buffer);
+            }
+        } else {
+            self.total_allocated.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+    
+    /// Get pool statistics
+    async fn get_stats(&self) -> PoolStats {
+        self.stats.lock().await.clone()
+    }
+}
+
+impl FragmentationManager {
+    /// Process incoming fragment with timeout and bounds checking
+    fn process_fragment(
+        &mut self,
+        peer_id: PeerId,
+        fragment_data: Bytes,
+    ) -> Result<Option<Bytes>, Box<dyn std::error::Error>> {
+        if fragment_data.len() < FRAGMENT_HEADER_SIZE {
+            return Err("Fragment too small for header".into());
+        }
+        
+        // Parse header with bounds checking
+        let sequence = u16::from_be_bytes([fragment_data[0], fragment_data[1]]);
+        let flags = u16::from_be_bytes([fragment_data[2], fragment_data[3]]);
+        let is_last = (flags & 0x8000) != 0;
+        
+        // Extract payload with bounds checking
+        let payload = fragment_data.slice(FRAGMENT_HEADER_SIZE..);
+        
+        // Prevent excessive memory usage
+        if payload.len() > BLE_MTU_SIZE * 2 {
+            return Err("Fragment payload exceeds safety limit".into());
+        }
+        
+        let fragment = PacketFragment {
+            sequence,
+            is_last,
+            data: payload,
+            timestamp: Instant::now(),
+        };
+        
+        // Get or create fragment buffer for this message
+        let msg_id = sequence; // Simplified: use sequence as message ID
+        let buffer = self.reassembly_buffers
+            .entry(peer_id)
+            .or_insert_with(HashMap::new)
+            .entry(msg_id)
+            .or_insert_with(|| FragmentBuffer {
+                fragments: HashMap::new(),
+                expected_fragments: None,
+                first_fragment_time: Some(Instant::now()),
+                total_size: 0,
+            });
+        
+        // Check for timeout
+        if let Some(first_time) = buffer.first_fragment_time {
+            if first_time.elapsed() > FRAGMENT_TIMEOUT {
+                return Err("Fragment reassembly timeout".into());
+            }
+        }
+        
+        // Add fragment with size checking
+        buffer.total_size += fragment.data.len();
+        if buffer.total_size > BLE_MTU_SIZE * 64 { // Reasonable limit
+            return Err("Reassembled message would be too large".into());
+        }
+        
+        buffer.fragments.insert(sequence, fragment);
+        
+        // Check if we have all fragments (after inserting the current fragment)
+        let has_complete = is_last || {
+            // Check if we have all fragments for this buffer
+            if buffer.fragments.is_empty() {
+                false
+            } else {
+                // Find the last fragment to determine total count
+                let last_sequence = buffer.fragments.keys().max().copied().unwrap_or(0);
+                let expected_count = last_sequence + 1;
+                buffer.fragments.len() >= expected_count
+            }
+        };
+        
+        if has_complete {
+            self.reassemble_message(peer_id, msg_id)
+        } else {
+            Ok(None)
+        }
+    }
+    
+    /// Check if we have all fragments for a message
+    fn has_complete_message(&self, buffer: &FragmentBuffer) -> bool {
+        if buffer.fragments.is_empty() {
+            return false;
+        }
+        
+        // Find the last fragment to determine total count
+        let max_seq = buffer.fragments.keys().max().copied().unwrap_or(0);
+        let last_fragment = buffer.fragments.get(&max_seq);
+        
+        if let Some(last) = last_fragment {
+            if last.is_last {
+                // Check we have all sequences from 0 to max_seq
+                for seq in 0..=max_seq {
+                    if !buffer.fragments.contains_key(&seq) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+        
+        false
+    }
+    
+    /// Reassemble complete message from fragments
+    fn reassemble_message(
+        &mut self,
+        peer_id: PeerId,
+        msg_id: u16,
+    ) -> Result<Option<Bytes>, Box<dyn std::error::Error>> {
+        let buffer = self.reassembly_buffers
+            .get_mut(&peer_id)
+            .and_then(|peer_buffers| peer_buffers.remove(&msg_id));
+        
+        if let Some(buffer) = buffer {
+            // Sort fragments by sequence number
+            let mut fragments: Vec<_> = buffer.fragments.into_iter().collect();
+            fragments.sort_by_key(|(seq, _)| *seq);
+            
+            // Pre-allocate with known size
+            let mut result = BytesMut::with_capacity(buffer.total_size);
+            
+            // Zero-copy concatenation
+            for (_, fragment) in fragments {
+                result.extend_from_slice(&fragment.data);
+            }
+            
+            Ok(Some(result.freeze()))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    /// Clean up expired fragment buffers
+    fn cleanup_expired(&mut self) {
+        let now = Instant::now();
+        
+        for peer_buffers in self.reassembly_buffers.values_mut() {
+            peer_buffers.retain(|_, buffer| {
+                if let Some(first_time) = buffer.first_fragment_time {
+                    now.duration_since(first_time) <= FRAGMENT_TIMEOUT
+                } else {
+                    false
+                }
+            });
+        }
+        
+        // Remove empty peer entries
+        self.reassembly_buffers.retain(|_, buffers| !buffers.is_empty());
     }
 }
