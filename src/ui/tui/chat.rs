@@ -97,7 +97,9 @@ impl FileTransferManager {
     pub async fn send_file(&mut self, peer: PeerId, filepath: PathBuf) -> Result<String, TransferError> {
         let file = File::open(&filepath).await?;
         let metadata = file.metadata().await?;
-        let filename = filepath.file_name().unwrap().to_string_lossy().to_string();
+        let filename = filepath.file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown_file".to_string());
         
         let transfer = FileTransfer {
             id: Uuid::new_v4().to_string(),

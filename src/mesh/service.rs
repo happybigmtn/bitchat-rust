@@ -60,7 +60,7 @@ pub struct MeshService {
     
     // Peer management
     peers: Arc<RwLock<HashMap<PeerId, PeerInfo>>>,
-    routing_table: Arc<RwLock<RoutingTable>>,
+    _routing_table: Arc<RwLock<RoutingTable>>,
     
     // Event channels
     event_tx: broadcast::Sender<MeshEvent>,
@@ -68,7 +68,7 @@ pub struct MeshService {
     
     // Service state
     is_running: Arc<RwLock<bool>>,
-    start_time: Instant,
+    _start_time: Instant,
     stats: Arc<RwLock<MeshStatistics>>,
 }
 
@@ -96,12 +96,14 @@ pub struct PeerCapabilities {
 }
 
 /// Routing table for efficient message forwarding
+#[allow(dead_code)]
 pub struct RoutingTable {
     routes: HashMap<PeerId, Vec<Route>>,
     direct_peers: HashMap<PeerId, DirectConnection>,
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 struct Route {
     next_hop: PeerId,
     distance: u32,
@@ -109,6 +111,7 @@ struct Route {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 struct DirectConnection {
     peer_id: PeerId,
     latency: Duration,
@@ -177,14 +180,14 @@ impl MeshService {
             anti_cheat,
             proof_of_relay: None, // Will be set later via set_proof_of_relay
             peers: Arc::new(RwLock::new(HashMap::new())),
-            routing_table: Arc::new(RwLock::new(RoutingTable {
+            _routing_table: Arc::new(RwLock::new(RoutingTable {
                 routes: HashMap::new(),
                 direct_peers: HashMap::new(),
             })),
             event_tx,
             command_rx,
             is_running: Arc::new(RwLock::new(false)),
-            start_time: Instant::now(),
+            _start_time: Instant::now(),
             stats: Arc::new(RwLock::new(MeshStatistics::default())),
         };
         

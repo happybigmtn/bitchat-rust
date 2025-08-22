@@ -90,7 +90,7 @@ pub struct CompressedPointData {
 
 impl CompactGameState {
     /// Create new compact game state
-    pub fn new(game_id: GameId, shooter: PeerId) -> Self {
+    pub fn new(game_id: GameId, _shooter: PeerId) -> Self {
         let mut state = Self {
             game_id,
             metadata: 0, // Phase = ComeOut (0), no point, series 0, roll count 0

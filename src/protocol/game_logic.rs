@@ -166,8 +166,12 @@ impl CrapsGame {
         *self.repeater_counts.entry(total).or_insert(0) += 1;
         
         // Track for Fire bet (unique points made)
-        if self.phase == GamePhase::Point && total == self.point.unwrap() {
-            self.fire_points.insert(total);
+        if self.phase == GamePhase::Point {
+            if let Some(point) = self.point {
+                if total == point {
+                    self.fire_points.insert(total);
+                }
+            }
         }
         
         // Track hardway streaks
@@ -192,12 +196,18 @@ impl CrapsGame {
                 }
             },
             GamePhase::Point => {
-                if total == 7 || total == self.point.unwrap() {
-                    // Seven-out or point made - new series
-                    self.point = None;
+                if let Some(point) = self.point {
+                    if total == 7 || total == point {
+                        // Seven-out or point made - new series
+                        self.point = None;
+                        self.phase = GamePhase::ComeOut;
+                        self.current_phase = GamePhase::ComeOut;
+                        self.series_id += 1;
+                    }
+                } else {
+                    // Invalid state: in Point phase but no point set
                     self.phase = GamePhase::ComeOut;
                     self.current_phase = GamePhase::ComeOut;
-                    self.series_id += 1;
                     
                     // Reset special tracking for new series
                     if total == 7 {
@@ -314,17 +324,17 @@ pub struct GameStats {
 
 // Forward declarations for methods that will be implemented in the resolution module
 impl CrapsGame {
-    pub fn resolve_comeout_roll(&self, roll: DiceRoll) -> Vec<BetResolution> {
+    pub fn resolve_comeout_roll(&self, _roll: DiceRoll) -> Vec<BetResolution> {
         // This will be implemented in the resolution module
         Vec::new()
     }
     
-    pub fn resolve_point_roll(&mut self, roll: DiceRoll) -> Vec<BetResolution> {
+    pub fn resolve_point_roll(&mut self, _roll: DiceRoll) -> Vec<BetResolution> {
         // This will be implemented in the resolution module  
         Vec::new()
     }
     
-    pub fn resolve_one_roll_bets(&self, roll: DiceRoll) -> Vec<BetResolution> {
+    pub fn resolve_one_roll_bets(&self, _roll: DiceRoll) -> Vec<BetResolution> {
         // This will be implemented in the resolution module
         Vec::new()
     }

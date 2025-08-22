@@ -24,8 +24,8 @@ pub struct BluetoothDiscovery {
     discovered_peers: Arc<RwLock<HashMap<PeerId, DiscoveredPeer>>>,
     active_connections: Arc<RwLock<HashSet<PeerId>>>,
     discovery_events: mpsc::UnboundedSender<DiscoveryEvent>,
-    scan_interval: Duration,
-    connection_timeout: Duration,
+    _scan_interval: Duration,
+    _connection_timeout: Duration,
     // New fields for improved discovery
     peer_registry: Arc<RwLock<PeerRegistry>>,
     peer_exchange_interval: Duration,
@@ -58,6 +58,7 @@ pub struct PeerCapabilities {
 
 /// Peer registry with TTL management
 #[derive(Debug)]
+#[allow(dead_code)]
 struct PeerRegistry {
     peers: HashMap<PeerId, PeerEntry>,
     ttl_cleanup_interval: Duration,
@@ -65,6 +66,7 @@ struct PeerRegistry {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct PeerEntry {
     peer: DiscoveredPeer,
     expires_at: Instant,
@@ -74,7 +76,7 @@ struct PeerEntry {
 
 /// Peer exchange message for distributed discovery
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct PeerExchangeMessage {
+pub struct PeerExchangeMessage {
     protocol_version: u8,
     sender_id: PeerId,
     peer_list: Vec<PeerAnnouncement>,
@@ -125,8 +127,8 @@ impl BluetoothDiscovery {
             discovered_peers: Arc::new(RwLock::new(HashMap::new())),
             active_connections: Arc::new(RwLock::new(HashSet::new())),
             discovery_events,
-            scan_interval: Duration::from_secs(5),
-            connection_timeout: Duration::from_secs(30),
+            _scan_interval: Duration::from_secs(5),
+            _connection_timeout: Duration::from_secs(30),
             peer_registry: Arc::new(RwLock::new(peer_registry)),
             peer_exchange_interval: Duration::from_secs(30),
         })
@@ -576,6 +578,7 @@ impl PeerRegistry {
 }
 
 // Constants that would be defined elsewhere
+#[allow(dead_code)]
 const BITCRAPS_SERVICE_UUID: &str = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E";
 const PROTOCOL_VERSION: u8 = 1;
 

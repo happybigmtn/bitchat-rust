@@ -82,7 +82,7 @@ impl WalletInterface {
             amount,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_else(|_| std::time::Duration::from_secs(0)) // Fallback for clock issues
                 .as_secs(),
             confirmations: 1,
             game_id: None,
@@ -107,7 +107,7 @@ impl WalletInterface {
                     amount: payout,
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .unwrap_or_else(|_| std::time::Duration::from_secs(0)) // Fallback for clock issues
                         .as_secs(),
                     confirmations: 1,
                     game_id: None,
@@ -121,7 +121,7 @@ impl WalletInterface {
                     amount: bet_amount,
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .unwrap_or_else(|_| std::time::Duration::from_secs(0)) // Fallback for clock issues
                         .as_secs(),
                     confirmations: 1,
                     game_id: None,

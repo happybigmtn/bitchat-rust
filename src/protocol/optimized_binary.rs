@@ -278,7 +278,7 @@ impl StringInterner {
 
 impl UltraCompactBet {
     /// Create from regular bet with maximum compression
-    pub fn from_bet(bet: &super::Bet, game_start_time: u64, interner: &mut StringInterner) -> Self {
+    pub fn from_bet(bet: &super::Bet, game_start_time: u64, _interner: &mut StringInterner) -> Self {
         // Pack bet type (6 bits) and flags (2 bits)
         let bet_type_val = (bet.bet_type as u8) & 0x3F;
         let flags = 0u8; // Could encode active/resolved flags
@@ -338,7 +338,7 @@ impl UltraCompactBet {
         pos += 2;
         
         // Decode varint amount
-        let (amount, varint_len) = VarInt::decode_u64(&data[pos..])?;
+        let (_amount, varint_len) = VarInt::decode_u64(&data[pos..])?;
         let amount_varint = data[pos..pos + varint_len].to_vec();
         pos += varint_len;
         
@@ -638,6 +638,7 @@ impl UltraCompactSerialize for DiceRoll {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::Bet;
     
     #[test]
     fn test_bit_field() {
@@ -677,7 +678,7 @@ mod tests {
         let game_start = 1000000;
         let mut interner = StringInterner::new();
         
-        let bet = super::Bet::new(
+        let bet = Bet::new(
             [1u8; 16],
             [2u8; 16],
             [3u8; 32],
@@ -706,7 +707,7 @@ mod tests {
     #[test]
     fn test_memory_efficiency() {
         // Test that our ultra-compact structures use significantly less memory
-        let regular_bet = super::Bet::new(
+        let regular_bet = Bet::new(
             [1u8; 16],
             [2u8; 16], 
             [3u8; 32],

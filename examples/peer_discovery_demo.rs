@@ -15,7 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("============================");
     
     // Create identity
-    let identity = Arc::new(BitchatIdentity::generate_new()?);
+    let identity = Arc::new(BitchatIdentity::generate_with_pow(8));
     println!("Generated peer identity: {:?}", identity.peer_id);
     
     // Test Bluetooth Discovery

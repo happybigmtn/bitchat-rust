@@ -268,6 +268,7 @@ impl VoteTracker {
 /// Memory-mapped storage for large data with compression
 /// Feynman: Instead of keeping everything in RAM, we use the OS virtual memory
 /// system to efficiently handle large datasets that don't fit in memory
+#[allow(dead_code)]
 pub struct MmapStorage {
     file_path: String,
     mmap: Option<MmapMut>,
@@ -403,7 +404,13 @@ impl MmapStorage {
             return Ok(false); // Not enough space
         }
         
-        let mmap = self.mmap.as_mut().unwrap();
+        let mmap = match self.mmap.as_mut() {
+            Some(mmap) => mmap,
+            None => return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Memory map not initialized"
+            )),
+        };
         let mut offset = self.used;
         
         // Bounds check before each write
@@ -477,7 +484,13 @@ impl MmapStorage {
             return Ok(None);
         }
         
-        let mmap = self.mmap.as_ref().unwrap();
+        let mmap = match self.mmap.as_ref() {
+            Some(mmap) => mmap,
+            None => return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Memory map not initialized"
+            )),
+        };
         let mut offset = 0;
         
         while offset < self.used {

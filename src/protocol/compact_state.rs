@@ -18,10 +18,15 @@ use super::craps::{GamePhase, CrapsGame};
 const STATE_FLAG_HAS_POINT: u8 = 0x01;
 const STATE_FLAG_COME_OUT_ROLL: u8 = 0x02;
 const STATE_FLAG_GAME_ENDED: u8 = 0x04;
+#[allow(dead_code)]
 const STATE_FLAG_HOT_STREAK: u8 = 0x08;
+#[allow(dead_code)]
 const STATE_FLAG_RESERVED_4: u8 = 0x10;
+#[allow(dead_code)]
 const STATE_FLAG_RESERVED_5: u8 = 0x20;
+#[allow(dead_code)]
 const STATE_FLAG_RESERVED_6: u8 = 0x40;
+#[allow(dead_code)]
 const STATE_FLAG_RESERVED_7: u8 = 0x80;
 
 /// Compact representation of a bet (12 bytes total)
@@ -158,7 +163,7 @@ impl VarInt {
 
 impl CompactGameState {
     /// Create compact state from full game state
-    pub fn from_game_state(game: &CrapsGame, game_start_time: u64) -> Self {
+    pub fn from_game_state(game: &CrapsGame, _game_start_time: u64) -> Self {
         let mut flags = 0u8;
         
         // Set flags based on game state

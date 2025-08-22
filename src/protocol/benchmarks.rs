@@ -756,7 +756,7 @@ impl BitCrapsBenchmarks {
         
         // Warmup
         for _ in 0..config.warmup_iterations {
-            let state = CompactGameState::new(game_id, participants[0]);
+            let _state = CompactGameState::new(game_id, participants[0]);
             let _consensus = EfficientDiceConsensus::new(game_id, participants.clone(), consensus_config.clone());
         }
         
@@ -764,7 +764,7 @@ impl BitCrapsBenchmarks {
         for i in 0..config.iterations {
             let start = Instant::now();
             
-            let state = black_box(CompactGameState::new(game_id, participants[0]));
+            let _state = black_box(CompactGameState::new(game_id, participants[0]));
             let mut consensus = black_box(EfficientDiceConsensus::new(game_id, participants.clone(), consensus_config.clone()));
             
             let round_id = i as u64 + 1;
@@ -1344,7 +1344,7 @@ impl BitCrapsBenchmarks {
 
 /// Helper function to run benchmarks in a criterion context
 pub fn criterion_benchmarks(c: &mut Criterion) {
-    let config = BenchmarkConfig {
+    let _config = BenchmarkConfig {
         iterations: 100, // Smaller for criterion
         warmup_iterations: 10,
         ..Default::default()

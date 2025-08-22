@@ -137,7 +137,7 @@ fn demo_consensus_mechanisms() -> Result<(), Box<dyn std::error::Error>> {
         game_id,
         participants.clone(),
         ConsensusConfig::default()
-    )?;
+    );
     
     let start = Instant::now();
     

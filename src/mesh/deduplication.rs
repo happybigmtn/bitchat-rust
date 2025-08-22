@@ -30,7 +30,7 @@ impl MessageDeduplicator {
     pub fn new(window_duration: Duration) -> Self {
         let now_timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| Duration::from_secs(0)) // Fallback for clock issues
             .as_millis() as u64;
             
         Self {
@@ -49,7 +49,7 @@ impl MessageDeduplicator {
         let hash = self.compute_packet_hash(packet);
         let now_timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| Duration::from_secs(0)) // Fallback for clock issues
             .as_millis() as u64;
         
         // Trigger cleanup if interval has passed (non-blocking)
@@ -151,7 +151,7 @@ impl MessageDeduplicator {
     async fn emergency_cleanup(&self) {
         let _now_timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| Duration::from_secs(0)) // Fallback for clock issues
             .as_millis() as u64;
             
         // Remove oldest 25% of entries to free up space
@@ -193,7 +193,7 @@ impl MessageDeduplicator {
         self.cache_misses.store(0, Ordering::Relaxed);
         let now_timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| Duration::from_secs(0)) // Fallback for clock issues
             .as_millis() as u64;
         self.last_cleanup.store(now_timestamp, Ordering::Relaxed);
     }
@@ -272,7 +272,7 @@ impl BloomFilter {
         hasher.update(&seed.to_le_bytes());
         hasher.update(data);
         let result = hasher.finalize();
-        u64::from_le_bytes(result[0..8].try_into().unwrap())
+        u64::from_le_bytes(result[0..8].try_into().unwrap_or([0u8; 8]))
     }
     
     fn clear(&mut self) {
@@ -342,14 +342,15 @@ mod tests {
     /// Create a minimal test packet
     fn create_test_packet(sequence: u32) -> BitchatPacket {
         BitchatPacket {
-            source: [1u8; 32],
-            target: [2u8; 32],
+            version: 1,
             packet_type: 1,
             flags: 0,
             ttl: 10,
             total_length: 0,
             checksum: 0,
             tlv_data: vec![],
+            source: [1u8; 32],
+            target: [2u8; 32],
             sequence,
             payload: Some(vec![1, 2, 3, 4]),
         }

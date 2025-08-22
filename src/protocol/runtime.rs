@@ -473,7 +473,7 @@ impl GameRuntime {
         
         // Start commit phase for this round
         let round_id = consensus_engine.get_current_state().sequence_number + 1;
-        let commitment = consensus_engine.start_dice_commit_phase(round_id)?;
+        let _commitment = consensus_engine.start_dice_commit_phase(round_id)?;
         
         // In a real implementation, this would broadcast the commitment to all players
         // and wait for all commitments before proceeding to reveal phase
@@ -711,9 +711,9 @@ impl GameRuntime {
 pub struct TreasuryParticipant {
     balance: Arc<RwLock<u64>>, // CRAP token balance
     /// Game participation tracking - reserved for future treasury bot implementation
-    game_participation: Arc<RwLock<HashMap<GameId, TreasuryPosition>>>,
+    _game_participation: Arc<RwLock<HashMap<GameId, TreasuryPosition>>>,
     /// Risk management strategy - reserved for future automated trading implementation
-    strategy: TreasuryStrategy,
+    _strategy: TreasuryStrategy,
 }
 
 /// Treasury position tracking for risk management
@@ -722,10 +722,10 @@ pub struct TreasuryParticipant {
 /// that can track positions across multiple games and manage risk exposure.
 #[derive(Debug, Clone)]
 struct TreasuryPosition {
-    game_id: GameId,
-    total_exposure: u64,
-    bets_placed: HashMap<BetType, u64>,
-    profit_loss: i64,
+    _game_id: GameId,
+    _total_exposure: u64,
+    _bets_placed: HashMap<BetType, u64>,
+    _profit_loss: i64,
 }
 
 /// Treasury trading strategy configuration
@@ -734,20 +734,20 @@ struct TreasuryPosition {
 /// and risk management strategies for the treasury bot.
 #[derive(Debug, Clone)]
 struct TreasuryStrategy {
-    max_exposure_per_game: u64,
-    preferred_bet_types: Vec<BetType>,
-    risk_tolerance: f64,
+    _max_exposure_per_game: u64,
+    _preferred_bet_types: Vec<BetType>,
+    _risk_tolerance: f64,
 }
 
 impl Default for TreasuryStrategy {
     fn default() -> Self {
         Self {
-            max_exposure_per_game: 10000,
-            preferred_bet_types: vec![
+            _max_exposure_per_game: 10000,
+            _preferred_bet_types: vec![
                 BetType::DontPass,
                 BetType::DontCome,
             ],
-            risk_tolerance: 0.5,
+            _risk_tolerance: 0.5,
         }
     }
 }
@@ -756,8 +756,8 @@ impl TreasuryParticipant {
     pub fn new(initial_balance: u64) -> Self {
         Self {
             balance: Arc::new(RwLock::new(initial_balance)),
-            game_participation: Arc::new(RwLock::new(HashMap::new())),
-            strategy: TreasuryStrategy::default(),
+            _game_participation: Arc::new(RwLock::new(HashMap::new())),
+            _strategy: TreasuryStrategy::default(),
         }
     }
     

@@ -51,6 +51,7 @@ impl Default for HistoryConfig {
 /// Efficient game history manager combining multiple storage strategies
 pub struct EfficientGameHistory {
     /// Configuration
+    #[allow(dead_code)]
     config: HistoryConfig,
     
     /// Ring buffer for recent game states (O(1) access, limited size)
@@ -177,6 +178,7 @@ pub struct TimeRange {
 }
 
 /// Log-Structured Merge Tree for long-term storage
+#[allow(dead_code)]
 struct LSMTree {
     /// Multiple levels with different sizes
     levels: Vec<LSMLevel>,
@@ -189,6 +191,7 @@ struct LSMTree {
 }
 
 /// Single level in the LSM tree
+#[allow(dead_code)]
 struct LSMLevel {
     /// Level number (0 is smallest/fastest)
     level: usize,
@@ -204,6 +207,7 @@ struct LSMLevel {
 }
 
 /// Sorted run of game history entries
+#[allow(dead_code)]
 struct SortedRun {
     /// Games sorted by timestamp
     games: Vec<CompactGameHistory>,
@@ -216,6 +220,7 @@ struct SortedRun {
 }
 
 /// Write-ahead log for durability
+#[allow(dead_code)]
 struct WriteAheadLog {
     /// Pending writes
     pending: VecDeque<CompactGameHistory>,
@@ -225,6 +230,7 @@ struct WriteAheadLog {
 }
 
 /// Compaction scheduler for LSM tree maintenance
+#[allow(dead_code)]
 struct CompactionScheduler {
     /// Next compaction time per level
     next_compaction: Vec<u64>,
@@ -261,6 +267,7 @@ pub struct DeltaEncoder {
 }
 
 /// Memory usage tracker
+#[allow(dead_code)]
 struct MemoryTracker {
     /// Current memory usage by component
     usage_by_component: HashMap<String, usize>,
@@ -347,7 +354,7 @@ impl<T> RingBuffer<T> {
     }
     
     /// Iterate over items (newest to oldest)
-    fn iter(&self) -> RingBufferIterator<T> {
+    fn iter(&self) -> RingBufferIterator<'_, T> {
         RingBufferIterator {
             buffer: self,
             index: 0,
@@ -355,11 +362,13 @@ impl<T> RingBuffer<T> {
     }
     
     /// Get number of items stored
+    #[allow(dead_code)]
     fn len(&self) -> usize {
         self.len
     }
     
     /// Check if buffer is empty
+    #[allow(dead_code)]
     fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -411,6 +420,7 @@ impl BloomFilter {
     }
     
     /// Check if item might be in the set
+    #[allow(dead_code)]
     fn might_contain(&self, item: &[u8]) -> bool {
         for i in 0..self.hash_count {
             let hash = self.hash(item, i);
@@ -593,6 +603,7 @@ impl MemoryTracker {
     }
     
     /// Get memory usage by component
+    #[allow(dead_code)]
     fn get_usage_breakdown(&self) -> &HashMap<String, usize> {
         &self.usage_by_component
     }

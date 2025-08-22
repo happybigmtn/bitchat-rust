@@ -32,6 +32,7 @@ const POOL_BUFFER_SIZE: usize = 1024;
 /// Maximum number of pooled buffers
 const MAX_POOLED_BUFFERS: usize = 64;
 /// Fragment reassembly timeout
+#[allow(dead_code)]
 const FRAGMENT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Connection limits for Bluetooth transport
@@ -53,6 +54,7 @@ impl Default for BluetoothConnectionLimits {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct DiscoveredPeer {
     device_id: String,
     peripheral_id: PeripheralId,
@@ -64,6 +66,7 @@ struct DiscoveredPeer {
 
 /// Zero-copy packet fragment for reassembly
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct PacketFragment {
     sequence: u16,
     is_last: bool,
@@ -95,6 +98,7 @@ struct PoolStats {
 
 /// Zero-copy fragment buffer with automatic cleanup
 #[derive(Debug)]
+#[allow(dead_code)]
 struct FragmentBuffer {
     /// Fragment data using zero-copy Bytes
     fragments: HashMap<u16, PacketFragment>,
@@ -108,6 +112,7 @@ struct FragmentBuffer {
 
 /// Efficient fragmentation manager
 #[derive(Debug)]
+#[allow(dead_code)]
 struct FragmentationManager {
     /// Memory pool for buffers
     memory_pool: MemoryPool,
@@ -119,6 +124,7 @@ struct FragmentationManager {
 
 /// Connection state for a peer
 #[derive(Debug)]
+#[allow(dead_code)]
 struct PeerConnection {
     peripheral: Peripheral,
     peer_id: PeerId,
@@ -131,7 +137,7 @@ struct PeerConnection {
 
 /// Bluetooth mesh transport implementation
 pub struct BluetoothTransport {
-    manager: Manager,
+    _manager: Manager,
     adapter: Option<Adapter>,
     connections: Arc<RwLock<HashMap<PeerId, PeerConnection>>>,
     connection_limits: BluetoothConnectionLimits,
@@ -167,7 +173,7 @@ impl BluetoothTransport {
         let global_memory_pool = Arc::new(MemoryPool::new(POOL_BUFFER_SIZE, MAX_POOLED_BUFFERS));
         
         let transport = Self {
-            manager,
+            _manager: manager,
             adapter,
             connections: Arc::new(RwLock::new(HashMap::new())),
             connection_limits: limits,
@@ -571,6 +577,7 @@ impl BluetoothTransport {
     }
     
     /// Handle incoming data from a peer
+    #[allow(dead_code)]
     async fn handle_incoming_data(&self, peer_id: PeerId, data: Vec<u8>) {
         // Send event to application layer
         let _ = self.event_sender.send(TransportEvent::DataReceived {
@@ -917,6 +924,7 @@ impl MemoryPool {
     }
     
     /// Get pool statistics
+    #[allow(dead_code)]
     async fn get_stats(&self) -> PoolStats {
         self.stats.lock().await.clone()
     }
@@ -924,6 +932,7 @@ impl MemoryPool {
 
 impl FragmentationManager {
     /// Process incoming fragment with timeout and bounds checking
+    #[allow(dead_code)]
     fn process_fragment(
         &mut self,
         peer_id: PeerId,
@@ -1002,6 +1011,7 @@ impl FragmentationManager {
     }
     
     /// Check if we have all fragments for a message
+    #[allow(dead_code)]
     fn has_complete_message(&self, buffer: &FragmentBuffer) -> bool {
         if buffer.fragments.is_empty() {
             return false;
@@ -1027,6 +1037,7 @@ impl FragmentationManager {
     }
     
     /// Reassemble complete message from fragments
+    #[allow(dead_code)]
     fn reassemble_message(
         &mut self,
         peer_id: PeerId,
@@ -1056,6 +1067,7 @@ impl FragmentationManager {
     }
     
     /// Clean up expired fragment buffers
+    #[allow(dead_code)]
     fn cleanup_expired(&mut self) {
         let now = Instant::now();
         

@@ -69,7 +69,7 @@ impl Default for ConsensusConfig {
 /// Main consensus engine for BitCraps
 pub struct ConsensusEngine {
     config: ConsensusConfig,
-    game_id: GameId,
+    _game_id: GameId,
     participants: Vec<PeerId>,
     local_peer_id: PeerId,
     
@@ -531,7 +531,7 @@ impl ConsensusEngine {
         
         let mut engine = Self {
             config,
-            game_id,
+            _game_id: game_id,
             participants,
             local_peer_id,
             current_state: initial_consensus_state,
@@ -843,7 +843,7 @@ impl ConsensusEngine {
     }
 
     /// Start reveal phase for dice roll
-    fn start_dice_reveal_phase(&mut self, round_id: RoundId) -> Result<()> {
+    fn start_dice_reveal_phase(&mut self, _round_id: RoundId) -> Result<()> {
         // This would trigger reveal phase in the real implementation
         Ok(())
     }

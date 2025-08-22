@@ -106,7 +106,15 @@ impl BetResolver for CrapsGame {
     fn resolve_point_roll(&mut self, roll: DiceRoll) -> Vec<BetResolution> {
         let mut resolutions = Vec::new();
         let total = roll.total();
-        let point = self.point.unwrap();
+        
+        // Ensure we have a valid point for Point phase
+        let point = match self.point {
+            Some(p) => p,
+            None => {
+                // Invalid state: Point phase but no point set
+                return resolutions; // Return empty resolutions
+            }
+        };
         
         for (player, bets) in &self.player_bets {
             // Check if point made or seven-out

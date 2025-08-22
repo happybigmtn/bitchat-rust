@@ -53,6 +53,7 @@ impl Default for SyncConfig {
 }
 
 /// Efficient state synchronization manager
+#[allow(dead_code)]
 pub struct EfficientStateSync {
     /// Configuration
     config: SyncConfig,
@@ -541,7 +542,7 @@ impl StateMerkleTree {
         }
         
         // Add current position as a difference
-        let mut path = vec![level, index];
+        let path = vec![level, index];
         differences.push(path);
         
         // If not at leaf level, check children
@@ -658,7 +659,7 @@ impl BinaryDiffEngine {
     /// Apply binary diff to source data
     pub fn apply_diff(&mut self, source: &[u8], diff: &BinaryDiff) -> Result<Vec<u8>> {
         let mut result = Vec::new();
-        let mut source_pos = 0;
+        let mut _source_pos = 0;
         
         for operation in &diff.operations {
             match operation {
@@ -668,7 +669,7 @@ impl BinaryDiffEngine {
                     if end <= source.len() {
                         result.extend_from_slice(&source[start..end]);
                     }
-                    source_pos = end;
+                    _source_pos = end;
                 },
                 DiffOperation::Insert { data } => {
                     result.extend_from_slice(data);
@@ -679,7 +680,7 @@ impl BinaryDiffEngine {
                 },
                 DiffOperation::Delete { offset, length } => {
                     // Skip bytes in source, don't add to result
-                    source_pos = (*offset as usize).saturating_add(*length);
+                    _source_pos = (*offset as usize).saturating_add(*length);
                 },
             }
         }
@@ -878,7 +879,7 @@ impl EfficientStateSync {
         &mut self, 
         session_id: u64, 
         remote_root_hash: Hash256, 
-        bloom_filter_data: Vec<u8>
+        _bloom_filter_data: Vec<u8>
     ) -> Result<Option<SyncMessage>> {
         // Compare merkle roots
         let local_root = self.merkle_tree.root_hash();

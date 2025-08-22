@@ -70,6 +70,7 @@ pub struct RouteInfo {
 
 /// Cached message to prevent loops
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct CachedMessage {
     packet_hash: u64,
     first_seen: Instant,
@@ -99,7 +100,7 @@ impl MeshService {
             peers: Arc::new(RwLock::new(HashMap::new())),
             routing_table: Arc::new(RwLock::new(HashMap::new())),
             message_cache: Arc::new(RwLock::new(
-                LruCache::new(NonZeroUsize::new(MAX_MESSAGE_CACHE_SIZE).unwrap())
+                LruCache::new(NonZeroUsize::new(MAX_MESSAGE_CACHE_SIZE).expect("MAX_MESSAGE_CACHE_SIZE constant must be greater than 0"))
             )),
             event_sender,
             is_running: Arc::new(RwLock::new(false)),
@@ -678,7 +679,7 @@ mod tests {
         
         // Create a small LRU cache directly to test eviction
         let test_cache: Arc<RwLock<LruCache<u64, CachedMessage>>> = Arc::new(RwLock::new(
-            LruCache::new(NonZeroUsize::new(3).unwrap()) // Small cache for testing
+            LruCache::new(NonZeroUsize::new(3).expect("Cache size 3 is a positive constant")) // Small cache for testing
         ));
         
         // Add items to fill cache

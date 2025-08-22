@@ -18,7 +18,7 @@ impl ProofOfWork {
     pub fn generate(data: &[u8], difficulty: u32) -> Result<Self, &'static str> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| Duration::from_secs(0)) // Fallback for clock issues
             .as_secs();
         
         let mut nonce = 0u64;
@@ -54,7 +54,7 @@ impl ProofOfWork {
         // Check timestamp is reasonable (within 24 hours)
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| Duration::from_secs(0)) // Fallback for clock issues
             .as_secs();
         
         if self.timestamp > now + 3600 || self.timestamp < now.saturating_sub(86400) {
@@ -126,7 +126,7 @@ impl ProofOfWorkIdentity {
     pub fn generate(peer_id: PeerId, difficulty: u32) -> Self {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| Duration::from_secs(0)) // Fallback for clock issues
             .as_secs();
         
         let mut nonce = 0u64;
@@ -163,7 +163,7 @@ impl ProofOfWorkIdentity {
         // Check timestamp is reasonable (within 24 hours)
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| Duration::from_secs(0)) // Fallback for clock issues
             .as_secs();
         
         if self.timestamp > now + 3600 {

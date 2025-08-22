@@ -174,30 +174,45 @@ mod tests {
         
         // Create test packets with different priorities
         let high_packet = BitchatPacket {
+            version: 1,
             packet_type: 0x20, // High priority (game packet)
-            sender_id: [1; 32],
-            recipient_id: [2; 32],
-            timestamp: 1000,
-            payload: vec![1, 2, 3],
-            signature: [0; 64],
+            flags: 0,
+            ttl: 32,
+            total_length: 0,
+            checksum: 0,
+            tlv_data: vec![],
+            source: [1; 32],
+            target: [2; 32],
+            sequence: 1000,
+            payload: Some(vec![1, 2, 3]),
         };
         
         let normal_packet = BitchatPacket {
+            version: 1,
             packet_type: 0x10, // Normal priority
-            sender_id: [3; 32],
-            recipient_id: [4; 32],
-            timestamp: 2000,
-            payload: vec![4, 5, 6],
-            signature: [0; 64],
+            flags: 0,
+            ttl: 32,
+            total_length: 0,
+            checksum: 0,
+            tlv_data: vec![],
+            source: [3; 32],
+            target: [4; 32],
+            sequence: 2000,
+            payload: Some(vec![4, 5, 6]),
         };
         
         let low_packet = BitchatPacket {
+            version: 1,
             packet_type: 0x01, // Low priority
-            sender_id: [5; 32],
-            recipient_id: [6; 32],
-            timestamp: 3000,
-            payload: vec![7, 8, 9],
-            signature: [0; 64],
+            flags: 0,
+            ttl: 32,
+            total_length: 0,
+            checksum: 0,
+            tlv_data: vec![],
+            source: [5; 32],
+            target: [6; 32],
+            sequence: 3000,
+            payload: Some(vec![7, 8, 9]),
         };
         
         // Enqueue in mixed order
@@ -234,12 +249,17 @@ mod tests {
             };
             
             let packet = BitchatPacket {
+                version: 1,
                 packet_type,
-                sender_id: [i as u8; 32],
-                recipient_id: [(i + 1) as u8; 32],
-                timestamp: i as u64,
-                payload: vec![i as u8],
-                signature: [0; 64],
+                flags: 0,
+                ttl: 32,
+                total_length: 0,
+                checksum: 0,
+                tlv_data: vec![],
+                source: [i as u8; 32],
+                target: [(i + 1) as u8; 32],
+                sequence: i as u32,
+                payload: Some(vec![i as u8]),
             };
             
             queue.enqueue(packet).unwrap();

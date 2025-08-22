@@ -60,7 +60,8 @@ pub enum ResolutionType {
 
 /// Special requirements for complex bet types
 #[derive(Debug, Clone)]
-enum SpecialRequirement {
+#[allow(dead_code)]
+pub enum SpecialRequirement {
     RequiresPhase(GamePhaseSet),
     RequiresPoint(u8),
     RequiresStreak(u32),
@@ -94,7 +95,7 @@ pub struct ResolutionCache {
 
 /// Cache key for resolution results
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-struct ResolutionCacheKey {
+pub struct ResolutionCacheKey {
     bet_mask: u64, // Which bet types are active
     dice_total: u8,
     phase: u8, 
@@ -402,7 +403,7 @@ impl PayoutLookupTable {
 impl ResolutionCache {
     fn new() -> Self {
         Self {
-            cache: lru::LruCache::new(std::num::NonZeroUsize::new(1000).unwrap()),
+            cache: lru::LruCache::new(std::num::NonZeroUsize::new(1000).expect("LRU cache size 1000 is a positive constant")),
             hits: 0,
             misses: 0,
         }
@@ -476,7 +477,7 @@ impl EfficientBetResolver {
         
         // Fast path: resolve using lookup tables
         let mut resolutions = Vec::new();
-        let dice_total = dice_roll.total();
+        let _dice_total = dice_roll.total();
         
         for &(bet_type, player, amount) in active_bets {
             if let Some(resolution) = self.resolve_single_bet_fast(state, bet_type, player, amount, dice_roll)? {

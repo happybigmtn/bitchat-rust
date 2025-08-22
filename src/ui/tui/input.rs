@@ -269,7 +269,7 @@ impl InputState {
     }
     
     fn apply_completion(&mut self) {
-        if let (Some(index), Some(completion)) = (self.completion_index, self.completion_candidates.get(self.completion_index.unwrap_or(0))) {
+        if let (Some(_index), Some(completion)) = (self.completion_index, self.completion_candidates.get(self.completion_index.unwrap_or(0))) {
             let current_word = self.get_current_word();
             let word_start = self.cursor_position.saturating_sub(current_word.len());
             
@@ -609,7 +609,10 @@ pub struct AppState {
 impl AppState {
     pub async fn new(config_path: Option<PathBuf>) -> Result<Self, AppError> {
         let config_path = config_path.unwrap_or_else(|| {
-            dirs::config_dir().unwrap().join("bitchat").join("config.toml")
+            dirs::config_dir()
+                .unwrap_or_else(|| std::env::temp_dir()) // Fallback to temp dir
+                .join("bitchat")
+                .join("config.toml")
         });
         
         let config = if config_path.exists() {
@@ -623,7 +626,9 @@ impl AppState {
             config
         };
         
-        let db_path = config_path.parent().unwrap().join("messages.db");
+        let db_path = config_path.parent()
+            .unwrap_or_else(|| std::path::Path::new("/tmp")) // Fallback to /tmp
+            .join("messages.db");
         let message_store = MessageStore::new(&db_path)?;
         let network = NetworkManager::new(&config).await?;
         

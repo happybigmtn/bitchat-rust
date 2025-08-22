@@ -7,7 +7,6 @@ use tokio::net::UdpSocket;
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
 use crate::protocol::PeerId;
-use bitvec::prelude::*;
 use crate::transport::pow_identity::ProofOfWork;
 
 /// Kademlia node ID - 256-bit identifier with cryptographic validation
@@ -153,7 +152,7 @@ impl Default for Contact {
 pub struct KBucket {
     contacts: Vec<Contact>,
     max_size: usize,
-    last_updated: Instant,
+    _last_updated: Instant,
 }
 
 impl KBucket {
@@ -161,7 +160,7 @@ impl KBucket {
         Self {
             contacts: Vec::new(),
             max_size,
-            last_updated: Instant::now(),
+            _last_updated: Instant::now(),
         }
     }
     
@@ -308,6 +307,7 @@ pub struct KademliaNode {
 
 /// Stored value with metadata
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct StoredValue {
     data: Vec<u8>,
     stored_at: Instant,
@@ -316,6 +316,7 @@ struct StoredValue {
 }
 
 /// Network handler for UDP/TCP communication
+#[allow(dead_code)]
 struct NetworkHandler {
     udp_socket: Arc<UdpSocket>,
     local_address: SocketAddr,
@@ -987,7 +988,7 @@ impl KademliaNode {
     
     /// Get events receiver
     pub fn subscribe_events(&self) -> mpsc::UnboundedReceiver<KademliaEvent> {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (_tx, rx) = mpsc::unbounded_channel();
         // In a real implementation, you'd want to manage multiple subscribers
         rx
     }

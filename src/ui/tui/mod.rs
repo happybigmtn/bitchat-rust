@@ -784,6 +784,7 @@ pub enum ChatCommand {
     Quit,                   // /quit
 }
 
+#[allow(dead_code)]
 pub struct CommandProcessor {
     network: Arc<NetworkManager>,
     config: Arc<RwLock<events::Config>>,

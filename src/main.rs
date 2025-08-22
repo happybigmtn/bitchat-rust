@@ -1,9 +1,7 @@
-use std::time::Duration;
-use tokio::time::sleep;
-use log::{info, warn};
+use log::info;
 
 use bitcraps::{
-    AppConfig, Result, Error, CrapTokens,
+    AppConfig, Result, Error,
 };
 
 // Import new modules
@@ -11,9 +9,9 @@ mod app_config;
 mod app_state;
 mod commands;
 
-use app_config::{Cli, Commands, parse_bet_type, parse_game_id, format_game_id, resolve_data_dir};
-use app_state::{BitCrapsApp, AppStats};
-use commands::{CommandExecutor, commands as cmd};
+use app_config::{Cli, Commands, resolve_data_dir};
+use app_state::BitCrapsApp;
+use commands::commands as cmd;
 
 #[tokio::main]
 async fn main() -> Result<()> {

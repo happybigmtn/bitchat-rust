@@ -8,8 +8,8 @@ use tokio::time::sleep;
 use log::info;
 
 use bitcraps::{
-    Result, Error, GameId, PeerId, CrapTokens, BetType,
-    TREASURY_ADDRESS, PacketUtils, GameCrypto,
+    Result, Error, GameId, CrapTokens, BetType,
+    TREASURY_ADDRESS, GameCrypto, PacketUtils,
 };
 
 use crate::app_config::{parse_bet_type, parse_game_id, format_game_id};

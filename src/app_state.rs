@@ -9,12 +9,12 @@ use tokio::time::{interval, sleep};
 use log::{info, warn};
 
 use bitcraps::{
-    BitchatIdentity, ProofOfWork, BluetoothTransport, TransportCoordinator,
+    BitchatIdentity, TransportCoordinator,
     MeshService, SessionManager as BitchatSessionManager, TokenLedger, ProofOfRelay,
-    TreasuryParticipant, BluetoothDiscovery, DhtDiscovery,
+    BluetoothDiscovery,
     PersistenceManager, GameRuntime,
     AppConfig, Result, Error, GameId, PeerId, CrapTokens,
-    TREASURY_ADDRESS, PacketUtils, GameCrypto, BitchatPacket,
+    TREASURY_ADDRESS,
 };
 
 use bitcraps::protocol::craps::CrapsGame;
@@ -268,7 +268,7 @@ impl BitCrapsApp {
     
     /// Start game coordinator for managing active games
     async fn start_game_coordinator(&self) {
-        let game_runtime = self.game_runtime.clone();
+        let _game_runtime = self.game_runtime.clone();
         let active_games = self.active_games.clone();
         
         tokio::spawn(async move {

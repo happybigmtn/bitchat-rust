@@ -90,6 +90,7 @@ pub struct MerkleProof {
 /// Optimized dice consensus engine
 pub struct EfficientDiceConsensus {
     /// Game ID this consensus is for
+    #[allow(dead_code)]
     game_id: GameId,
     
     /// List of participating players
@@ -519,7 +520,7 @@ impl EfficientDiceConsensus {
     /// Create new efficient dice consensus engine
     pub fn new(game_id: GameId, participants: Vec<PeerId>, config: ConsensusConfig) -> Self {
         let cache_size = std::num::NonZeroUsize::new(config.merkle_cache_size).unwrap_or(
-            std::num::NonZeroUsize::new(100).unwrap()
+            std::num::NonZeroUsize::new(100).expect("LRU cache size 100 is a positive constant")
         );
         
         Self {
@@ -584,7 +585,7 @@ impl EfficientDiceConsensus {
     
     /// Clean up old rounds to prevent memory bloat
     pub fn cleanup_old_rounds(&mut self, max_rounds: usize, timeout_secs: u64) {
-        let current_time = std::time::SystemTime::now()
+        let _current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
@@ -661,7 +662,7 @@ impl EfficientDiceConsensus {
             self.merkle_cache.len() * 1000; // Approximate cache overhead
         
         // Update XOR cache stats
-        let (cache_size, hit_rate) = self.entropy_aggregator.cache_stats();
+        let (_cache_size, hit_rate) = self.entropy_aggregator.cache_stats();
         metrics.xor_cache_hit_rate = hit_rate;
         
         metrics
@@ -770,7 +771,7 @@ mod tests {
             [1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]
         ];
         
-        let tree = MerkleTree::new(&leaves);
+        let tree = MerkleTree::new(&leaves).unwrap();
         let root = tree.root();
         
         // Generate and verify proof for first leaf
