@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
 
 use crate::protocol::{PeerId, GameId, CrapTokens};
-use crate::gaming::TREASURY_ADDRESS;
+use crate::TREASURY_ADDRESS;
 use crate::crypto::BitchatSignature;
 use crate::error::{Error, Result};
 

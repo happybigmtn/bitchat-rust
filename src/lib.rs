@@ -18,7 +18,7 @@ pub mod protocol;     // Core protocol and binary serialization
 pub mod crypto;       // Cryptographic foundations
 pub mod transport;    // Network transport layer (Bluetooth mesh)
 pub mod mesh;         // Mesh networking coordination
-pub mod gaming;       // Gaming protocol and craps implementation
+// Gaming is now integrated into protocol module (protocol/craps.rs and protocol/runtime.rs)
 pub mod session;      // Session management with Noise protocol
 pub mod token;        // Token economics and CRAP tokens
 pub mod ui;           // User interface (CLI and TUI)
@@ -38,9 +38,13 @@ pub use transport::{
 pub use mesh::{
     MeshService, MeshPeer,
 };
-pub use gaming::{
-    CrapsGame, TreasuryParticipant, TREASURY_ADDRESS, GamePhase,
+pub use protocol::craps::{
+    CrapsGame, GamePhase,
 };
+pub use protocol::runtime::{
+    GameRuntime, TreasuryParticipant,
+};
+pub const TREASURY_ADDRESS: PeerId = [0xFFu8; 32];
 pub use session::{
     SessionManager, BitchatSession, SessionLimits,
 };

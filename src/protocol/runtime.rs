@@ -5,7 +5,8 @@ use tokio::sync::{RwLock, mpsc, broadcast};
 use serde::{Serialize, Deserialize};
 use crate::protocol::{PeerId, GameId, CrapTokens, DiceRoll, new_game_id};
 use crate::error::{Error, Result};
-use super::{CrapsGame, GamePhase, Bet, BetType};
+use super::craps::{CrapsGame, GamePhase};
+use super::{Bet, BetType};
 
 /// Gaming runtime configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -203,7 +204,7 @@ impl GameRuntime {
         let mut game = CrapsGame::new(game_id, creator);
         
         // Add treasury as automatic participant
-        let _ = game.add_player(crate::gaming::TREASURY_ADDRESS);
+        let _ = game.add_player(crate::TREASURY_ADDRESS);
         
         let active_game = ActiveGame {
             game,
@@ -283,7 +284,7 @@ impl GameRuntime {
         let game = games.get_mut(&game_id)
             .ok_or_else(|| Error::GameNotFound)?;
         
-        game.game.place_bet(bet.clone())?;
+        game.game.place_bet(player, bet.clone()).map_err(|e| Error::ValidationError(e))?;
         game.total_pot = CrapTokens::new(game.total_pot.amount() + bet.amount.amount());
         game.last_activity = Instant::now();
         
@@ -322,26 +323,23 @@ impl GameRuntime {
         
         for resolution in resolutions {
             match resolution {
-                super::BetResolution::Won { player, bet: _, payout } => {
+                super::craps::BetResolution::Won { player, payout, .. } => {
                     // Add payout to player balance
                     let mut balances = self.player_balances.write().await;
                     let balance = balances.entry(player).or_insert(CrapTokens::new(0));
-                    *balance = CrapTokens::new(balance.amount() + payout);
+                    *balance = CrapTokens::new(balance.amount() + payout.amount());
                     
-                    winners.push((player, payout));
-                    total_payout += payout;
+                    winners.push((player, payout.amount()));
+                    total_payout += payout.amount();
                 }
-                super::BetResolution::Lost { .. } => {
+                super::craps::BetResolution::Lost { .. } => {
                     // Bet already deducted when placed
                 }
-                super::BetResolution::Push { player, bet } => {
+                super::craps::BetResolution::Push { player, amount, .. } => {
                     // Return bet to player
                     let mut balances = self.player_balances.write().await;
                     let balance = balances.entry(player).or_insert(CrapTokens::new(0));
-                    *balance = CrapTokens::new(balance.amount() + bet.amount.amount());
-                }
-                super::BetResolution::Active { .. } => {
-                    // Bet remains active for next round
+                    *balance = CrapTokens::new(balance.amount() + amount.amount());
                 }
             }
         }
@@ -523,5 +521,58 @@ impl GameRuntime {
             .get(player)
             .copied()
             .unwrap_or_else(|| CrapTokens::new(0))
+    }
+}
+
+/// Treasury participant that provides liquidity and takes opposite bets
+pub struct TreasuryParticipant {
+    balance: Arc<RwLock<u64>>, // CRAP token balance
+    #[allow(dead_code)]
+    game_participation: Arc<RwLock<HashMap<GameId, TreasuryPosition>>>,
+    #[allow(dead_code)]
+    strategy: TreasuryStrategy,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct TreasuryPosition {
+    game_id: GameId,
+    total_exposure: u64,
+    bets_placed: HashMap<BetType, u64>,
+    profit_loss: i64,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct TreasuryStrategy {
+    max_exposure_per_game: u64,
+    preferred_bet_types: Vec<BetType>,
+    risk_tolerance: f64,
+}
+
+impl Default for TreasuryStrategy {
+    fn default() -> Self {
+        Self {
+            max_exposure_per_game: 10000,
+            preferred_bet_types: vec![
+                BetType::DontPass,
+                BetType::DontCome,
+            ],
+            risk_tolerance: 0.5,
+        }
+    }
+}
+
+impl TreasuryParticipant {
+    pub fn new(initial_balance: u64) -> Self {
+        Self {
+            balance: Arc::new(RwLock::new(initial_balance)),
+            game_participation: Arc::new(RwLock::new(HashMap::new())),
+            strategy: TreasuryStrategy::default(),
+        }
+    }
+    
+    pub async fn get_balance(&self) -> u64 {
+        *self.balance.read().await
     }
 }

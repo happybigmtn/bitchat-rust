@@ -11,6 +11,14 @@ use bitcraps::{
     TREASURY_ADDRESS, PacketUtils,
 };
 
+/// Simple struct for game info display
+#[derive(Debug, Clone)]
+pub struct GameInfo {
+    phase: String,
+    players: usize,
+    rolls: u64,
+}
+
 #[derive(Parser)]
 #[command(name = "bitcraps")]
 #[command(about = "Decentralized craps casino over Bluetooth mesh")]
@@ -173,11 +181,11 @@ impl BitCrapsApp {
         
         // Create game instance
         let mut game = CrapsGame::new(game_id, self.identity.peer_id);
-        game.buy_in = buy_in;
+        // Buy-in is managed at the runtime level, not directly on the game
         
         // Add treasury to game automatically
         if self.treasury.is_some() {
-            game.add_player(TREASURY_ADDRESS)?;
+            game.add_player(TREASURY_ADDRESS);
             info!("🏦 Treasury automatically joined game");
         }
         
@@ -206,7 +214,9 @@ impl BitCrapsApp {
         let game = games.get_mut(&game_id)
             .ok_or_else(|| Error::Protocol("Game not found".to_string()))?;
         
-        game.add_player(self.identity.peer_id)?;
+        if !game.add_player(self.identity.peer_id) {
+            return Err(Error::GameError("Failed to join game".to_string()));
+        }
         
         info!("✅ Joined game: {:?}", game_id);
         Ok(())
@@ -256,7 +266,7 @@ impl BitCrapsApp {
                 .as_secs(),
         };
         
-        game.place_bet(bet)?;
+        game.place_bet(self.identity.peer_id, bet).map_err(|e| Error::InvalidBet(e))?;
         
         info!("✅ Bet placed successfully");
         Ok(())
@@ -267,11 +277,15 @@ impl BitCrapsApp {
         self.ledger.get_balance(&self.identity.peer_id).await
     }
     
-    /// List active games
-    pub async fn list_games(&self) -> Vec<(GameId, bitcraps::gaming::GameStats)> {
+    /// List active games with basic info
+    pub async fn list_games(&self) -> Vec<(GameId, GameInfo)> {
         let games = self.active_games.read().await;
         games.iter()
-            .map(|(id, game)| (*id, game.get_stats()))
+            .map(|(id, game)| (*id, GameInfo {
+                phase: format!("{:?}", game.phase),
+                players: game.participants.len(),
+                rolls: game.roll_count,
+            }))
             .collect()
     }
     
@@ -451,9 +465,9 @@ async fn main() -> Result<()> {
                 println!("🎲 Active games:");
                 for (game_id, stats) in games {
                     println!("  📋 Game: {:?}", game_id);
-                    println!("    👥 Players: {}", stats.player_count);
+                    println!("    👥 Players: {}", stats.players);
                     println!("    🎯 Phase: {:?}", stats.phase);
-                    println!("    🎲 Rolls: {}", stats.roll_count);
+                    println!("    🎲 Rolls: {}", stats.rolls);
                     println!();
                 }
             }

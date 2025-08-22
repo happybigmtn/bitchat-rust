@@ -44,6 +44,9 @@ pub enum Error {
     #[error("Invalid state: {0}")]
     InvalidState(String),
     
+    #[error("Validation error: {0}")]
+    ValidationError(String),
+    
     #[error("Noise protocol error: {0}")]
     Noise(#[from] snow::Error),
     

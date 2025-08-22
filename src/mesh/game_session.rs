@@ -44,8 +44,8 @@ impl GameSessionManager {
     
     pub async fn create_session(&mut self, game_id: GameId, mut participants: Vec<PeerId>) {
         // Add treasury as participant if enabled
-        if self.treasury_enabled && !participants.contains(&crate::gaming::TREASURY_ADDRESS) {
-            participants.push(crate::gaming::TREASURY_ADDRESS);
+        if self.treasury_enabled && !participants.contains(&crate::TREASURY_ADDRESS) {
+            participants.push(crate::TREASURY_ADDRESS);
         }
         
         let session = GameSession {

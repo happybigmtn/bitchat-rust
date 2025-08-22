@@ -14,7 +14,7 @@ use ratatui::{
     Frame,
 };
 use serde::{Serialize, Deserialize};
-use crate::gaming::GamePhase;
+use crate::protocol::craps::GamePhase;
 use crate::protocol::BetType;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

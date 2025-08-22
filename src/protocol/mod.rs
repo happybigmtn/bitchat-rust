@@ -10,6 +10,7 @@
 
 pub mod binary;
 pub mod craps;
+pub mod runtime;
 
 use std::collections::HashSet;
 use std::io::{Read, Write};

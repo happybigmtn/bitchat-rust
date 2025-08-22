@@ -13,6 +13,7 @@ pub enum GamePhase {
     ComeOut,
     Point,
     Ended,
+    GameEnded,  // Alias for compatibility
 }
 
 /// Complete craps game state with all tracking
@@ -20,10 +21,13 @@ pub enum GamePhase {
 /// Feynman: Think of this as the "casino floor manager" - it tracks
 /// everything happening at the craps table: who's shooting, what phase
 /// we're in, what bets are active, and the complete history.
+#[derive(Clone)]
 pub struct CrapsGame {
     pub game_id: GameId,
     pub phase: GamePhase,
+    pub current_phase: GamePhase,  // Alias for phase for compatibility
     pub shooter: PeerId,
+    pub participants: Vec<PeerId>,  // Added for compatibility
     pub point: Option<u8>,
     pub series_id: u64,
     pub roll_count: u64,
@@ -66,11 +70,33 @@ pub enum BetResolution {
 }
 
 impl CrapsGame {
+    /// Add a player to the game
+    pub fn add_player(&mut self, player: PeerId) -> bool {
+        if !self.participants.contains(&player) {
+            self.participants.push(player);
+            true
+        } else {
+            false
+        }
+    }
+    
+    /// Place a bet
+    pub fn place_bet(&mut self, player: PeerId, bet: Bet) -> Result<(), String> {
+        // Add bet to player's bets
+        self.player_bets
+            .entry(player)
+            .or_insert_with(HashMap::new)
+            .insert(bet.bet_type.clone(), bet);
+        Ok(())
+    }
+    
     pub fn new(game_id: GameId, shooter: PeerId) -> Self {
         Self {
             game_id,
             phase: GamePhase::ComeOut,
+            current_phase: GamePhase::ComeOut,
             shooter,
+            participants: vec![shooter],
             point: None,
             series_id: 0,
             roll_count: 0,
