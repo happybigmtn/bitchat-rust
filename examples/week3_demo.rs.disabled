@@ -1,7 +1,7 @@
 // examples/week3_demo.rs
 //! Week 3 demonstration of mesh service architecture, sharding, and PBFT consensus
 
-use bitchat::{
+use bitcraps::{
     protocol::PeerId,
     mesh::{
         service::{MeshService, MeshServiceConfig, SecurityLevel},

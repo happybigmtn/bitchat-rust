@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bitchat
+  labels:
+    app: bitchat
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: bitchat
+  template:
+    metadata:
+      labels:
+        app: bitchat
+    spec:
+      containers:
+      - name: bitchat
+        image: registry.example.com/bitchat:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: BITCHAT_PORT
+          value: "8080"
+        - name: BITCHAT_LOG_LEVEL
+          value: "info"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: config
+          mountPath: /etc/bitchat
+        - name: data
+          mountPath: /data
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: bitchat-config
+      - name: data
+        persistentVolumeClaim:
+          claimName: bitchat-data
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitchat-service
+spec:
+  selector:
+    app: bitchat
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: LoadBalancer

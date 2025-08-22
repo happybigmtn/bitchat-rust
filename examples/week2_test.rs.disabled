@@ -6,8 +6,8 @@
 //! - Eclipse attack prevention with network diversity
 //! - PoW identity generation for sybil resistance
 
-use bitchat::protocol::{PeerId, ProtocolResult};
-use bitchat::transport::{
+use bitcraps::protocol::{PeerId, ProtocolResult};
+use bitcraps::transport::{
     TransportLayer, 
     KademliaDht, 
     EclipsePreventionManager, 

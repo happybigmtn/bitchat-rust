@@ -1,7 +1,7 @@
 // examples/week3_simple_demo.rs
 //! Simple Week 3 demonstration without async operations that might hang
 
-use bitchat::{
+use bitcraps::{
     protocol::PeerId,
     mesh::{
         service::{MeshServiceConfig, SecurityLevel},
@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   - local_peer == different_peer: {}", local_peer_id == different_peer);
     
     // Test shard ID generation
-    use bitchat::mesh::sharding::ShardId;
+    use bitcraps::mesh::sharding::ShardId;
     let shard1 = ShardId("shard_001".to_string());
     let shard2 = ShardId("shard_002".to_string());
     
@@ -80,7 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     println!("\n6. Testing Message Handler Structure...");
     
-    use bitchat::mesh::handler::{DefaultMessageHandler, MessagePriority};
+    use bitcraps::mesh::handler::{DefaultMessageHandler, MessagePriority};
     let handler = DefaultMessageHandler::new();
     println!("   ✓ Default message handler created");
     
