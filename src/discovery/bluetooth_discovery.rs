@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::interval;
+use serde::{Serialize, Deserialize};
 
 use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
 use btleplug::platform::{Adapter, Manager};
@@ -25,6 +26,9 @@ pub struct BluetoothDiscovery {
     discovery_events: mpsc::UnboundedSender<DiscoveryEvent>,
     scan_interval: Duration,
     connection_timeout: Duration,
+    // New fields for improved discovery
+    peer_registry: Arc<RwLock<PeerRegistry>>,
+    peer_exchange_interval: Duration,
 }
 
 #[derive(Debug, Clone)]
@@ -37,6 +41,54 @@ pub struct DiscoveredPeer {
     pub last_seen: Instant,
     pub connection_attempts: u32,
     pub is_connected: bool,
+    pub capabilities: PeerCapabilities,
+    pub reputation_score: f32, // 0.0 to 1.0
+}
+
+/// Peer capabilities and metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerCapabilities {
+    pub supports_gaming: bool,
+    pub supports_mesh_routing: bool,
+    pub supports_token_transactions: bool,
+    pub protocol_version: u8,
+    pub max_game_players: Option<u8>,
+    pub available_tokens: Option<u64>,
+}
+
+/// Peer registry with TTL management
+#[derive(Debug)]
+struct PeerRegistry {
+    peers: HashMap<PeerId, PeerEntry>,
+    ttl_cleanup_interval: Duration,
+    default_ttl: Duration,
+}
+
+#[derive(Debug, Clone)]
+struct PeerEntry {
+    peer: DiscoveredPeer,
+    expires_at: Instant,
+    last_announcement: Instant,
+    announcement_count: u32,
+}
+
+/// Peer exchange message for distributed discovery
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PeerExchangeMessage {
+    protocol_version: u8,
+    sender_id: PeerId,
+    peer_list: Vec<PeerAnnouncement>,
+    timestamp: u64,
+}
+
+/// Individual peer announcement
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerAnnouncement {
+    pub peer_id: PeerId,
+    pub capabilities: PeerCapabilities,
+    pub last_seen: u64, // Unix timestamp
+    pub rssi: Option<i16>,
+    pub reputation: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -45,6 +97,9 @@ pub enum DiscoveryEvent {
     PeerConnected { peer_id: PeerId },
     PeerDisconnected { peer_id: PeerId },
     PeerRangeChanged { peer_id: PeerId, distance: f32 },
+    PeerExpired { peer_id: PeerId },
+    PeerListUpdated { peer_count: usize },
+    PeerExchangeReceived { from: PeerId, peer_count: usize },
     DiscoveryError { error: String },
 }
 
@@ -59,6 +114,11 @@ impl BluetoothDiscovery {
         
         let (discovery_events, _) = mpsc::unbounded_channel();
         
+        let peer_registry = PeerRegistry::new(
+            Duration::from_secs(300), // 5 minute TTL
+            Duration::from_secs(60),  // Cleanup every minute
+        );
+        
         Ok(Self {
             identity,
             adapter: Arc::new(adapter),
@@ -67,6 +127,8 @@ impl BluetoothDiscovery {
             discovery_events,
             scan_interval: Duration::from_secs(5),
             connection_timeout: Duration::from_secs(30),
+            peer_registry: Arc::new(RwLock::new(peer_registry)),
+            peer_exchange_interval: Duration::from_secs(30),
         })
     }
     
@@ -86,21 +148,61 @@ impl BluetoothDiscovery {
         // Start connection manager
         self.start_connection_manager().await?;
         
+        // Start peer registry cleanup
+        self.start_peer_registry_cleanup().await?;
+        
+        // Start periodic peer exchange
+        self.start_peer_exchange().await?;
+        
         Ok(())
     }
     
     /// Advertise our presence via BLE
     async fn start_advertising(&self) -> Result<(), Box<dyn std::error::Error>> {
-        // Create BitCraps service advertisement
-        let _service_data = self.create_service_advertisement();
+        let identity = self.identity.clone();
+        let _discovery_events = self.discovery_events.clone();
         
-        // In production, would use platform-specific BLE advertising APIs
-        // This is simplified for illustration
+        tokio::spawn(async move {
+            let mut announcement_interval = interval(Duration::from_secs(15));
+            
+            loop {
+                announcement_interval.tick().await;
+                
+                // Create announcement with current capabilities
+                let capabilities = PeerCapabilities {
+                    supports_gaming: true,
+                    supports_mesh_routing: true,
+                    supports_token_transactions: true,
+                    protocol_version: PROTOCOL_VERSION,
+                    max_game_players: Some(8),
+                    available_tokens: Some(1000), // Would query actual balance
+                };
+                
+                let announcement = PeerAnnouncement {
+                    peer_id: identity.peer_id,
+                    capabilities,
+                    last_seen: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                    rssi: None,
+                    reputation: 1.0, // Self-reported max reputation
+                };
+                
+                // Create service advertisement with announcement data
+                let _service_data = Self::create_announcement_data(&announcement);
+                
+                // In production, would use platform-specific BLE advertising APIs
+                // For now, log the advertisement
+                println!("Broadcasting BitCraps announcement: {:?}", announcement);
+                
+                // In a real implementation, this would use the BLE adapter to advertise
+                // let advertisement = Advertisement::new(BITCRAPS_SERVICE_UUID, service_data);
+                // adapter.advertise(advertisement).await;
+            }
+        });
         
-        println!("Starting BitCraps BLE advertisement");
-        println!("Service UUID: {}", BITCRAPS_SERVICE_UUID);
-        println!("Peer ID: {:?}", self.identity.peer_id);
-        
+        println!("Started BitCraps BLE advertisement");
         Ok(())
     }
     
@@ -134,30 +236,34 @@ impl BluetoothDiscovery {
                         if let Some(properties) = properties {
                             // Parse advertisement data
                             if Self::is_bitcraps_device(&properties.local_name) {
-                                let peer_id = Self::extract_peer_id(&properties.manufacturer_data);
-                                let rssi = properties.rssi.unwrap_or(-100);
-                                let distance = Self::estimate_distance(rssi);
-                                
-                                let discovered_peer = DiscoveredPeer {
-                                    peer_id,
-                                    device_address: properties.address.to_string(),
-                                    rssi,
-                                    distance_estimate: distance,
-                                    first_seen: Instant::now(),
-                                    last_seen: Instant::now(),
-                                    connection_attempts: 0,
-                                    is_connected: false,
-                                };
-                                
-                                // Update or insert peer
-                                let mut peers = discovered_peers.write().await;
-                                let is_new = !peers.contains_key(&peer_id);
-                                peers.insert(peer_id, discovered_peer.clone());
-                                
-                                if is_new {
-                                    discovery_events.send(DiscoveryEvent::PeerDiscovered {
-                                        peer: discovered_peer,
-                                    }).ok();
+                                if let Some(announcement) = Self::parse_announcement_data(&properties.manufacturer_data) {
+                                    let peer_id = announcement.peer_id;
+                                    let rssi = properties.rssi.unwrap_or(-100);
+                                    let distance = Self::estimate_distance(rssi);
+                                    
+                                    let discovered_peer = DiscoveredPeer {
+                                        peer_id,
+                                        device_address: properties.address.to_string(),
+                                        rssi,
+                                        distance_estimate: distance,
+                                        first_seen: Instant::now(),
+                                        last_seen: Instant::now(),
+                                        connection_attempts: 0,
+                                        is_connected: false,
+                                        capabilities: announcement.capabilities,
+                                        reputation_score: announcement.reputation,
+                                    };
+                                    
+                                    // Update or insert peer
+                                    let mut peers = discovered_peers.write().await;
+                                    let is_new = !peers.contains_key(&peer_id);
+                                    peers.insert(peer_id, discovered_peer.clone());
+                                    
+                                    if is_new {
+                                        discovery_events.send(DiscoveryEvent::PeerDiscovered {
+                                            peer: discovered_peer,
+                                        }).ok();
+                                    }
                                 }
                             }
                         }
@@ -222,27 +328,48 @@ impl BluetoothDiscovery {
         Ok(())
     }
     
-    /// Create service advertisement data
-    fn create_service_advertisement(&self) -> Vec<u8> {
-        let mut data = Vec::new();
+    /// Create announcement data for BLE advertisement
+    fn create_announcement_data(announcement: &PeerAnnouncement) -> Vec<u8> {
+        // Serialize the announcement into a compact format
+        bincode::serialize(announcement).unwrap_or_default()
+    }
+    
+    /// Parse announcement data from BLE advertisement
+    fn parse_announcement_data(manufacturer_data: &HashMap<u16, Vec<u8>>) -> Option<PeerAnnouncement> {
+        const BITCRAPS_MANUFACTURER_ID: u16 = 0xFFFF;
         
-        // Service UUID (16 bytes)
-        data.extend_from_slice(&BITCRAPS_SERVICE_UUID.as_bytes());
-        
-        // Peer ID (32 bytes)
-        data.extend_from_slice(&self.identity.peer_id);
-        
-        // Protocol version (1 byte)
-        data.push(PROTOCOL_VERSION);
-        
-        // Capabilities flags (1 byte)
-        let mut flags = 0u8;
-        flags |= 0x01; // Supports gaming
-        flags |= 0x02; // Supports mesh routing
-        flags |= 0x04; // Supports token transactions
-        data.push(flags);
-        
-        data
+        if let Some(data) = manufacturer_data.get(&BITCRAPS_MANUFACTURER_ID) {
+            bincode::deserialize(data).ok()
+        } else {
+            // Fallback to legacy format
+            if let Some(data) = manufacturer_data.get(&BITCRAPS_MANUFACTURER_ID) {
+                if data.len() >= 32 {
+                    let mut peer_id = [0u8; 32];
+                    peer_id.copy_from_slice(&data[0..32]);
+                    
+                    let capabilities = PeerCapabilities {
+                        supports_gaming: true,
+                        supports_mesh_routing: true,
+                        supports_token_transactions: true,
+                        protocol_version: PROTOCOL_VERSION,
+                        max_game_players: Some(4),
+                        available_tokens: None,
+                    };
+                    
+                    return Some(PeerAnnouncement {
+                        peer_id,
+                        capabilities,
+                        last_seen: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                        rssi: None,
+                        reputation: 0.5, // Default reputation
+                    });
+                }
+            }
+            None
+        }
     }
     
     /// Check if device name indicates BitCraps node
@@ -254,21 +381,6 @@ impl BluetoothDiscovery {
         }
     }
     
-    /// Extract peer ID from manufacturer data
-    fn extract_peer_id(manufacturer_data: &HashMap<u16, Vec<u8>>) -> PeerId {
-        // Look for our manufacturer ID
-        const BITCRAPS_MANUFACTURER_ID: u16 = 0xFFFF; // Would register real ID
-        
-        if let Some(data) = manufacturer_data.get(&BITCRAPS_MANUFACTURER_ID) {
-            if data.len() >= 32 {
-                let mut peer_id = [0u8; 32];
-                peer_id.copy_from_slice(&data[0..32]);
-                return peer_id;
-            }
-        }
-        
-        [0u8; 32] // Default
-    }
     
     /// Estimate distance from RSSI using path loss model
     /// 
@@ -285,8 +397,197 @@ impl BluetoothDiscovery {
         let distance = 10_f32.powf((RSSI_AT_1M - rssi as f32) / (10.0 * PATH_LOSS_EXPONENT));
         distance.max(0.1).min(100.0) // Clamp to reasonable range
     }
+    
+    /// Start peer registry cleanup task
+    async fn start_peer_registry_cleanup(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let peer_registry = self.peer_registry.clone();
+        let discovered_peers = self.discovered_peers.clone();
+        let discovery_events = self.discovery_events.clone();
+        
+        tokio::spawn(async move {
+            let mut cleanup_interval = interval(Duration::from_secs(60));
+            
+            loop {
+                cleanup_interval.tick().await;
+                
+                let now = Instant::now();
+                let mut registry = peer_registry.write().await;
+                let mut peers = discovered_peers.write().await;
+                
+                let mut expired_peers = Vec::new();
+                
+                // Find expired peers
+                registry.peers.retain(|peer_id, entry| {
+                    if now > entry.expires_at {
+                        expired_peers.push(*peer_id);
+                        false
+                    } else {
+                        true
+                    }
+                });
+                
+                // Remove expired peers from discovered_peers and notify
+                for peer_id in expired_peers {
+                    peers.remove(&peer_id);
+                    discovery_events.send(DiscoveryEvent::PeerExpired { peer_id }).ok();
+                }
+                
+                if !registry.peers.is_empty() {
+                    discovery_events.send(DiscoveryEvent::PeerListUpdated {
+                        peer_count: registry.peers.len()
+                    }).ok();
+                }
+            }
+        });
+        
+        Ok(())
+    }
+    
+    /// Start periodic peer exchange
+    async fn start_peer_exchange(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let peer_registry = self.peer_registry.clone();
+        let identity = self.identity.clone();
+        let discovery_events = self.discovery_events.clone();
+        let exchange_interval = self.peer_exchange_interval;
+        
+        tokio::spawn(async move {
+            let mut exchange_interval = interval(exchange_interval);
+            
+            loop {
+                exchange_interval.tick().await;
+                
+                let registry = peer_registry.read().await;
+                
+                // Create peer list to share
+                let peer_list: Vec<PeerAnnouncement> = registry.peers
+                    .values()
+                    .take(20) // Limit to 20 peers to avoid large messages
+                    .map(|entry| PeerAnnouncement {
+                        peer_id: entry.peer.peer_id,
+                        capabilities: entry.peer.capabilities.clone(),
+                        last_seen: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                        rssi: Some(entry.peer.rssi),
+                        reputation: entry.peer.reputation_score,
+                    })
+                    .collect();
+                
+                if !peer_list.is_empty() {
+                    let exchange_message = PeerExchangeMessage {
+                        protocol_version: PROTOCOL_VERSION,
+                        sender_id: identity.peer_id,
+                        peer_list,
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                    };
+                    
+                    // In production, would broadcast this to connected peers
+                    println!("Broadcasting peer exchange with {} peers", exchange_message.peer_list.len());
+                    
+                    discovery_events.send(DiscoveryEvent::PeerListUpdated {
+                        peer_count: registry.peers.len()
+                    }).ok();
+                }
+            }
+        });
+        
+        Ok(())
+    }
+    
+    /// Process received peer exchange message
+    pub async fn process_peer_exchange(&self, message: PeerExchangeMessage) -> Result<(), Box<dyn std::error::Error>> {
+        let mut registry = self.peer_registry.write().await;
+        let mut discovered_peers = self.discovered_peers.write().await;
+        let now = Instant::now();
+        
+        for announcement in message.peer_list {
+            // Skip our own peer ID
+            if announcement.peer_id == self.identity.peer_id {
+                continue;
+            }
+            
+            // Create discovered peer from announcement
+            let discovered_peer = DiscoveredPeer {
+                peer_id: announcement.peer_id,
+                device_address: String::new(), // Not available from peer exchange
+                rssi: announcement.rssi.unwrap_or(-80),
+                distance_estimate: Self::estimate_distance(announcement.rssi.unwrap_or(-80)),
+                first_seen: now,
+                last_seen: now,
+                connection_attempts: 0,
+                is_connected: false,
+                capabilities: announcement.capabilities,
+                reputation_score: announcement.reputation,
+            };
+            
+            // Add to registry with TTL
+            let entry = PeerEntry {
+                peer: discovered_peer.clone(),
+                expires_at: now + registry.default_ttl,
+                last_announcement: now,
+                announcement_count: 1,
+            };
+            
+            let is_new = !registry.peers.contains_key(&announcement.peer_id);
+            registry.peers.insert(announcement.peer_id, entry);
+            discovered_peers.insert(announcement.peer_id, discovered_peer.clone());
+            
+            if is_new {
+                self.discovery_events.send(DiscoveryEvent::PeerDiscovered {
+                    peer: discovered_peer,
+                }).ok();
+            }
+        }
+        
+        self.discovery_events.send(DiscoveryEvent::PeerExchangeReceived {
+            from: message.sender_id,
+            peer_count: message.peer_list.len(),
+        }).ok();
+        
+        Ok(())
+    }
+    
+    /// Get current peer list
+    pub async fn get_peer_list(&self) -> Vec<DiscoveredPeer> {
+        let registry = self.peer_registry.read().await;
+        registry.peers.values().map(|entry| entry.peer.clone()).collect()
+    }
+    
+    /// Get peer count
+    pub async fn get_peer_count(&self) -> usize {
+        let registry = self.peer_registry.read().await;
+        registry.peers.len()
+    }
+}
+
+impl PeerRegistry {
+    fn new(default_ttl: Duration, cleanup_interval: Duration) -> Self {
+        Self {
+            peers: HashMap::new(),
+            ttl_cleanup_interval: cleanup_interval,
+            default_ttl,
+        }
+    }
 }
 
 // Constants that would be defined elsewhere
 const BITCRAPS_SERVICE_UUID: &str = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E";
 const PROTOCOL_VERSION: u8 = 1;
+
+// Default reputation and capability values
+impl Default for PeerCapabilities {
+    fn default() -> Self {
+        Self {
+            supports_gaming: true,
+            supports_mesh_routing: false,
+            supports_token_transactions: false,
+            protocol_version: PROTOCOL_VERSION,
+            max_game_players: Some(4),
+            available_tokens: None,
+        }
+    }
+}

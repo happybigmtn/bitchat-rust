@@ -16,7 +16,7 @@ pub enum GamePhase {
 }
 
 /// Result of bet resolution
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BetResolution {
     Won {
         player: PeerId,

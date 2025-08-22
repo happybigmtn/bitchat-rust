@@ -12,6 +12,7 @@ use super::deduplication::MessageDeduplicator;
 use super::message_queue::MessageQueue;
 use super::game_session::GameSessionManager;
 use super::anti_cheat::AntiCheatMonitor;
+use crate::token::ProofOfRelay;
 
 /// Configuration for the mesh service
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +57,7 @@ pub struct MeshService {
     message_queue: Arc<MessageQueue>,
     game_sessions: Arc<RwLock<GameSessionManager>>,
     anti_cheat: Arc<AntiCheatMonitor>,
+    proof_of_relay: Option<Arc<ProofOfRelay>>,
     
     // Peer management
     peers: Arc<RwLock<HashMap<PeerId, PeerInfo>>>,
@@ -177,6 +179,7 @@ impl MeshService {
             message_queue,
             game_sessions,
             anti_cheat,
+            proof_of_relay: None, // Will be set later via set_proof_of_relay
             peers: Arc::new(RwLock::new(HashMap::new())),
             routing_table: Arc::new(RwLock::new(RoutingTable {
                 routes: HashMap::new(),
@@ -190,6 +193,11 @@ impl MeshService {
         };
         
         (service, command_tx)
+    }
+    
+    /// Set the proof of relay system for mining rewards
+    pub fn set_proof_of_relay(&mut self, proof_of_relay: Arc<ProofOfRelay>) {
+        self.proof_of_relay = Some(proof_of_relay);
     }
     
     /// Start the mesh service
@@ -411,12 +419,55 @@ impl MeshService {
     async fn forward_packet(&self, mut packet: BitchatPacket) -> Result<()> {
         packet.ttl -= 1;
         
+        // Extract routing information
+        let source = packet.get_sender().unwrap_or([0u8; 32]);
+        let destination = packet.get_receiver().unwrap_or([0u8; 32]);
+        let hop_count = 8 - packet.ttl; // Calculate how many hops so far
+        
+        // Generate packet hash for relay tracking
+        let packet_hash = self.calculate_packet_hash(&packet);
+        
+        // Record relay event for mining rewards
+        if let Some(proof_of_relay) = &self.proof_of_relay {
+            if let Err(e) = proof_of_relay.record_relay(
+                self.config.peer_id,
+                packet_hash,
+                source,
+                destination,
+                hop_count,
+            ).await {
+                log::warn!("Failed to record relay for mining: {}", e);
+            }
+        }
+        
         // Extract target from TLV data if present
         // For now, just count as forwarded
         // Full routing logic would examine TLV fields
         self.stats.write().await.messages_forwarded += 1;
         
         Ok(())
+    }
+    
+    /// Calculate packet hash for relay tracking
+    fn calculate_packet_hash(&self, packet: &BitchatPacket) -> [u8; 32] {
+        use sha2::{Sha256, Digest};
+        
+        let mut hasher = Sha256::new();
+        hasher.update(&[packet.version, packet.packet_type, packet.flags, packet.ttl]);
+        hasher.update(&packet.total_length.to_be_bytes());
+        hasher.update(&packet.sequence.to_be_bytes());
+        
+        // Add TLV data to hash
+        for tlv in &packet.tlv_data {
+            hasher.update(&[tlv.field_type]);
+            hasher.update(&tlv.length.to_be_bytes());
+            hasher.update(&tlv.value);
+        }
+        
+        let result = hasher.finalize();
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&result);
+        hash
     }
     
     /// Handle peer errors

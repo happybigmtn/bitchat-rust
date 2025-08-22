@@ -2,7 +2,8 @@ use std::collections::{HashMap, BTreeMap};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, RwLock, oneshot};
+use tokio::net::UdpSocket;
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
 use crate::protocol::PeerId;
@@ -69,12 +70,14 @@ impl Distance {
 }
 
 /// Contact information for a node
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Contact {
     pub id: NodeId,
     pub peer_id: PeerId,
     pub address: SocketAddr,
+    #[serde(skip)]
     pub last_seen: Instant,
+    #[serde(skip)]
     pub rtt: Option<Duration>, // Round-trip time
 }
 
@@ -165,13 +168,22 @@ impl RoutingTable {
     }
     
     /// Add a contact to the appropriate bucket
-    pub async fn add_contact(&self, contact: Contact) {
+    pub async fn add_contact(&self, mut contact: Contact) {
+        // Don't add ourselves
+        if contact.id == self.local_id {
+            return;
+        }
+        
+        // Update last seen time
+        contact.last_seen = Instant::now();
+        
         let bucket_idx = self.local_id.bucket_index(&contact.id);
         if bucket_idx < 256 {
             let mut bucket = self.buckets[bucket_idx].write().await;
             if let Some(_eviction_candidate) = bucket.add_contact(contact) {
                 // TODO: Ping eviction candidate to check if still alive
                 // If dead, replace with new contact
+                // For now, just keep the existing contact
             }
         }
     }
@@ -221,26 +233,109 @@ impl RoutingTable {
 /// - Store values (distributed key-value storage)
 /// - Maintain routing table health
 /// - Handle incoming queries
-#[allow(dead_code)]
 pub struct KademliaNode {
     local_id: NodeId,
+    local_address: SocketAddr,
     routing_table: Arc<RoutingTable>,
-    storage: Arc<RwLock<HashMap<Vec<u8>, Vec<u8>>>>,
-    pending_queries: Arc<RwLock<HashMap<u64, mpsc::Sender<Vec<Contact>>>>>,
+    storage: Arc<RwLock<HashMap<Vec<u8>, StoredValue>>>,
+    pending_queries: Arc<RwLock<HashMap<u64, oneshot::Sender<KademliaResponse>>>>,
     query_counter: Arc<RwLock<u64>>,
+    network_handler: Arc<NetworkHandler>,
+    event_sender: mpsc::UnboundedSender<KademliaEvent>,
+}
+
+/// Stored value with metadata
+#[derive(Debug, Clone)]
+struct StoredValue {
+    data: Vec<u8>,
+    stored_at: Instant,
+    publisher: PeerId,
+    ttl: Duration,
+}
+
+/// Network handler for UDP/TCP communication
+struct NetworkHandler {
+    udp_socket: Arc<UdpSocket>,
+    local_address: SocketAddr,
+}
+
+/// Kademlia protocol messages
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum KademliaMessage {
+    FindNode { target: NodeId, requester: Contact },
+    FindNodeResponse { nodes: Vec<Contact> },
+    Store { key: Vec<u8>, value: Vec<u8>, publisher: Contact },
+    StoreResponse { success: bool },
+    FindValue { key: Vec<u8>, requester: Contact },
+    FindValueResponse { result: FindValueResult },
+    Ping { requester: Contact },
+    Pong { responder: Contact },
+}
+
+/// Result of a find value operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum FindValueResult {
+    Found(Vec<u8>),
+    Nodes(Vec<Contact>),
+}
+
+/// Response wrapper for queries
+#[derive(Debug, Clone)]
+pub enum KademliaResponse {
+    Nodes(Vec<Contact>),
+    Value(Vec<u8>),
+    Success(bool),
+}
+
+/// Kademlia events for the application layer
+#[derive(Debug, Clone)]
+pub enum KademliaEvent {
+    NodeDiscovered { contact: Contact },
+    ValueStored { key: Vec<u8>, success: bool },
+    ValueFound { key: Vec<u8>, value: Vec<u8> },
+    NetworkError { error: String },
 }
 
 impl KademliaNode {
-    pub fn new(peer_id: PeerId, k: usize, alpha: usize) -> Self {
+    pub async fn new(
+        peer_id: PeerId,
+        listen_address: SocketAddr,
+        k: usize,
+        alpha: usize,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let local_id = NodeId::from_peer_id(&peer_id);
         
-        Self {
+        // Bind UDP socket for DHT communication
+        let udp_socket = UdpSocket::bind(listen_address).await?;
+        let local_address = udp_socket.local_addr()?;
+        
+        let network_handler = Arc::new(NetworkHandler {
+            udp_socket: Arc::new(udp_socket),
+            local_address,
+        });
+        
+        let (event_sender, _) = mpsc::unbounded_channel();
+        
+        let node = Self {
             local_id,
+            local_address,
             routing_table: Arc::new(RoutingTable::new(local_id, k, alpha)),
             storage: Arc::new(RwLock::new(HashMap::new())),
             pending_queries: Arc::new(RwLock::new(HashMap::new())),
             query_counter: Arc::new(RwLock::new(0)),
-        }
+            network_handler,
+            event_sender,
+        };
+        
+        Ok(node)
+    }
+    
+    /// Start the Kademlia node and begin listening for messages
+    pub async fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
+        self.start_message_handler().await?;
+        self.start_maintenance_tasks().await?;
+        println!("Kademlia node started on {}", self.local_address);
+        Ok(())
     }
     
     /// Perform iterative node lookup
@@ -255,7 +350,22 @@ impl KademliaNode {
         let mut to_query = self.routing_table.find_closest(&target, self.routing_table.alpha).await;
         let mut closest = BTreeMap::new();
         
-        while !to_query.is_empty() {
+        // Add ourselves to closest if we're close
+        let self_distance = self.local_id.distance(&target);
+        let self_contact = Contact {
+            id: self.local_id,
+            peer_id: [0u8; 32], // Would be actual peer ID
+            address: self.local_address,
+            last_seen: Instant::now(),
+            rtt: Some(Duration::from_millis(0)),
+        };
+        closest.insert(self_distance, self_contact);
+        
+        let mut round = 0;
+        const MAX_ROUNDS: usize = 20;
+        
+        while !to_query.is_empty() && round < MAX_ROUNDS {
+            round += 1;
             let mut futures = Vec::new();
             
             // Query α nodes in parallel
@@ -265,39 +375,49 @@ impl KademliaNode {
                 }
             }
             
-            // Wait for responses
-            let responses = futures::future::join_all(futures).await;
+            // Wait for responses with timeout
+            let timeout = Duration::from_secs(5);
+            let responses = tokio::time::timeout(
+                timeout,
+                futures::future::join_all(futures)
+            ).await;
             
-            // Process responses
-            let mut improved = false;
-            for response in responses {
-                if let Ok(contacts) = response {
-                    for contact in contacts {
-                        let distance = contact.id.distance(&target);
-                        if !closest.contains_key(&distance) {
-                            improved = true;
-                            closest.insert(distance, contact.clone());
-                            
-                            // Add to routing table
-                            self.routing_table.add_contact(contact.clone()).await;
-                            
-                            // Consider querying this node
-                            if !queried.contains(&contact.id) {
-                                to_query.push(contact);
+            if let Ok(responses) = responses {
+                // Process responses
+                let mut improved = false;
+                for response in responses {
+                    if let Ok(contacts) = response {
+                        for contact in contacts {
+                            let distance = contact.id.distance(&target);
+                            if !closest.contains_key(&distance) {
+                                improved = true;
+                                closest.insert(distance, contact.clone());
+                                
+                                // Add to routing table
+                                self.routing_table.add_contact(contact.clone()).await;
+                                
+                                // Consider querying this node
+                                if !queried.contains(&contact.id) {
+                                    to_query.push(contact);
+                                }
                             }
                         }
                     }
                 }
-            }
-            
-            // Stop if no improvement
-            if !improved {
+                
+                // Stop if no improvement
+                if !improved {
+                    break;
+                }
+            } else {
+                println!("Lookup round {} timed out", round);
                 break;
             }
         }
         
-        // Return K closest
+        // Return K closest (excluding ourselves)
         closest.into_iter()
+            .filter(|(_, contact)| contact.id != self.local_id)
             .take(self.routing_table.k)
             .map(|(_, contact)| contact)
             .collect()
@@ -309,7 +429,7 @@ impl KademliaNode {
     /// 1. Find K nodes closest to the key
     /// 2. Send store requests to all of them
     /// This creates K replicas for fault tolerance
-    pub async fn store(&self, key: Vec<u8>, value: Vec<u8>) {
+    pub async fn store(&self, key: Vec<u8>, value: Vec<u8>) -> Result<bool, Box<dyn std::error::Error>> {
         // Calculate key ID
         let mut hasher = Sha256::new();
         hasher.update(&key);
@@ -318,20 +438,64 @@ impl KademliaNode {
         // Find K closest nodes
         let nodes = self.lookup_node(key_id).await;
         
+        let mut success_count = 0;
+        let mut futures = Vec::new();
+        
         // Store on each node
         for node in nodes {
-            self.send_store(node, key.clone(), value.clone()).await;
+            futures.push(self.send_store(node, key.clone(), value.clone()));
         }
         
-        // Also store locally if we're close enough
-        self.storage.write().await.insert(key, value);
+        // Store locally if we're among the closest
+        let distance_to_key = self.local_id.distance(&key_id);
+        let closest_local = self.routing_table.find_closest(&key_id, self.routing_table.k).await;
+        
+        let should_store_locally = closest_local.len() < self.routing_table.k ||
+            closest_local.iter().any(|c| c.id.distance(&key_id) > distance_to_key);
+        
+        if should_store_locally {
+            let stored_value = StoredValue {
+                data: value.clone(),
+                stored_at: Instant::now(),
+                publisher: [0u8; 32], // Would be actual publisher ID
+                ttl: Duration::from_secs(3600), // 1 hour TTL
+            };
+            self.storage.write().await.insert(key.clone(), stored_value);
+            success_count += 1;
+        }
+        
+        // Wait for remote store results
+        let results = futures::future::join_all(futures).await;
+        for result in results {
+            if result.unwrap_or(false) {
+                success_count += 1;
+            }
+        }
+        
+        let success = success_count > 0;
+        self.event_sender.send(KademliaEvent::ValueStored {
+            key,
+            success,
+        }).ok();
+        
+        Ok(success)
     }
     
     /// Retrieve a value from the DHT
     pub async fn get(&self, key: Vec<u8>) -> Option<Vec<u8>> {
         // Check local storage first
-        if let Some(value) = self.storage.read().await.get(&key) {
-            return Some(value.clone());
+        if let Some(stored_value) = self.storage.read().await.get(&key) {
+            // Check if value hasn't expired
+            if stored_value.stored_at.elapsed() < stored_value.ttl {
+                self.event_sender.send(KademliaEvent::ValueFound {
+                    key: key.clone(),
+                    value: stored_value.data.clone(),
+                }).ok();
+                return Some(stored_value.data.clone());
+            } else {
+                // Value expired, remove it
+                self.storage.write().await.remove(&key);
+            }
         }
         
         // Calculate key ID and search network
@@ -339,34 +503,498 @@ impl KademliaNode {
         hasher.update(&key);
         let key_id = NodeId::new(hasher.finalize().into());
         
-        // Find nodes storing this key
-        let nodes = self.lookup_node(key_id).await;
+        // Use iterative lookup for FIND_VALUE
+        match self.iterative_find_value(key_id, key.clone()).await {
+            Some(value) => {
+                self.event_sender.send(KademliaEvent::ValueFound {
+                    key,
+                    value: value.clone(),
+                }).ok();
+                Some(value)
+            },
+            None => None,
+        }
+    }
+    
+    /// Iterative find value operation
+    async fn iterative_find_value(&self, key_id: NodeId, key: Vec<u8>) -> Option<Vec<u8>> {
+        let mut queried = HashSet::new();
+        let mut to_query = self.routing_table.find_closest(&key_id, self.routing_table.alpha).await;
         
-        // Query each node
-        for node in nodes {
-            if let Ok(Some(value)) = self.send_get(node, key.clone()).await {
-                return Some(value);
+        let mut round = 0;
+        const MAX_ROUNDS: usize = 20;
+        
+        while !to_query.is_empty() && round < MAX_ROUNDS {
+            round += 1;
+            let mut futures = Vec::new();
+            
+            // Query α nodes in parallel
+            for contact in to_query.drain(..).take(self.routing_table.alpha) {
+                if queried.insert(contact.id) {
+                    futures.push(self.send_find_value(contact.clone(), key.clone()));
+                }
+            }
+            
+            // Wait for responses
+            let timeout = Duration::from_secs(5);
+            let responses = tokio::time::timeout(
+                timeout,
+                futures::future::join_all(futures)
+            ).await;
+            
+            if let Ok(responses) = responses {
+                for response in responses {
+                    match response {
+                        Ok(FindValueResult::Found(value)) => {
+                            return Some(value);
+                        },
+                        Ok(FindValueResult::Nodes(nodes)) => {
+                            // Add nodes to query list
+                            for node in nodes {
+                                if !queried.contains(&node.id) {
+                                    to_query.push(node.clone());
+                                }
+                                // Add to routing table
+                                self.routing_table.add_contact(node).await;
+                            }
+                        },
+                        Err(_) => {
+                            // Query failed, continue with other nodes
+                        },
+                    }
+                }
             }
         }
         
         None
     }
     
-    // Stub methods for network operations
-    async fn send_find_node(&self, _contact: Contact, _target: NodeId) -> Result<Vec<Contact>, Box<dyn std::error::Error>> {
-        // TODO: Implement actual network call
-        Ok(vec![])
+    // Network operations
+    async fn send_find_node(&self, contact: Contact, target: NodeId) -> Result<Vec<Contact>, Box<dyn std::error::Error>> {
+        let message = KademliaMessage::FindNode {
+            target,
+            requester: self.create_self_contact(),
+        };
+        
+        match self.send_message(contact.address, message).await? {
+            KademliaResponse::Nodes(nodes) => Ok(nodes),
+            _ => Err("Unexpected response type".into()),
+        }
     }
     
-    async fn send_store(&self, _contact: Contact, _key: Vec<u8>, _value: Vec<u8>) {
-        // TODO: Implement actual network call
+    async fn send_store(&self, contact: Contact, key: Vec<u8>, value: Vec<u8>) -> Result<bool, Box<dyn std::error::Error>> {
+        let message = KademliaMessage::Store {
+            key,
+            value,
+            publisher: self.create_self_contact(),
+        };
+        
+        match self.send_message(contact.address, message).await? {
+            KademliaResponse::Success(success) => Ok(success),
+            _ => Err("Unexpected response type".into()),
+        }
     }
     
-    async fn send_get(&self, _contact: Contact, _key: Vec<u8>) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
-        // TODO: Implement actual network call
-        Ok(None)
+    async fn send_find_value(&self, contact: Contact, key: Vec<u8>) -> Result<FindValueResult, Box<dyn std::error::Error>> {
+        let message = KademliaMessage::FindValue {
+            key,
+            requester: self.create_self_contact(),
+        };
+        
+        match self.send_message(contact.address, message).await? {
+            KademliaResponse::Value(value) => Ok(FindValueResult::Found(value)),
+            KademliaResponse::Nodes(nodes) => Ok(FindValueResult::Nodes(nodes)),
+            _ => Err("Unexpected response type".into()),
+        }
     }
+    
+    /// Send a message and wait for response
+    async fn send_message(
+        &self,
+        address: SocketAddr,
+        message: KademliaMessage,
+    ) -> Result<KademliaResponse, Box<dyn std::error::Error>> {
+        // Generate query ID
+        let query_id = {
+            let mut counter = self.query_counter.write().await;
+            *counter += 1;
+            *counter
+        };
+        
+        // Create response channel
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut queries = self.pending_queries.write().await;
+            queries.insert(query_id, tx);
+        }
+        
+        // Serialize and send message
+        let mut message_data = bincode::serialize(&message)?;
+        message_data.splice(0..0, query_id.to_be_bytes());
+        
+        self.network_handler.udp_socket.send_to(&message_data, address).await?;
+        
+        // Wait for response with timeout
+        let timeout = Duration::from_secs(5);
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(_)) => Err("Response channel closed".into()),
+            Err(_) => {
+                // Clean up pending query
+                self.pending_queries.write().await.remove(&query_id);
+                Err("Request timed out".into())
+            },
+        }
+    }
+    
+    /// Create contact info for ourselves
+    fn create_self_contact(&self) -> Contact {
+        Contact {
+            id: self.local_id,
+            peer_id: [0u8; 32], // Would be actual peer ID
+            address: self.local_address,
+            last_seen: Instant::now(),
+            rtt: Some(Duration::from_millis(0)),
+        }
+    }
+    
+    /// Start message handler
+    async fn start_message_handler(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let udp_socket = self.network_handler.udp_socket.clone();
+        let routing_table = self.routing_table.clone();
+        let storage = self.storage.clone();
+        let pending_queries = self.pending_queries.clone();
+        let local_id = self.local_id;
+        let local_address = self.local_address;
+        let event_sender = self.event_sender.clone();
+        
+        tokio::spawn(async move {
+            let mut buffer = [0u8; 65536];
+            
+            loop {
+                match udp_socket.recv_from(&mut buffer).await {
+                    Ok((len, from)) => {
+                        let data = &buffer[..len];
+                        
+                        if data.len() < 8 {
+                            continue; // Not enough data for query ID
+                        }
+                        
+                        // Extract query ID
+                        let query_id = u64::from_be_bytes([
+                            data[0], data[1], data[2], data[3],
+                            data[4], data[5], data[6], data[7],
+                        ]);
+                        
+                        let message_data = &data[8..];
+                        
+                        // Try to deserialize message
+                        if let Ok(message) = bincode::deserialize::<KademliaMessage>(message_data) {
+                            Self::handle_message(
+                                message,
+                                query_id,
+                                from,
+                                local_id,
+                                local_address,
+                                &routing_table,
+                                &storage,
+                                &pending_queries,
+                                &udp_socket,
+                                &event_sender,
+                            ).await;
+                        }
+                    },
+                    Err(e) => {
+                        event_sender.send(KademliaEvent::NetworkError {
+                            error: format!("UDP receive error: {}", e),
+                        }).ok();
+                    },
+                }
+            }
+        });
+        
+        Ok(())
+    }
+    
+    /// Handle incoming messages
+    async fn handle_message(
+        message: KademliaMessage,
+        query_id: u64,
+        from: SocketAddr,
+        local_id: NodeId,
+        local_address: SocketAddr,
+        routing_table: &Arc<RoutingTable>,
+        storage: &Arc<RwLock<HashMap<Vec<u8>, StoredValue>>>,
+        pending_queries: &Arc<RwLock<HashMap<u64, oneshot::Sender<KademliaResponse>>>>,
+        udp_socket: &Arc<UdpSocket>,
+        event_sender: &mpsc::UnboundedSender<KademliaEvent>,
+    ) {
+        match message {
+            KademliaMessage::FindNode { target, requester } => {
+                // Add requester to routing table
+                routing_table.add_contact(requester).await;
+                
+                // Find closest nodes
+                let nodes = routing_table.find_closest(&target, routing_table.k).await;
+                
+                let response = KademliaMessage::FindNodeResponse { nodes };
+                Self::send_response(query_id, response, from, udp_socket).await;
+            },
+            
+            KademliaMessage::Store { key, value, publisher } => {
+                // Add publisher to routing table
+                routing_table.add_contact(publisher.clone()).await;
+                
+                // Store the value
+                let stored_value = StoredValue {
+                    data: value,
+                    stored_at: Instant::now(),
+                    publisher: publisher.peer_id,
+                    ttl: Duration::from_secs(3600),
+                };
+                
+                storage.write().await.insert(key, stored_value);
+                
+                let response = KademliaMessage::StoreResponse { success: true };
+                Self::send_response(query_id, response, from, udp_socket).await;
+            },
+            
+            KademliaMessage::FindValue { key, requester } => {
+                // Add requester to routing table
+                routing_table.add_contact(requester).await;
+                
+                let result = if let Some(stored_value) = storage.read().await.get(&key) {
+                    // Check if value hasn't expired
+                    if stored_value.stored_at.elapsed() < stored_value.ttl {
+                        FindValueResult::Found(stored_value.data.clone())
+                    } else {
+                        // Value expired, remove and return nodes
+                        storage.write().await.remove(&key);
+                        let mut hasher = Sha256::new();
+                        hasher.update(&key);
+                        let key_id = NodeId::new(hasher.finalize().into());
+                        let nodes = routing_table.find_closest(&key_id, routing_table.k).await;
+                        FindValueResult::Nodes(nodes)
+                    }
+                } else {
+                    // Value not found, return closest nodes
+                    let mut hasher = Sha256::new();
+                    hasher.update(&key);
+                    let key_id = NodeId::new(hasher.finalize().into());
+                    let nodes = routing_table.find_closest(&key_id, routing_table.k).await;
+                    FindValueResult::Nodes(nodes)
+                };
+                
+                let response = KademliaMessage::FindValueResponse { result };
+                Self::send_response(query_id, response, from, udp_socket).await;
+            },
+            
+            KademliaMessage::Ping { requester } => {
+                // Add requester to routing table
+                routing_table.add_contact(requester).await;
+                
+                let responder = Contact {
+                    id: local_id,
+                    peer_id: [0u8; 32],
+                    address: local_address,
+                    last_seen: Instant::now(),
+                    rtt: Some(Duration::from_millis(0)),
+                };
+                
+                let response = KademliaMessage::Pong { responder };
+                Self::send_response(query_id, response, from, udp_socket).await;
+            },
+            
+            // Handle responses
+            KademliaMessage::FindNodeResponse { nodes } => {
+                if let Some(tx) = pending_queries.write().await.remove(&query_id) {
+                    tx.send(KademliaResponse::Nodes(nodes)).ok();
+                }
+            },
+            
+            KademliaMessage::StoreResponse { success } => {
+                if let Some(tx) = pending_queries.write().await.remove(&query_id) {
+                    tx.send(KademliaResponse::Success(success)).ok();
+                }
+            },
+            
+            KademliaMessage::FindValueResponse { result } => {
+                if let Some(tx) = pending_queries.write().await.remove(&query_id) {
+                    match result {
+                        FindValueResult::Found(value) => {
+                            tx.send(KademliaResponse::Value(value)).ok();
+                        },
+                        FindValueResult::Nodes(nodes) => {
+                            tx.send(KademliaResponse::Nodes(nodes)).ok();
+                        },
+                    }
+                }
+            },
+            
+            KademliaMessage::Pong { responder } => {
+                // Add responder to routing table
+                routing_table.add_contact(responder.clone()).await;
+                event_sender.send(KademliaEvent::NodeDiscovered {
+                    contact: responder,
+                }).ok();
+            },
+        }
+    }
+    
+    /// Send a response message
+    async fn send_response(
+        query_id: u64,
+        response: KademliaMessage,
+        to: SocketAddr,
+        udp_socket: &Arc<UdpSocket>,
+    ) {
+        if let Ok(response_data) = bincode::serialize(&response) {
+            let mut message_data = query_id.to_be_bytes().to_vec();
+            message_data.extend_from_slice(&response_data);
+            udp_socket.send_to(&message_data, to).await.ok();
+        }
+    }
+    
+    /// Start maintenance tasks
+    async fn start_maintenance_tasks(&self) -> Result<(), Box<dyn std::error::Error>> {
+        // Cleanup expired values
+        let storage = self.storage.clone();
+        tokio::spawn(async move {
+            let mut cleanup_interval = tokio::time::interval(Duration::from_secs(300)); // 5 minutes
+            
+            loop {
+                cleanup_interval.tick().await;
+                
+                let now = Instant::now();
+                let mut storage = storage.write().await;
+                storage.retain(|_, value| now.duration_since(value.stored_at) < value.ttl);
+            }
+        });
+        
+        Ok(())
+    }
+    
+    /// Bootstrap the node by connecting to known nodes
+    pub async fn bootstrap(&self, bootstrap_nodes: Vec<SocketAddr>) -> Result<(), Box<dyn std::error::Error>> {
+        for addr in bootstrap_nodes {
+            // Create a contact for the bootstrap node
+            let _contact = Contact {
+                id: NodeId::new([0u8; 32]), // Unknown ID initially
+                peer_id: [0u8; 32],
+                address: addr,
+                last_seen: Instant::now(),
+                rtt: None,
+            };
+            
+            // Ping the bootstrap node to get its actual ID
+            let message = KademliaMessage::Ping {
+                requester: self.create_self_contact(),
+            };
+            
+            // Send ping (don't wait for response, it will be handled by message handler)
+            if let Ok(message_data) = bincode::serialize(&message) {
+                let query_id = {
+                    let mut counter = self.query_counter.write().await;
+                    *counter += 1;
+                    *counter
+                };
+                
+                let mut full_data = query_id.to_be_bytes().to_vec();
+                full_data.extend_from_slice(&message_data);
+                
+                self.network_handler.udp_socket.send_to(&full_data, addr).await.ok();
+            }
+        }
+        
+        // Perform lookup for our own ID to populate routing table
+        tokio::time::sleep(Duration::from_millis(500)).await; // Wait for pings to complete
+        self.lookup_node(self.local_id).await;
+        
+        Ok(())
+    }
+    
+    /// Get events receiver
+    pub fn subscribe_events(&self) -> mpsc::UnboundedReceiver<KademliaEvent> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        // In a real implementation, you'd want to manage multiple subscribers
+        rx
+    }
+    
+    /// Get node statistics
+    pub async fn get_stats(&self) -> NodeStats {
+        let storage = self.storage.read().await;
+        let routing_table = &self.routing_table;
+        
+        let mut total_contacts = 0;
+        for i in 0..256 {
+            let bucket = routing_table.buckets[i].read().await;
+            total_contacts += bucket.contacts.len();
+        }
+        
+        NodeStats {
+            node_id: self.local_id,
+            local_address: self.local_address,
+            stored_values: storage.len(),
+            routing_table_size: total_contacts,
+        }
+    }
+}
+
+/// Node statistics
+#[derive(Debug, Clone)]
+pub struct NodeStats {
+    pub node_id: NodeId,
+    pub local_address: SocketAddr,
+    pub stored_values: usize,
+    pub routing_table_size: usize,
 }
 
 // Add missing import
 use std::collections::HashSet;
+use futures;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::time::sleep;
+    
+    #[tokio::test]
+    async fn test_node_creation() {
+        let peer_id = [1u8; 32];
+        let addr = "127.0.0.1:0".parse().unwrap();
+        
+        let node = KademliaNode::new(peer_id, addr, 20, 3).await.unwrap();
+        assert_eq!(node.local_id, NodeId::from_peer_id(&peer_id));
+    }
+    
+    #[tokio::test]
+    async fn test_distance_calculation() {
+        let id1 = NodeId::new([0u8; 32]);
+        let id2 = NodeId::new([255u8; 32]);
+        
+        let distance = id1.distance(&id2);
+        assert_eq!(distance.leading_zeros(), 0); // All bits different
+        
+        let distance_self = id1.distance(&id1);
+        assert_eq!(distance_self.leading_zeros(), 256); // Same node
+    }
+    
+    #[tokio::test]
+    async fn test_routing_table() {
+        let local_id = NodeId::new([0u8; 32]);
+        let routing_table = RoutingTable::new(local_id, 20, 3);
+        
+        let contact = Contact {
+            id: NodeId::new([1u8; 32]),
+            peer_id: [1u8; 32],
+            address: "127.0.0.1:8000".parse().unwrap(),
+            last_seen: Instant::now(),
+            rtt: Some(Duration::from_millis(10)),
+        };
+        
+        routing_table.add_contact(contact.clone()).await;
+        
+        let closest = routing_table.find_closest(&contact.id, 5).await;
+        assert!(!closest.is_empty());
+    }
+}

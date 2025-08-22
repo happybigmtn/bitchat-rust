@@ -12,7 +12,7 @@ use crate::protocol::bet_types::{GamePhase, BetResolution, BetValidator};
 /// Feynman: Think of this as the "casino floor manager" - it tracks
 /// everything happening at the craps table: who's shooting, what phase
 /// we're in, what bets are active, and the complete history.
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CrapsGame {
     pub game_id: GameId,
     pub phase: GamePhase,

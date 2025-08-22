@@ -11,6 +11,7 @@
 pub mod binary;
 pub mod craps;
 pub mod runtime;
+pub mod consensus;
 
 // New refactored modules
 pub mod bet_types;

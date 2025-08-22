@@ -7,6 +7,8 @@ use crate::protocol::{PeerId, GameId, CrapTokens, DiceRoll, new_game_id};
 use crate::error::{Error, Result};
 use super::craps::{CrapsGame, GamePhase};
 use super::{Bet, BetType};
+use super::consensus::{ConsensusEngine, ConsensusConfig, GameOperation, GameProposal, DisputeClaim};
+use crate::TREASURY_ADDRESS;
 
 /// Gaming runtime configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,6 +22,8 @@ pub struct GameRuntimeConfig {
     pub max_bet: u64,
     pub treasury_rake: f32,
     pub enable_anti_cheat: bool,
+    pub enable_consensus: bool,
+    pub consensus_config: ConsensusConfig,
 }
 
 impl Default for GameRuntimeConfig {
@@ -34,6 +38,8 @@ impl Default for GameRuntimeConfig {
             max_bet: 1_000_000,
             treasury_rake: 0.01, // 1% rake
             enable_anti_cheat: true,
+            enable_consensus: true,
+            consensus_config: ConsensusConfig::default(),
         }
     }
 }
@@ -48,6 +54,10 @@ pub struct GameRuntime {
     games: Arc<RwLock<HashMap<GameId, ActiveGame>>>,
     player_balances: Arc<RwLock<HashMap<PeerId, CrapTokens>>>,
     treasury_balance: Arc<RwLock<CrapTokens>>,
+    
+    // Consensus engines for each active game
+    consensus_engines: Arc<RwLock<HashMap<GameId, ConsensusEngine>>>,
+    local_peer_id: PeerId,
     
     // Event channels
     event_tx: broadcast::Sender<GameEvent>,
@@ -67,12 +77,18 @@ pub struct ActiveGame {
     pub total_pot: CrapTokens,
     pub rounds_played: u32,
     pub is_suspended: bool,
+    pub consensus_enabled: bool,
+    pub pending_consensus_operations: Vec<GameOperation>,
 }
 
 /// Events emitted by the gaming runtime
 #[derive(Debug, Clone)]
 pub enum GameEvent {
     GameCreated { game_id: GameId, creator: PeerId },
+    ConsensusProposal { game_id: GameId, proposal: GameProposal },
+    ConsensusReached { game_id: GameId, operation: GameOperation },
+    DisputeRaised { game_id: GameId, dispute_id: [u8; 32], claim: DisputeClaim },
+    ForkDetected { game_id: GameId, fork_state: [u8; 32] },
     PlayerJoined { game_id: GameId, player: PeerId },
     PlayerLeft { game_id: GameId, player: PeerId },
     BetPlaced { game_id: GameId, player: PeerId, bet: Bet },
@@ -118,7 +134,7 @@ pub struct GameStats {
 
 impl GameRuntime {
     /// Create a new game runtime
-    pub fn new(config: GameRuntimeConfig) -> (Self, mpsc::Sender<GameCommand>) {
+    pub fn new(config: GameRuntimeConfig, local_peer_id: PeerId) -> (Self, mpsc::Sender<GameCommand>) {
         let (event_tx, _) = broadcast::channel(1000);
         let (command_tx, command_rx) = mpsc::channel(100);
         
@@ -127,6 +143,8 @@ impl GameRuntime {
             games: Arc::new(RwLock::new(HashMap::new())),
             player_balances: Arc::new(RwLock::new(HashMap::new())),
             treasury_balance: Arc::new(RwLock::new(CrapTokens::new_unchecked(1_000_000_000))), // 1B initial
+            consensus_engines: Arc::new(RwLock::new(HashMap::new())),
+            local_peer_id,
             event_tx,
             command_rx,
             stats: Arc::new(RwLock::new(GameStats::default())),
@@ -207,15 +225,32 @@ impl GameRuntime {
         let _ = game.add_player(crate::TREASURY_ADDRESS);
         
         let active_game = ActiveGame {
-            game,
+            game: game.clone(),
             created_at: Instant::now(),
             last_activity: Instant::now(),
             total_pot: CrapTokens::new_unchecked(0),
             rounds_played: 0,
             is_suspended: false,
+            consensus_enabled: self.config.enable_consensus,
+            pending_consensus_operations: Vec::new(),
         };
         
         games.insert(game_id, active_game);
+        
+        // Initialize consensus engine if enabled
+        if self.config.enable_consensus {
+            let participants = vec![creator, crate::TREASURY_ADDRESS];
+            let consensus_engine = ConsensusEngine::new(
+                self.config.consensus_config.clone(),
+                game_id,
+                participants,
+                self.local_peer_id,
+                game,
+            )?;
+            
+            let mut consensus_engines = self.consensus_engines.write().await;
+            consensus_engines.insert(game_id, consensus_engine);
+        }
         
         // Update stats
         let mut stats = self.stats.write().await;
@@ -276,8 +311,20 @@ impl GameRuntime {
             return Err(Error::InsufficientBalance);
         }
         
+        // Check if consensus is enabled for this game
+        let games = self.games.read().await;
+        let game = games.get(&game_id)
+            .ok_or_else(|| Error::GameNotFound)?;
+        
+        if game.consensus_enabled && self.config.enable_consensus {
+            drop(games);
+            return self.place_bet_with_consensus(game_id, player, bet).await;
+        }
+        
         // Deduct bet amount
         *balance = CrapTokens::new_unchecked(balance.amount() - bet.amount.amount());
+        drop(balances);
+        drop(games);
         
         // Add bet to game
         let mut games = self.games.write().await;
@@ -298,13 +345,58 @@ impl GameRuntime {
         Ok(())
     }
     
+    /// Place a bet using consensus mechanism
+    async fn place_bet_with_consensus(&self, game_id: GameId, player: PeerId, bet: Bet) -> Result<()> {
+        let mut consensus_engines = self.consensus_engines.write().await;
+        let consensus_engine = consensus_engines.get_mut(&game_id)
+            .ok_or_else(|| Error::GameError("Consensus engine not found".into()))?;
+        
+        // Create bet operation for consensus
+        let operation = GameOperation::PlaceBet {
+            player,
+            bet: bet.clone(),
+            nonce: rand::random(),
+        };
+        
+        // Propose the operation to consensus
+        let proposal_id = consensus_engine.propose_operation(operation.clone())?;
+        
+        // Note: In a real implementation, we would emit the proposal to other peers
+        // The consensus engine handles the proposal internally
+        let _ = self.event_tx.send(GameEvent::ConsensusProposal {
+            game_id,
+            proposal: GameProposal {
+                id: proposal_id,
+                proposer: player,
+                previous_state_hash: [0u8; 32], // Placeholder
+                proposed_state: consensus_engine.get_current_state().clone(),
+                operation,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                signature: super::Signature([0u8; 64]), // Placeholder
+            },
+        });
+        
+        Ok(())
+    }
+    
     /// Process a dice roll
-    async fn roll_dice(&self, game_id: GameId, _shooter: PeerId) -> Result<()> {
+    async fn roll_dice(&self, game_id: GameId, shooter: PeerId) -> Result<()> {
+        let games = self.games.read().await;
+        let game = games.get(&game_id)
+            .ok_or_else(|| Error::GameNotFound)?;
+        
+        if game.consensus_enabled && self.config.enable_consensus {
+            drop(games);
+            return self.roll_dice_with_consensus(game_id, shooter).await;
+        }
+        drop(games);
+        
         let mut games = self.games.write().await;
         let game = games.get_mut(&game_id)
             .ok_or_else(|| Error::GameNotFound)?;
-        
-        // TODO: Add shooter validation when field is added
         
         // Generate secure random roll
         let roll = DiceRoll::new(
@@ -313,7 +405,6 @@ impl GameRuntime {
         );
         
         // Process roll
-        // Extract the roll value for later use
         let dice_roll = roll?;
         let resolutions = game.game.process_roll(dice_roll);
         game.last_activity = Instant::now();
@@ -368,7 +459,40 @@ impl GameRuntime {
         
         // Check if game should end
         if game.game.current_phase == GamePhase::GameEnded {
+            drop(games);
             self.end_game(game_id, "Game completed".to_string()).await?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Roll dice using consensus mechanism (commit-reveal)
+    async fn roll_dice_with_consensus(&self, game_id: GameId, _shooter: PeerId) -> Result<()> {
+        let mut consensus_engines = self.consensus_engines.write().await;
+        let consensus_engine = consensus_engines.get_mut(&game_id)
+            .ok_or_else(|| Error::GameError("Consensus engine not found".into()))?;
+        
+        // Start commit phase for this round
+        let round_id = consensus_engine.get_current_state().sequence_number + 1;
+        let commitment = consensus_engine.start_dice_commit_phase(round_id)?;
+        
+        // In a real implementation, this would broadcast the commitment to all players
+        // and wait for all commitments before proceeding to reveal phase
+        
+        Ok(())
+    }
+    
+    /// Process consensus proposal from another peer
+    pub async fn process_consensus_proposal(&self, game_id: GameId, proposal: GameProposal) -> Result<()> {
+        let mut consensus_engines = self.consensus_engines.write().await;
+        let consensus_engine = consensus_engines.get_mut(&game_id)
+            .ok_or_else(|| Error::GameError("Consensus engine not found".into()))?;
+        
+        let accepted = consensus_engine.process_proposal(proposal)?;
+        
+        if accepted {
+            // Check if consensus was reached
+            // This would trigger the actual game state update
         }
         
         Ok(())
@@ -523,6 +647,64 @@ impl GameRuntime {
             .get(player)
             .copied()
             .unwrap_or_else(|| CrapTokens::new_unchecked(0))
+    }
+    
+    /// Raise a dispute about game state
+    pub async fn raise_dispute(
+        &self, 
+        game_id: GameId, 
+        claim: DisputeClaim, 
+        evidence: Vec<super::consensus::DisputeEvidence>
+    ) -> Result<[u8; 32]> {
+        let mut consensus_engines = self.consensus_engines.write().await;
+        let consensus_engine = consensus_engines.get_mut(&game_id)
+            .ok_or_else(|| Error::GameError("Consensus engine not found".into()))?;
+        
+        let dispute_id = consensus_engine.raise_dispute(claim.clone(), evidence)?;
+        
+        // Emit dispute event
+        let _ = self.event_tx.send(GameEvent::DisputeRaised {
+            game_id,
+            dispute_id,
+            claim,
+        });
+        
+        Ok(dispute_id)
+    }
+    
+    /// Vote on a dispute
+    pub async fn vote_on_dispute(
+        &self,
+        game_id: GameId,
+        dispute_id: [u8; 32],
+        vote: super::consensus::DisputeVoteType,
+        rationale: String,
+    ) -> Result<()> {
+        let mut consensus_engines = self.consensus_engines.write().await;
+        let consensus_engine = consensus_engines.get_mut(&game_id)
+            .ok_or_else(|| Error::GameError("Consensus engine not found".into()))?;
+        
+        consensus_engine.vote_on_dispute(dispute_id, vote, rationale)?;
+        
+        Ok(())
+    }
+    
+    /// Get consensus metrics for a game
+    pub async fn get_consensus_metrics(&self, game_id: GameId) -> Result<super::consensus::ConsensusMetrics> {
+        let consensus_engines = self.consensus_engines.read().await;
+        let consensus_engine = consensus_engines.get(&game_id)
+            .ok_or_else(|| Error::GameError("Consensus engine not found".into()))?;
+        
+        Ok(consensus_engine.get_metrics().clone())
+    }
+    
+    /// Check if consensus is healthy for a game
+    pub async fn is_consensus_healthy(&self, game_id: GameId) -> Result<bool> {
+        let consensus_engines = self.consensus_engines.read().await;
+        let consensus_engine = consensus_engines.get(&game_id)
+            .ok_or_else(|| Error::GameError("Consensus engine not found".into()))?;
+        
+        Ok(consensus_engine.is_consensus_healthy())
     }
 }
 

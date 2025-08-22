@@ -346,6 +346,115 @@ impl TokenLedger {
         }
     }
     
+    /// Process relay reward for message forwarding
+    pub async fn process_relay_reward(
+        &self,
+        relayer: PeerId,
+        messages_relayed: u64,
+    ) -> Result<[u8; 32]> {
+        let mut accounts = self.accounts.write().await;
+        
+        // Calculate reward amount based on messages relayed
+        let base_reward_per_message = self.mining_config.base_reward / 10; // 0.01 CRAP per message
+        let reward_amount = messages_relayed * base_reward_per_message;
+        
+        // Create or get relayer account
+        let account = accounts.entry(relayer).or_insert_with(|| Account {
+            peer_id: relayer,
+            balance: 0,
+            staked_amount: 0,
+            pending_rewards: 0,
+            transaction_count: 0,
+            reputation: 0.5,
+            last_activity: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        });
+        
+        // Add reward to balance
+        account.balance += reward_amount;
+        account.reputation = (account.reputation + 0.01).min(1.0); // Increase reputation
+        account.last_activity = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        
+        // Create proof of relay for transaction record
+        let relay_proof = RelayProof {
+            relayer,
+            packet_hash: self.generate_packet_hash(messages_relayed),
+            source: [0u8; 32], // Would be filled with actual source
+            destination: [0u8; 32], // Would be filled with actual destination
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            hop_count: 1, // Default hop count
+            signature: crate::crypto::BitchatSignature {
+                signature: vec![0u8; 64], // Would be actual signature
+                public_key: relayer.to_vec(),
+            },
+        };
+        
+        // Create transaction record
+        let transaction = TokenTransaction {
+            id: self.generate_transaction_id(),
+            transaction_type: TransactionType::RelayReward {
+                relayer,
+                amount: reward_amount,
+                proof: relay_proof,
+            },
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            nonce: account.transaction_count,
+            fee: 0,
+            signature: None,
+            confirmations: 1,
+        };
+        
+        let tx_id = transaction.id;
+        self.transactions.write().await.push(transaction);
+        
+        // Update total supply with newly minted tokens
+        *self.total_supply.write().await += reward_amount;
+        
+        log::info!("Relay reward: {} CRAP to {:?} for {} messages relayed", 
+                  CrapTokens::new_unchecked(reward_amount).to_crap(), relayer, messages_relayed);
+        
+        // Emit event
+        let _ = self.event_sender.send(TokenEvent::RewardMinted {
+            recipient: relayer,
+            amount: reward_amount,
+            reason: format!("Relay reward for {} messages", messages_relayed),
+        });
+        
+        Ok(tx_id)
+    }
+    
+    /// Get treasury balance
+    pub async fn get_treasury_balance(&self) -> u64 {
+        *self.treasury_balance.read().await
+    }
+    
+    /// Generate a packet hash for relay proof (placeholder implementation)
+    fn generate_packet_hash(&self, seed: u64) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(seed.to_be_bytes());
+        hasher.update(SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+            .to_be_bytes());
+        
+        let result = hasher.finalize();
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&result);
+        hash
+    }
+    
     /// Distribute staking rewards (simplified)
     pub async fn distribute_staking_rewards(&self) -> Result<()> {
         // Simplified implementation - in production would be more complex
@@ -365,6 +474,147 @@ impl ProofOfRelay {
                 average_relay_time: Duration::from_secs(0),
             })),
         }
+    }
+    
+    /// Record a relay event for mining rewards
+    pub async fn record_relay(
+        &self,
+        relayer: PeerId,
+        packet_hash: [u8; 32],
+        source: PeerId,
+        destination: PeerId,
+        hop_count: u8,
+    ) -> Result<()> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        
+        let relay_entry = RelayEntry {
+            relayer,
+            packet_hash,
+            relay_path: vec![source, relayer, destination],
+            timestamp,
+            reward_claimed: false,
+        };
+        
+        // Store relay entry
+        self.relay_log.write().await.insert(packet_hash, relay_entry);
+        
+        // Update mining stats
+        {
+            let mut stats = self.mining_stats.write().await;
+            stats.total_relays += 1;
+        }
+        
+        // Calculate and distribute reward based on hop distance
+        let reward_multiplier = match hop_count {
+            1 => 1, // Direct relay
+            2..=3 => 2, // Medium distance
+            4..=6 => 3, // Long distance
+            _ => 4, // Very long distance (max multiplier)
+        };
+        
+        let base_reward = self.ledger.mining_config.base_reward / 100; // 0.001 CRAP base
+        let reward_amount = base_reward * reward_multiplier;
+        
+        // Process relay reward through ledger
+        if let Ok(_tx_id) = self.ledger.process_relay_reward(relayer, reward_amount).await {
+            // Mark reward as claimed
+            if let Some(entry) = self.relay_log.write().await.get_mut(&packet_hash) {
+                entry.reward_claimed = true;
+            }
+            
+            // Update stats
+            let mut stats = self.mining_stats.write().await;
+            stats.total_rewards_distributed += reward_amount;
+        }
+        
+        Ok(())
+    }
+    
+    /// Update relay score for a peer (for testing purposes)
+    pub async fn update_relay_score(&self, peer_id: PeerId, score_delta: i32) {
+        // This method is used by tests to simulate relay activity
+        // In a real implementation, this would track peer reliability scores
+        log::info!("Updated relay score for peer {:?} by {}", peer_id, score_delta);
+        
+        // Update active relayers count
+        let mut stats = self.mining_stats.write().await;
+        if score_delta > 0 {
+            stats.active_relayers = stats.active_relayers.saturating_add(1);
+        }
+    }
+    
+    /// Process accumulated relay rewards for a peer
+    pub async fn process_accumulated_rewards(&self, peer_id: PeerId) -> Result<u64> {
+        let relay_log = self.relay_log.read().await;
+        
+        // Count unrewarded relays for this peer
+        let unrewarded_count = relay_log
+            .values()
+            .filter(|entry| entry.relayer == peer_id && !entry.reward_claimed)
+            .count() as u64;
+        
+        drop(relay_log);
+        
+        if unrewarded_count > 0 {
+            // Process rewards through ledger
+            if let Ok(_tx_id) = self.ledger.process_relay_reward(peer_id, unrewarded_count).await {
+                // Mark all relays as rewarded
+                let mut relay_log = self.relay_log.write().await;
+                for entry in relay_log.values_mut() {
+                    if entry.relayer == peer_id && !entry.reward_claimed {
+                        entry.reward_claimed = true;
+                    }
+                }
+                
+                let reward_amount = unrewarded_count * self.ledger.mining_config.base_reward / 10;
+                return Ok(reward_amount);
+            }
+        }
+        
+        Ok(0)
+    }
+    
+    /// Adjust mining difficulty based on network activity
+    pub async fn adjust_mining_difficulty(&self) -> Result<()> {
+        let stats = self.mining_stats.read().await;
+        let current_activity = stats.total_relays;
+        drop(stats);
+        
+        // Simple difficulty adjustment based on activity
+        // In a real implementation, this would be more sophisticated
+        if current_activity > 1000 {
+            log::info!("High network activity detected, adjusting mining difficulty");
+        } else if current_activity < 100 {
+            log::info!("Low network activity detected, adjusting mining difficulty");
+        }
+        
+        Ok(())
+    }
+    
+    /// Clean up old relay entries
+    pub async fn cleanup_old_entries(&self) -> Result<()> {
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        
+        let mut relay_log = self.relay_log.write().await;
+        let old_count = relay_log.len();
+        
+        // Remove entries older than 1 hour
+        relay_log.retain(|_hash, entry| {
+            current_time - entry.timestamp < 3600
+        });
+        
+        let removed = old_count - relay_log.len();
+        if removed > 0 {
+            log::info!("Cleaned up {} old relay entries", removed);
+        }
+        
+        Ok(())
     }
     
     /// Get mining statistics

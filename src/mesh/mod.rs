@@ -28,6 +28,7 @@ use crate::protocol::{PeerId, BitchatPacket, RoutingInfo};
 use crate::transport::{TransportCoordinator, TransportEvent};
 use crate::crypto::BitchatIdentity;
 use crate::error::{Error, Result};
+use crate::token::ProofOfRelay;
 
 /// Maximum number of messages to cache for deduplication
 const MAX_MESSAGE_CACHE_SIZE: usize = 10000;
@@ -41,6 +42,7 @@ pub struct MeshService {
     message_cache: Arc<RwLock<LruCache<u64, CachedMessage>>>,
     event_sender: mpsc::UnboundedSender<MeshEvent>,
     is_running: Arc<RwLock<bool>>,
+    proof_of_relay: Option<Arc<ProofOfRelay>>,
 }
 
 /// Information about a mesh peer
@@ -102,7 +104,13 @@ impl MeshService {
             )),
             event_sender,
             is_running: Arc::new(RwLock::new(false)),
+            proof_of_relay: None,
         }
+    }
+    
+    /// Set the proof of relay system for mining rewards
+    pub fn set_proof_of_relay(&mut self, proof_of_relay: Arc<ProofOfRelay>) {
+        self.proof_of_relay = Some(proof_of_relay);
     }
     
     /// Start the mesh service
@@ -296,6 +304,24 @@ impl MeshService {
             let mut forwarded_packet = packet;
             forwarded_packet.decrement_ttl();
             
+            // Record relay event for mining rewards
+            if let Some(proof_of_relay) = &self.proof_of_relay {
+                let packet_hash = self.calculate_packet_hash_for_relay(&forwarded_packet);
+                let source = forwarded_packet.get_sender().unwrap_or([0u8; 32]);
+                let destination = forwarded_packet.get_receiver().unwrap_or([0u8; 32]);
+                let hop_count = 8 - forwarded_packet.ttl; // Calculate hops so far
+                
+                if let Err(e) = proof_of_relay.record_relay(
+                    self.identity.peer_id,
+                    packet_hash,
+                    source,
+                    destination,
+                    hop_count,
+                ).await {
+                    log::warn!("Failed to record relay for mining: {}", e);
+                }
+            }
+            
             if let Some(destination) = forwarded_packet.get_receiver() {
                 let _ = Box::pin(self.route_packet_to_peer(forwarded_packet, destination)).await;
             } else {
@@ -453,6 +479,28 @@ impl MeshService {
     /// Calculate hash of packet for deduplication
     fn calculate_packet_hash(&self, packet: &BitchatPacket) -> u64 {
         Self::calculate_packet_hash_static(packet)
+    }
+    
+    /// Calculate packet hash for relay tracking (256-bit hash)
+    fn calculate_packet_hash_for_relay(&self, packet: &BitchatPacket) -> [u8; 32] {
+        use sha2::{Sha256, Digest};
+        
+        let mut hasher = Sha256::new();
+        hasher.update(&[packet.version, packet.packet_type, packet.flags, packet.ttl]);
+        hasher.update(&packet.total_length.to_be_bytes());
+        hasher.update(&packet.sequence.to_be_bytes());
+        
+        // Add TLV data to hash
+        for tlv in &packet.tlv_data {
+            hasher.update(&[tlv.field_type]);
+            hasher.update(&tlv.length.to_be_bytes());
+            hasher.update(&tlv.value);
+        }
+        
+        let result = hasher.finalize();
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&result);
+        hash
     }
     
     /// Static version of calculate_packet_hash

@@ -83,9 +83,7 @@ impl BitCrapsApp {
         // Step 5: Initialize mesh service
         println!("🕸️ Starting mesh networking service...");
         let session_manager = BitchatSessionManager::new(Default::default());
-        let mesh_service = Arc::new(
-            MeshService::new(identity.clone(), transport_coordinator.clone())
-        );
+        let mut mesh_service = MeshService::new(identity.clone(), transport_coordinator.clone());
         
         // Step 6: Setup discovery
         println!("🔍 Starting peer discovery...");
@@ -102,6 +100,10 @@ impl BitCrapsApp {
         // Step 8: Setup proof-of-relay consensus
         println!("⚡ Initializing proof-of-relay consensus...");
         let proof_of_relay = Arc::new(ProofOfRelay::new(ledger.clone()));
+        
+        // Wire up proof of relay to mesh service
+        mesh_service.set_proof_of_relay(proof_of_relay.clone());
+        let mesh_service = Arc::new(mesh_service);
         
         // Step 9: Start mesh service
         mesh_service.start().await?;
@@ -209,6 +211,7 @@ impl BitCrapsApp {
     /// the more tokens you earn. It's capitalism for routers!
     async fn start_mining_rewards(&self) -> Result<()> {
         let ledger = self.ledger.clone();
+        let proof_of_relay = self.proof_of_relay.clone();
         let peer_id = self.identity.peer_id;
         
         tokio::spawn(async move {
@@ -217,11 +220,27 @@ impl BitCrapsApp {
             loop {
                 interval.tick().await;
                 
+                // Process relay rewards
+                if let Ok(reward_amount) = proof_of_relay.process_accumulated_rewards(peer_id).await {
+                    if reward_amount > 0 {
+                        println!("⚡ Earned {} CRAP tokens for relaying messages", 
+                               CrapTokens::new_unchecked(reward_amount).to_crap());
+                    }
+                }
+                
                 // Process staking rewards (existing method)
                 if let Err(e) = ledger.distribute_staking_rewards().await {
-                    warn!("Failed to distribute mining rewards: {}", e);
-                } else {
-                    println!("⛏️ Processed mining rewards for network participation");
+                    warn!("Failed to distribute staking rewards: {}", e);
+                }
+                
+                // Adjust mining difficulty based on network activity
+                if let Err(e) = proof_of_relay.adjust_mining_difficulty().await {
+                    warn!("Failed to adjust mining difficulty: {}", e);
+                }
+                
+                // Clean up old relay entries
+                if let Err(e) = proof_of_relay.cleanup_old_entries().await {
+                    warn!("Failed to cleanup old relay entries: {}", e);
                 }
             }
         });
