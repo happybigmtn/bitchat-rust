@@ -26,6 +26,27 @@ pub enum Error {
     #[error("Invalid data: {0}")]
     InvalidData(String),
     
+    #[error("Game error: {0}")]
+    GameError(String),
+    
+    #[error("Game not found")]
+    GameNotFound,
+    
+    #[error("Invalid bet: {0}")]
+    InvalidBet(String),
+    
+    #[error("Insufficient balance")]
+    InsufficientBalance,
+    
+    #[error("Session not found")]
+    SessionNotFound,
+    
+    #[error("Invalid state: {0}")]
+    InvalidState(String),
+    
+    #[error("Noise protocol error: {0}")]
+    Noise(#[from] snow::Error),
+    
     #[error("Unknown error: {0}")]
     Unknown(String),
 }

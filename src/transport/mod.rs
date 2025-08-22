@@ -8,12 +8,13 @@
 
 pub mod bluetooth;
 pub mod traits;
+pub mod kademlia;
+pub mod pow_identity;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use async_trait::async_trait;
 use serde::{Serialize, Deserialize};
 
 use crate::protocol::{PeerId, BitchatPacket};
@@ -41,6 +42,7 @@ pub enum TransportEvent {
 }
 
 /// Transport coordinator managing multiple transport types
+#[allow(dead_code)]
 pub struct TransportCoordinator {
     bluetooth: Option<Arc<RwLock<BluetoothTransport>>>,
     connections: Arc<RwLock<HashMap<PeerId, TransportAddress>>>,

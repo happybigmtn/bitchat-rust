@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
 use async_trait::async_trait;
-use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter, Characteristic};
+use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
 use btleplug::platform::{Adapter, Manager, Peripheral};
 use futures::stream::StreamExt;
 use uuid::Uuid;
@@ -15,10 +15,12 @@ use crate::transport::{Transport, TransportAddress, TransportEvent};
 
 /// BitCraps GATT Service UUID
 const BITCRAPS_SERVICE_UUID: Uuid = Uuid::from_u128(0x12345678_1234_5678_1234_567812345678);
+#[allow(dead_code)]
 const BITCRAPS_RX_CHAR_UUID: Uuid = Uuid::from_u128(0x12345678_1234_5678_1234_567812345679);
 const BITCRAPS_TX_CHAR_UUID: Uuid = Uuid::from_u128(0x12345678_1234_5678_1234_567812345680);
 
 /// Bluetooth mesh transport implementation
+#[allow(dead_code)]
 pub struct BluetoothTransport {
     manager: Manager,
     adapter: Option<Adapter>,
@@ -31,6 +33,7 @@ pub struct BluetoothTransport {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct DiscoveredPeer {
     device_id: String,
     peer_id: Option<PeerId>,
@@ -79,10 +82,10 @@ impl BluetoothTransport {
             adapter.start_scan(ScanFilter::default()).await?;
             
             let mut events = adapter.events().await?;
-            let connections = self.connections.clone();
-            let event_sender = self.event_sender.clone();
+            let _connections = self.connections.clone();
+            let _event_sender = self.event_sender.clone();
             let is_scanning = self.is_scanning.clone();
-            let discovered_peers = self.discovered_peers.clone();
+            let _discovered_peers = self.discovered_peers.clone();
             
             tokio::spawn(async move {
                 while *is_scanning.read().await {
@@ -140,6 +143,7 @@ impl BluetoothTransport {
     }
     
     /// Handle incoming data from a peer
+    #[allow(dead_code)]
     async fn handle_incoming_data(&self, peer_id: PeerId, data: Vec<u8>) {
         // Send event to application layer
         let _ = self.event_sender.send(TransportEvent::DataReceived {
@@ -271,7 +275,7 @@ impl BluetoothMeshCoordinator {
         // Check if we have direct connection
         if self.transport.is_connected(&target) {
             let mut serialized_packet = packet.clone();
-            let data = serialized_packet.serialize()
+            let _data = serialized_packet.serialize()
                 .map_err(|e| format!("Packet serialization failed: {}", e))?;
             return self.transport.send_over_ble(target, packet).await;
         }

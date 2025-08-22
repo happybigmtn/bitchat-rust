@@ -5,6 +5,16 @@
 //! - Peer management and discovery
 //! - Message routing and forwarding
 //! - Network topology management
+//! - Game session management
+//! - Anti-cheat monitoring
+//! - Message deduplication
+
+pub mod service;
+pub mod components;
+pub mod deduplication;
+pub mod message_queue;
+pub mod game_session;
+pub mod anti_cheat;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -52,6 +62,7 @@ pub struct RouteInfo {
 }
 
 /// Cached message to prevent loops
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct CachedMessage {
     packet_hash: u64,
@@ -289,10 +300,10 @@ impl MeshService {
     
     /// Start peer discovery task
     async fn start_peer_discovery(&self) {
-        let transport = self.transport.clone();
-        let peers = self.peers.clone();
+        let _transport = self.transport.clone();
+        let _peers = self.peers.clone();
         let is_running = self.is_running.clone();
-        let event_sender = self.event_sender.clone();
+        let _event_sender = self.event_sender.clone();
         
         tokio::spawn(async move {
             let mut discovery_interval = interval(Duration::from_secs(30));
@@ -310,7 +321,7 @@ impl MeshService {
     /// Start route maintenance task
     async fn start_route_maintenance(&self) {
         let routing_table = self.routing_table.clone();
-        let peers = self.peers.clone();
+        let _peers = self.peers.clone();
         let is_running = self.is_running.clone();
         
         tokio::spawn(async move {
@@ -426,6 +437,7 @@ impl MeshService {
     }
     
     /// Static version of calculate_packet_hash
+    #[allow(dead_code)]
     fn calculate_packet_hash_original(&self, packet: &BitchatPacket) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};

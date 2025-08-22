@@ -2,13 +2,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{interval, sleep};
 use clap::{Parser, Subcommand};
-use log::{info, warn, error};
+use log::{info, warn};
 
 use bitcraps::{
     BitchatIdentity, TransportCoordinator, MeshService, SessionManager, 
     TokenLedger, ProofOfRelay, CrapsGame, TreasuryParticipant, 
     AppConfig, Result, Error, GameId, PeerId, CrapTokens, BetType,
-    TREASURY_ADDRESS, PacketUtils, PACKET_TYPE_GAME_CREATE,
+    TREASURY_ADDRESS, PacketUtils,
 };
 
 #[derive(Parser)]
@@ -62,6 +62,7 @@ enum Commands {
 }
 
 /// Main BitCraps application bringing all components together
+#[allow(dead_code)]
 pub struct BitCrapsApp {
     identity: Arc<BitchatIdentity>,
     transport: Arc<TransportCoordinator>,

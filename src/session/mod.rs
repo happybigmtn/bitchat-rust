@@ -4,13 +4,18 @@
 //! - Basic session lifecycle management  
 //! - Simple encrypted channel communication
 //! - Session persistence and recovery (simplified)
+//! - Noise protocol integration
+//! - Forward secrecy with key rotation
+
+pub mod noise;
+pub mod state;
+pub mod lifecycle;
+pub mod forward_secrecy;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
-use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
 
 use crate::protocol::PeerId;
 use crate::crypto::BitchatKeypair;

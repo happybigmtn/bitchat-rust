@@ -21,6 +21,7 @@ pub mod mesh;         // Mesh networking coordination
 pub mod gaming;       // Gaming protocol and craps implementation
 pub mod session;      // Session management with Noise protocol
 pub mod token;        // Token economics and CRAP tokens
+pub mod ui;           // User interface (CLI and TUI)
 
 // Re-export commonly used types for easy access
 pub use error::{Error, Result};
@@ -45,6 +46,9 @@ pub use session::{
 };
 pub use token::{
     TokenLedger, ProofOfRelay, Account, TransactionType,
+};
+pub use ui::{
+    Cli, Commands,
 };
 
 /// Application configuration

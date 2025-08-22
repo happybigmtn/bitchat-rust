@@ -8,15 +8,34 @@
 //! - Mesh routing with TTL management
 //! - Session management integration
 
-use std::collections::HashMap;
-use std::io::{self, Read, Write};
+pub mod binary;
+pub mod craps;
+
+use std::collections::HashSet;
+use std::io::{Read, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::error::{Error, Result};
+
+// Protocol constants
+pub const NONCE_SIZE: usize = 32;
+pub const COMMITMENT_SIZE: usize = 32;
+pub const SIGNATURE_SIZE: usize = 64;
+
+// Flag bit positions
+pub const FLAG_RECIPIENT_PRESENT: u8 = 0x01;    // Bit 0
+pub const FLAG_SIGNATURE_PRESENT: u8 = 0x02;    // Bit 1
+pub const FLAG_PAYLOAD_COMPRESSED: u8 = 0x04;   // Bit 2
+pub const FLAG_GAMING_MESSAGE: u8 = 0x08;       // Bit 3
+// Bits 4-7 reserved for future use
+
+// Gaming constants
+pub const INITIAL_CRAP_TOKENS: u64 = 1000;
+pub const MIN_BET_AMOUNT: u64 = 1;
+pub const MAX_BET_AMOUNT: u64 = 100;
 
 /// Peer identifier - 32 bytes for Ed25519 public key compatibility
 pub type PeerId = [u8; 32];
@@ -24,10 +43,28 @@ pub type PeerId = [u8; 32];
 /// Game identifier - 16 bytes UUID
 pub type GameId = [u8; 16];
 
+/// Helper function to create a new GameId
+pub fn new_game_id() -> GameId {
+    let mut game_id = [0u8; 16];
+    use rand::RngCore;
+    rand::thread_rng().fill_bytes(&mut game_id);
+    game_id
+}
+
 /// Packet type constants for BitCraps protocol
 pub const PACKET_TYPE_PING: u8 = 0x01;
 pub const PACKET_TYPE_PONG: u8 = 0x02;
 pub const PACKET_TYPE_CHAT: u8 = 0x10;
+// Missing gaming packet types (0x18-0x1F)
+pub const PACKET_TYPE_RANDOMNESS_COMMIT: u8 = 0x18;
+pub const PACKET_TYPE_RANDOMNESS_REVEAL: u8 = 0x19;
+pub const PACKET_TYPE_GAME_PHASE_CHANGE: u8 = 0x1A;
+pub const PACKET_TYPE_PLAYER_READY: u8 = 0x1B;
+pub const PACKET_TYPE_CONSENSUS_VOTE: u8 = 0x1C;
+pub const PACKET_TYPE_DISPUTE_CLAIM: u8 = 0x1D;
+pub const PACKET_TYPE_PAYOUT_CLAIM: u8 = 0x1E;
+pub const PACKET_TYPE_GAME_COMPLETE: u8 = 0x1F;
+// Standard gaming packet types
 pub const PACKET_TYPE_GAME_CREATE: u8 = 0x20;
 pub const PACKET_TYPE_GAME_JOIN: u8 = 0x21;
 pub const PACKET_TYPE_GAME_BET: u8 = 0x22;
@@ -52,6 +89,10 @@ pub const TLV_TYPE_REVEAL: u8 = 0x15;
 pub const TLV_TYPE_SIGNATURE: u8 = 0x16;
 pub const TLV_TYPE_COMPRESSED_PAYLOAD: u8 = 0x80;
 pub const TLV_TYPE_ROUTING_INFO: u8 = 0x81;
+pub const TLV_TYPE_SOURCE_ID: u8 = 0x82;
+pub const TLV_TYPE_TARGET_ID: u8 = 0x83;
+pub const TLV_TYPE_SEQUENCE: u8 = 0x84;
+pub const TLV_TYPE_PAYLOAD: u8 = 0x85;
 
 /// BitCraps packet structure
 #[derive(Debug, Clone, PartialEq)]
@@ -63,6 +104,11 @@ pub struct BitchatPacket {
     pub total_length: u16,
     pub checksum: u16,
     pub tlv_data: Vec<TlvField>,
+    // Convenience fields extracted from TLV
+    pub source: PeerId,
+    pub target: PeerId,
+    pub sequence: u32,
+    pub payload: Option<Vec<u8>>,
 }
 
 /// TLV field structure
@@ -74,23 +120,164 @@ pub struct TlvField {
 }
 
 /// Gaming-specific data structures
+/// Feynman: Every possible way to bet on dice - from simple to complex
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum BetType {
-    Pass = 0,
-    DontPass = 1,
-    Field = 2,
-    Any7 = 3,
-    AnyCraps = 4,
-    Hardways(u8) = 5,
-    Place(u8) = 6,
-    Come = 7,
-    DontCome = 8,
+    // Core Line Bets (0-3)
+    // Feynman: These are the "main story" of craps - will the shooter succeed or fail?
+    Pass = 0,           // Pass Line: Shooter wins
+    DontPass = 1,       // Don't Pass: Shooter loses  
+    Come = 2,           // Come: Like Pass but starts mid-game
+    DontCome = 3,       // Don't Come: Like Don't Pass mid-game
+    
+    // Field Bet (4)
+    // Feynman: A "scatter shot" bet covering many numbers in one wager
+    Field = 4,          // Field: 2,3,4,9,10,11,12 win
+    
+    // YES Bets - Number Before 7 (5-14)
+    // Feynman: "I bet this number shows up before a 7 does"
+    Yes2 = 5,           // 2 before 7
+    Yes3 = 6,           // 3 before 7
+    Yes4 = 7,           // 4 before 7
+    Yes5 = 8,           // 5 before 7
+    Yes6 = 9,           // 6 before 7
+    Yes8 = 10,          // 8 before 7 (no 7!)
+    Yes9 = 11,          // 9 before 7
+    Yes10 = 12,         // 10 before 7
+    Yes11 = 13,         // 11 before 7
+    Yes12 = 14,         // 12 before 7
+    
+    // NO Bets - 7 Before Number (15-24)
+    // Feynman: "I bet 7 shows up before this number does"
+    No2 = 15,           // 7 before 2
+    No3 = 16,           // 7 before 3
+    No4 = 17,           // 7 before 4
+    No5 = 18,           // 7 before 5
+    No6 = 19,           // 7 before 6
+    No8 = 20,           // 7 before 8
+    No9 = 21,           // 7 before 9
+    No10 = 22,          // 7 before 10
+    No11 = 23,          // 7 before 11
+    No12 = 24,          // 7 before 12
+    
+    // Hardways Bets (25-28)
+    // Feynman: "I bet this sum comes up as doubles (the hard way)"
+    Hard4 = 25,         // Hard 4 (2+2)
+    Hard6 = 26,         // Hard 6 (3+3)  
+    Hard8 = 27,         // Hard 8 (4+4)
+    Hard10 = 28,        // Hard 10 (5+5)
+    
+    // Odds Bets (29-32)
+    // Feynman: "True odds" bets with ZERO house edge - pure probability
+    OddsPass = 29,      // Pass line odds
+    OddsDontPass = 30,  // Don't pass odds
+    OddsCome = 31,      // Come bet odds
+    OddsDontCome = 32,  // Don't come odds
+    
+    // Special/Bonus Bets (33-42)
+    // Feynman: "Achievement" bets - like video game accomplishments
+    HotRoller = 33,         // Progressive win streak
+    Fire = 34,              // Make 4-6 unique points
+    TwiceHard = 35,         // Same hardway twice in a row
+    RideLine = 36,          // Pass line win streak
+    Muggsy = 37,            // 7 on comeout or after point
+    BonusSmall = 38,        // All 2-6 before any 7
+    BonusTall = 39,         // All 8-12 before any 7
+    BonusAll = 40,          // All numbers (2-12) except 7
+    Replay = 41,            // Same point 3+ times
+    DifferentDoubles = 42,  // All unique doubles before 7
+    
+    // NEXT Bets - One-Roll Proposition (43-53)
+    // Feynman: "Next roll only" bets - instant gratification gambling
+    Next2 = 43,         // Next roll is 2
+    Next3 = 44,         // Next roll is 3
+    Next4 = 45,         // Next roll is 4
+    Next5 = 46,         // Next roll is 5
+    Next6 = 47,         // Next roll is 6
+    Next7 = 48,         // Next roll is 7
+    Next8 = 49,         // Next roll is 8
+    Next9 = 50,         // Next roll is 9
+    Next10 = 51,        // Next roll is 10
+    Next11 = 52,        // Next roll is 11
+    Next12 = 53,        // Next roll is 12
+    
+    // Repeater Bets (54-63)
+    // Feynman: "Endurance" bets - can this number appear N times?
+    Repeater2 = 54,     // 2 must appear 2 times before 7
+    Repeater3 = 55,     // 3 must appear 3 times before 7
+    Repeater4 = 56,     // 4 must appear 4 times before 7
+    Repeater5 = 57,     // 5 must appear 5 times before 7
+    Repeater6 = 58,     // 6 must appear 6 times before 7
+    Repeater8 = 59,     // 8 must appear 6 times before 7
+    Repeater9 = 60,     // 9 must appear 5 times before 7
+    Repeater10 = 61,    // 10 must appear 4 times before 7
+    Repeater11 = 62,    // 11 must appear 3 times before 7
+    Repeater12 = 63,    // 12 must appear 2 times before 7
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CrapTokens {
-    amount: u64, // Amount in smallest unit (like satoshis)
+    pub amount: u64, // Amount in smallest unit (like satoshis)
+}
+
+impl CrapTokens {
+    pub fn new(amount: u64) -> Self {
+        Self { amount }
+    }
+    
+    pub fn amount(&self) -> u64 {
+        self.amount
+    }
+    
+    pub fn from_crap(crap: f64) -> Self {
+        Self {
+            amount: (crap * 1_000_000.0) as u64, // 1 CRAP = 1,000,000 units
+        }
+    }
+    
+    pub fn to_crap(&self) -> f64 {
+        self.amount as f64 / 1_000_000.0
+    }
+}
+
+/// Represents a dice roll result
+/// Feynman: Two cubes, each showing 1-6, determine everyone's fate
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiceRoll {
+    pub die1: u8,
+    pub die2: u8,
+    pub timestamp: u64,
+}
+
+impl DiceRoll {
+    pub fn new(die1: u8, die2: u8) -> Self {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        Self { die1, die2, timestamp }
+    }
+    
+    /// Feynman: The sum is what matters in craps - 2 through 12
+    pub fn total(&self) -> u8 {
+        self.die1 + self.die2
+    }
+    
+    /// Feynman: "Hard way" means doubles - harder to roll than mixed
+    pub fn is_hard_way(&self) -> bool {
+        self.die1 == self.die2 && [4, 6, 8, 10].contains(&self.total())
+    }
+    
+    /// Feynman: "Craps" are the losing numbers on comeout - 2, 3, or 12
+    pub fn is_craps(&self) -> bool {
+        matches!(self.total(), 2 | 3 | 12)
+    }
+    
+    /// Feynman: "Natural" winners on comeout - lucky 7 or 11
+    pub fn is_natural(&self) -> bool {
+        matches!(self.total(), 7 | 11)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -103,27 +290,26 @@ pub struct Bet {
     pub timestamp: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct DiceRoll {
-    pub die1: u8,
-    pub die2: u8,
-    pub total: u8,
-}
-
+/// Cryptographic commitment for fair randomness
+/// Feynman: Like putting your answer in a sealed envelope before the game starts
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RandomnessCommitment {
+    pub commitment: [u8; COMMITMENT_SIZE], // SHA256 hash of nonce
+    pub player_id: PeerId,
     pub game_id: GameId,
-    pub player: PeerId,
-    pub commitment: [u8; 32], // SHA256 hash of nonce
     pub round: u32,
+    pub timestamp: u64,
 }
 
+/// Reveal phase of commit-reveal protocol
+/// Feynman: Opening the envelope to prove you didn't cheat
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RandomnessReveal {
+    pub nonce: [u8; NONCE_SIZE],
+    pub player_id: PeerId,
     pub game_id: GameId,
-    pub player: PeerId,
-    pub nonce: [u8; 32],
     pub round: u32,
+    pub timestamp: u64,
 }
 
 /// Routing information for mesh networking
@@ -146,6 +332,10 @@ impl BitchatPacket {
             total_length: 0, // Will be calculated during serialization
             checksum: 0, // Will be calculated during serialization
             tlv_data: Vec::new(),
+            source: [0u8; 32],
+            target: [0u8; 32],
+            sequence: 0,
+            payload: None,
         }
     }
     
@@ -303,11 +493,7 @@ impl BitchatPacket {
     pub fn get_dice_roll(&self) -> Option<DiceRoll> {
         let tlv = self.get_tlv(TLV_TYPE_DICE_VALUE)?;
         if tlv.value.len() >= 2 {
-            Some(DiceRoll {
-                die1: tlv.value[0],
-                die2: tlv.value[1],
-                total: tlv.value[0] + tlv.value[1],
-            })
+            Some(DiceRoll::new(tlv.value[0], tlv.value[1]))
         } else {
             None
         }
@@ -433,6 +619,35 @@ impl BitchatPacket {
             bytes_read += 3 + length; // type(1) + length(2) + value
         }
         
+        // Extract convenience fields from TLV
+        let mut source = [0u8; 32];
+        let mut target = [0u8; 32];
+        let mut sequence = 0u32;
+        let mut payload = None;
+        
+        for field in &tlv_data {
+            match field.field_type {
+                TLV_TYPE_SOURCE_ID if field.value.len() == 32 => {
+                    source.copy_from_slice(&field.value);
+                }
+                TLV_TYPE_TARGET_ID if field.value.len() == 32 => {
+                    target.copy_from_slice(&field.value);
+                }
+                TLV_TYPE_SEQUENCE => {
+                    if field.value.len() >= 4 {
+                        sequence = u32::from_be_bytes([
+                            field.value[0], field.value[1], 
+                            field.value[2], field.value[3]
+                        ]);
+                    }
+                }
+                TLV_TYPE_PAYLOAD => {
+                    payload = Some(field.value.clone());
+                }
+                _ => {}
+            }
+        }
+        
         let packet = Self {
             version,
             packet_type,
@@ -441,6 +656,10 @@ impl BitchatPacket {
             total_length,
             checksum,
             tlv_data,
+            source,
+            target,
+            sequence,
+            payload,
         };
         
         // Verify checksum
@@ -469,53 +688,6 @@ impl BitchatPacket {
     /// Check if packet is expired (TTL = 0)
     pub fn is_expired(&self) -> bool {
         self.ttl == 0
-    }
-}
-
-// Implementations for data types
-impl CrapTokens {
-    pub fn new(amount: u64) -> Self {
-        Self { amount }
-    }
-    
-    pub fn amount(&self) -> u64 {
-        self.amount
-    }
-    
-    pub fn from_crap(crap: f64) -> Self {
-        Self {
-            amount: (crap * 1_000_000.0) as u64, // 1 CRAP = 1,000,000 units
-        }
-    }
-    
-    pub fn to_crap(&self) -> f64 {
-        self.amount as f64 / 1_000_000.0
-    }
-}
-
-impl DiceRoll {
-    pub fn new(die1: u8, die2: u8) -> Self {
-        Self {
-            die1,
-            die2,
-            total: die1 + die2,
-        }
-    }
-    
-    pub fn is_craps(&self) -> bool {
-        matches!(self.total, 2 | 3 | 12)
-    }
-    
-    pub fn is_natural(&self) -> bool {
-        matches!(self.total, 7 | 11)
-    }
-    
-    pub fn is_point(&self) -> bool {
-        matches!(self.total, 4 | 5 | 6 | 8 | 9 | 10)
-    }
-    
-    pub fn is_hard_way(&self) -> bool {
-        self.die1 == self.die2 && matches!(self.total, 4 | 6 | 8 | 10)
     }
 }
 
@@ -614,6 +786,161 @@ pub enum ProtocolError {
     Io(#[from] std::io::Error),
 }
 
+// Event sourcing types for light consensus layer
+
+/// Type aliases for clarity
+pub type Hash256 = [u8; 32];
+
+/// Wrapper for signature to enable serialization
+/// Feynman: A cryptographic signature is like a tamper-proof seal
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Signature(pub [u8; SIGNATURE_SIZE]);
+
+// Manual impl for Serialize/Deserialize for fixed-size arrays > 32
+impl Serialize for Signature {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for Signature {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct SignatureVisitor;
+        
+        impl<'de> serde::de::Visitor<'de> for SignatureVisitor {
+            type Value = Signature;
+            
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("64 bytes")
+            }
+            
+            fn visit_bytes<E>(self, v: &[u8]) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if v.len() == SIGNATURE_SIZE {
+                    let mut arr = [0u8; SIGNATURE_SIZE];
+                    arr.copy_from_slice(v);
+                    Ok(Signature(arr))
+                } else {
+                    Err(E::custom(format!("expected {} bytes", SIGNATURE_SIZE)))
+                }
+            }
+        }
+        
+        deserializer.deserialize_bytes(SignatureVisitor)
+    }
+}
+
+/// Signed game event for event sourcing
+/// Feynman: Like a notarized document - proves who did what and when
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignedGameEvent {
+    pub event: GameEvent,
+    pub signature: Signature,
+    pub event_hash: Hash256,
+}
+
+/// Game event types
+/// Feynman: Every action in the game becomes a permanent record
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GameEvent {
+    pub game_id: GameId,
+    pub event_type: GameEventType,
+    pub player_id: PeerId,
+    pub timestamp: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GameEventType {
+    GameCreated { max_players: u8, buy_in: CrapTokens },
+    PlayerJoined,
+    BetPlaced { bet: Bet },
+    RandomnessCommitted { commitment: RandomnessCommitment },
+    RandomnessRevealed { reveal: RandomnessReveal },
+    DiceRolled { roll: DiceRoll },
+    GameResolved { winning_bets: Vec<(PeerId, CrapTokens)> },
+    TokensTransferred { amount: CrapTokens, recipient: PeerId },
+}
+
+/// Round consensus checkpoint
+/// Feynman: A "save point" where everyone agrees on what happened
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundConsensus {
+    pub game_id: GameId,
+    pub round_number: u64,
+    pub dice_hash: Hash256,         // Hash of the revealed dice
+    pub bet_merkle: Hash256,        // Merkle root of all bets this round
+    pub payout_merkle: Hash256,     // Merkle root of all payouts
+    pub signatures: Vec<(PeerId, Signature)>, // 2/3+ participant signatures
+}
+
+/// Event log for deterministic state computation
+/// Feynman: The "flight recorder" - can replay everything that happened
+pub struct GameEventLog {
+    pub game_id: GameId,
+    pub events: Vec<SignedGameEvent>,
+    pub participants: HashSet<PeerId>,
+    pub event_hashes: HashSet<Hash256>,  // Prevent duplicate events
+    pub round_summaries: Vec<RoundConsensus>, // Consensus checkpoints
+}
+
+impl GameEventLog {
+    pub fn new(game_id: GameId) -> Self {
+        Self {
+            game_id,
+            events: Vec::new(),
+            participants: HashSet::new(),
+            event_hashes: HashSet::new(),
+            round_summaries: Vec::new(),
+        }
+    }
+    
+    /// Apply a new event to the log
+    /// Feynman: Like adding a new entry to a ledger - once written, permanent
+    pub fn apply_event(&mut self, event: SignedGameEvent) -> Result<()> {
+        // Check for duplicates
+        if self.event_hashes.contains(&event.event_hash) {
+            return Ok(()); // Already have it, ignore
+        }
+        
+        // TODO: Verify signature
+        
+        // Add to log
+        self.events.push(event.clone());
+        self.event_hashes.insert(event.event_hash);
+        self.participants.insert(event.event.player_id);
+        
+        Ok(())
+    }
+    
+    /// Add a round consensus checkpoint
+    /// Feynman: Like everyone signing a contract - proves agreement
+    pub fn add_checkpoint(&mut self, consensus: RoundConsensus) -> Result<()> {
+        // Verify we have 2/3+ signatures
+        let required = (self.participants.len() * 2) / 3 + 1;
+        if consensus.signatures.len() < required {
+            return Err(Error::Protocol("Insufficient signatures for consensus".to_string()));
+        }
+        
+        self.round_summaries.push(consensus);
+        Ok(())
+    }
+    
+    /// Get missing events from a peer
+    /// Feynman: Like asking "what did I miss while I was gone?"
+    pub fn get_missing_events(&self) -> Vec<Hash256> {
+        // In a real implementation, compare with expected events
+        Vec::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -635,13 +962,13 @@ mod tests {
     #[test]
     fn test_dice_roll() {
         let roll = DiceRoll::new(3, 4);
-        assert_eq!(roll.total, 7);
+        assert_eq!(roll.total(), 7);
         assert!(roll.is_natural());
         assert!(!roll.is_craps());
         assert!(!roll.is_hard_way());
         
         let craps_roll = DiceRoll::new(1, 1);
-        assert_eq!(craps_roll.total, 2);
+        assert_eq!(craps_roll.total(), 2);
         assert!(craps_roll.is_craps());
         assert!(!craps_roll.is_natural());
     }

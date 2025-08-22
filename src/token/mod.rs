@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
 
 use crate::protocol::{PeerId, GameId, CrapTokens};
-use crate::gaming::{TREASURY_ADDRESS, TreasuryParticipant};
-use crate::crypto::{BitchatSignature, BitchatIdentity};
+use crate::gaming::TREASURY_ADDRESS;
+use crate::crypto::BitchatSignature;
 use crate::error::{Error, Result};
 
 /// Token transaction types
@@ -79,6 +79,7 @@ pub struct StakingPosition {
 }
 
 /// Token ledger managing all CRAP tokens
+#[allow(dead_code)]
 pub struct TokenLedger {
     accounts: Arc<RwLock<HashMap<PeerId, Account>>>,
     transactions: Arc<RwLock<Vec<TokenTransaction>>>,
@@ -124,6 +125,7 @@ pub enum TokenEvent {
 }
 
 /// Proof-of-relay mining system
+#[allow(dead_code)]
 pub struct ProofOfRelay {
     ledger: Arc<TokenLedger>,
     relay_log: Arc<RwLock<HashMap<[u8; 32], RelayEntry>>>,
@@ -131,6 +133,7 @@ pub struct ProofOfRelay {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct RelayEntry {
     relayer: PeerId,
     packet_hash: [u8; 32],

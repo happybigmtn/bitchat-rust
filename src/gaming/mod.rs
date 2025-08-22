@@ -6,16 +6,18 @@
 //! - Game state management
 //! - Multi-player game coordination
 //! - Treasury participation
+//! - Game runtime orchestration
+
+pub mod runtime;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::{GameId, PeerId, BetType, Bet, DiceRoll, CrapTokens};
-use crate::crypto::{GameCrypto, SecureRng};
-use crate::mesh::MeshService;
+use crate::crypto::GameCrypto;
 use crate::error::{Error, Result};
 
 /// The treasury address - a special peer that provides liquidity
@@ -195,14 +197,14 @@ impl CrapsGame {
                                 player: *player,
                                 bet: bet.clone(),
                             });
-                        } else if roll.total == 2 || roll.total == 3 {
+                        } else if roll.total() == 2 || roll.total() == 3 {
                             // Don't pass wins on 2 or 3
                             resolutions.push(BetResolution::Won {
                                 player: *player,
                                 bet: bet.clone(),
                                 payout: bet.amount.amount() * 2,
                             });
-                        } else if roll.total == 12 {
+                        } else if roll.total() == 12 {
                             // Don't pass pushes on 12
                             resolutions.push(BetResolution::Push {
                                 player: *player,
@@ -217,14 +219,14 @@ impl CrapsGame {
                         }
                     }
                     BetType::Field => {
-                        if matches!(roll.total, 3 | 4 | 9 | 10 | 11) {
+                        if matches!(roll.total(), 3 | 4 | 9 | 10 | 11) {
                             // Field wins 1:1 on 3,4,9,10,11
                             resolutions.push(BetResolution::Won {
                                 player: *player,
                                 bet: bet.clone(),
                                 payout: bet.amount.amount() * 2,
                             });
-                        } else if roll.total == 2 || roll.total == 12 {
+                        } else if roll.total() == 2 || roll.total() == 12 {
                             // Field wins 2:1 on 2,12
                             resolutions.push(BetResolution::Won {
                                 player: *player,
@@ -239,8 +241,8 @@ impl CrapsGame {
                             });
                         }
                     }
-                    BetType::Any7 => {
-                        if roll.total == 7 {
+                    BetType::Next7 => {
+                        if roll.total() == 7 {
                             // Any 7 wins 4:1
                             resolutions.push(BetResolution::Won {
                                 player: *player,
@@ -254,13 +256,20 @@ impl CrapsGame {
                             });
                         }
                     }
-                    BetType::AnyCraps => {
-                        if roll.is_craps() {
-                            // Any craps wins 7:1
+                    BetType::Next2 | BetType::Next3 | BetType::Next12 => {
+                        // These handle the "craps" numbers individually
+                        let target = match bet_type {
+                            BetType::Next2 => 2,
+                            BetType::Next3 => 3,
+                            BetType::Next12 => 12,
+                            _ => 0,
+                        };
+                        if roll.total() == target {
+                            // Craps number wins 30:1
                             resolutions.push(BetResolution::Won {
                                 player: *player,
                                 bet: bet.clone(),
-                                payout: bet.amount.amount() * 8,
+                                payout: bet.amount.amount() * 31,
                             });
                         } else {
                             resolutions.push(BetResolution::Lost {
@@ -281,9 +290,9 @@ impl CrapsGame {
         }
         
         // Update game phase
-        if roll.is_point() {
-            self.current_phase = GamePhase::PointRoll(roll.total);
-            self.point = Some(roll.total);
+        if matches!(roll.total(), 4 | 5 | 6 | 8 | 9 | 10) {
+            self.current_phase = GamePhase::PointRoll(roll.total());
+            self.point = Some(roll.total());
         }
         
         resolutions
@@ -297,14 +306,14 @@ impl CrapsGame {
             for (bet_type, bet) in bets {
                 match bet_type {
                     BetType::Pass => {
-                        if roll.total == point {
+                        if roll.total() == point {
                             // Pass line wins when point is made
                             resolutions.push(BetResolution::Won {
                                 player: *player,
                                 bet: bet.clone(),
                                 payout: bet.amount.amount() * 2,
                             });
-                        } else if roll.total == 7 {
+                        } else if roll.total() == 7 {
                             // Pass line loses on seven-out
                             resolutions.push(BetResolution::Lost {
                                 player: *player,
@@ -319,14 +328,14 @@ impl CrapsGame {
                         }
                     }
                     BetType::DontPass => {
-                        if roll.total == 7 {
+                        if roll.total() == 7 {
                             // Don't pass wins on seven-out
                             resolutions.push(BetResolution::Won {
                                 player: *player,
                                 bet: bet.clone(),
                                 payout: bet.amount.amount() * 2,
                             });
-                        } else if roll.total == point {
+                        } else if roll.total() == point {
                             // Don't pass loses when point is made
                             resolutions.push(BetResolution::Lost {
                                 player: *player,
@@ -340,10 +349,21 @@ impl CrapsGame {
                             });
                         }
                     }
-                    BetType::Place(place_number) => {
-                        if roll.total == *place_number {
-                            // Place bet wins
-                            let payout_multiplier = match place_number {
+                    // Place bets handled via specific number bets
+                    BetType::Yes4 | BetType::Yes5 | BetType::Yes6 | BetType::Yes8 | BetType::Yes9 | BetType::Yes10 => {
+                        let target_number = match bet_type {
+                            BetType::Yes4 => 4,
+                            BetType::Yes5 => 5,
+                            BetType::Yes6 => 6,
+                            BetType::Yes8 => 8,
+                            BetType::Yes9 => 9,
+                            BetType::Yes10 => 10,
+                            _ => 0, // Should not happen
+                        };
+                        
+                        if roll.total() == target_number {
+                            // Yes bet wins
+                            let payout_multiplier = match target_number {
                                 4 | 10 => 18, // 9:5 odds = 1.8x + original bet
                                 5 | 9 => 14,  // 7:5 odds = 1.4x + original bet
                                 6 | 8 => 12,  // 7:6 odds = 1.167x + original bet (rounded)
@@ -355,8 +375,8 @@ impl CrapsGame {
                                 bet: bet.clone(),
                                 payout: (bet.amount.amount() * payout_multiplier) / 10,
                             });
-                        } else if roll.total == 7 {
-                            // Place bet loses on seven-out
+                        } else if roll.total() == 7 {
+                            // Yes bet loses on seven-out
                             resolutions.push(BetResolution::Lost {
                                 player: *player,
                                 bet: bet.clone(),
@@ -374,13 +394,13 @@ impl CrapsGame {
                         // Most one-roll bets are resolved every roll
                         match bet_type {
                             BetType::Field => {
-                                if matches!(roll.total, 3 | 4 | 9 | 10 | 11) {
+                                if matches!(roll.total(), 3 | 4 | 9 | 10 | 11) {
                                     resolutions.push(BetResolution::Won {
                                         player: *player,
                                         bet: bet.clone(),
                                         payout: bet.amount.amount() * 2,
                                     });
-                                } else if roll.total == 2 || roll.total == 12 {
+                                } else if roll.total() == 2 || roll.total() == 12 {
                                     resolutions.push(BetResolution::Won {
                                         player: *player,
                                         bet: bet.clone(),
@@ -393,8 +413,8 @@ impl CrapsGame {
                                     });
                                 }
                             }
-                            BetType::Any7 => {
-                                if roll.total == 7 {
+                            BetType::Next7 => {
+                                if roll.total() == 7 {
                                     resolutions.push(BetResolution::Won {
                                         player: *player,
                                         bet: bet.clone(),
@@ -420,7 +440,7 @@ impl CrapsGame {
         }
         
         // Check if game should end
-        if roll.total == 7 || (self.point.is_some() && roll.total == self.point.unwrap()) {
+        if roll.total() == 7 || (self.point.is_some() && roll.total() == self.point.unwrap()) {
             self.current_phase = GamePhase::ComeOutRoll;
             self.point = None;
         }
@@ -459,13 +479,13 @@ impl CrapsGame {
                         }
                     }
                     BetType::Field => {
-                        if matches!(roll.total, 3 | 4 | 9 | 10 | 11) {
+                        if matches!(roll.total(), 3 | 4 | 9 | 10 | 11) {
                             resolutions.push(BetResolution::Won {
                                 player: *player,
                                 bet: bet.clone(),
                                 payout: bet.amount.amount() * 2,
                             });
-                        } else if roll.total == 2 || roll.total == 12 {
+                        } else if roll.total() == 2 || roll.total() == 12 {
                             resolutions.push(BetResolution::Won {
                                 player: *player,
                                 bet: bet.clone(),
@@ -534,6 +554,7 @@ pub struct TreasuryParticipant {
     strategy: TreasuryStrategy,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct TreasuryPosition {
     game_id: GameId,
@@ -542,6 +563,7 @@ struct TreasuryPosition {
     profit_loss: i64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct TreasuryStrategy {
     max_exposure_per_game: u64,
@@ -590,7 +612,7 @@ impl TreasuryParticipant {
     pub async fn handle_player_bet(
         &self,
         game_id: GameId,
-        player: PeerId,
+        _player: PeerId,
         bet: Bet,
     ) -> Result<Vec<Bet>> {
         let mut positions = self.game_participation.write().await;
@@ -655,7 +677,7 @@ impl TreasuryParticipant {
     pub async fn process_game_result(
         &self,
         game_id: GameId,
-        roll: DiceRoll,
+        _roll: DiceRoll,
         winners: Vec<(PeerId, u64)>,
     ) -> Result<()> {
         let mut positions = self.game_participation.write().await;
@@ -663,7 +685,7 @@ impl TreasuryParticipant {
             .ok_or_else(|| Error::Protocol("Treasury not in game".to_string()))?;
         
         // Calculate treasury's profit/loss
-        let mut treasury_payout = 0u64;
+        let mut _treasury_payout = 0u64;
         
         // In a real implementation, would calculate based on bet resolutions
         // For now, simplified calculation
