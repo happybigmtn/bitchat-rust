@@ -12,7 +12,6 @@ pub mod binary;
 pub mod optimized_binary;
 pub mod craps;
 pub mod runtime;
-pub mod consensus;
 pub mod compact_state;
 
 // New refactored modules
@@ -26,8 +25,11 @@ pub mod efficient_game_state;
 pub mod efficient_bet_resolution;
 pub mod efficient_consensus;
 pub mod efficient_history;
+
+// Modular components
+pub mod consensus;
 pub mod efficient_sync;
-pub mod benchmarks;
+pub mod benchmark;
 
 use std::collections::HashSet;
 use std::io::{Read, Write};

@@ -1,4 +1,5 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
+use rustc_hash::FxHashMap;
 use std::time::{Duration, Instant};
 use bytes::{Bytes, BytesMut};
 use bitvec::prelude::*;
@@ -178,7 +179,7 @@ pub struct VoteTracker {
     /// Bit vector where index = peer_index, bit = vote (0=no, 1=yes)
     votes: BitVec,
     /// Map peer IDs to indices for O(1) lookup
-    peer_indices: HashMap<PeerId, usize>,
+    peer_indices: FxHashMap<PeerId, usize>,
     /// Total number of registered peers
     total_peers: usize,
     /// Current vote counts (cached for performance)
@@ -190,7 +191,7 @@ impl VoteTracker {
     pub fn new() -> Self {
         Self {
             votes: BitVec::new(),
-            peer_indices: HashMap::new(),
+            peer_indices: FxHashMap::default(),
             total_peers: 0,
             yes_votes: 0,
             no_votes: 0,
@@ -572,8 +573,8 @@ impl MmapStorage {
 /// Feynman: Like a janitor that automatically cleans up old data
 /// based on time-to-live (TTL) and usage patterns
 pub struct AutoGarbageCollector<K, V> {
-    data: HashMap<K, (V, Instant, Duration)>, // (value, created_at, ttl)
-    access_times: HashMap<K, Instant>,
+    data: FxHashMap<K, (V, Instant, Duration)>, // (value, created_at, ttl)
+    access_times: FxHashMap<K, Instant>,
     cleanup_interval: Duration,
     last_cleanup: Instant,
     max_items: usize,
@@ -582,8 +583,8 @@ pub struct AutoGarbageCollector<K, V> {
 impl<K: Clone + Eq + std::hash::Hash, V> AutoGarbageCollector<K, V> {
     pub fn new(max_items: usize, cleanup_interval: Duration) -> Self {
         Self {
-            data: HashMap::new(),
-            access_times: HashMap::new(),
+            data: FxHashMap::default(),
+            access_times: FxHashMap::default(),
             cleanup_interval,
             last_cleanup: Instant::now(),
             max_items,
@@ -611,6 +612,7 @@ impl<K: Clone + Eq + std::hash::Hash, V> AutoGarbageCollector<K, V> {
     pub fn get(&mut self, key: &K) -> Option<V> 
     where 
         V: Clone,
+        K: Clone,
     {
         let now = Instant::now();
         
@@ -622,9 +624,8 @@ impl<K: Clone + Eq + std::hash::Hash, V> AutoGarbageCollector<K, V> {
                 return Some(value.clone());
             } else {
                 // Item expired, remove it
-                let k = key.clone();
-                self.data.remove(&k);
-                self.access_times.remove(&k);
+                self.data.remove(key);
+                self.access_times.remove(key);
                 return None;
             }
         }
@@ -642,6 +643,30 @@ impl<K: Clone + Eq + std::hash::Hash, V> AutoGarbageCollector<K, V> {
             } else {
                 None
             }
+        } else {
+            None
+        }
+    }
+    
+    /// Get mutable reference to item without cloning
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut V>
+    where
+        K: Clone,
+    {
+        let now = Instant::now();
+        
+        // Check if item exists and hasn't expired first
+        let is_valid = if let Some((_, created_at, ttl)) = self.data.get(key) {
+            now.duration_since(*created_at) < *ttl
+        } else {
+            false
+        };
+        
+        if is_valid {
+            // Update access time
+            self.access_times.insert(key.clone(), now);
+            // Return mutable reference
+            self.data.get_mut(key).map(|(value, _, _)| value)
         } else {
             None
         }

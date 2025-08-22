@@ -44,7 +44,7 @@ pub struct BitCrapsApp {
     pub persistence: Arc<PersistenceManager>,
     pub proof_of_relay: Arc<ProofOfRelay>,
     pub config: AppConfig,
-    pub active_games: Arc<tokio::sync::RwLock<std::collections::HashMap<GameId, CrapsGame>>>,
+    pub active_games: Arc<tokio::sync::RwLock<rustc_hash::FxHashMap<GameId, CrapsGame>>>,
 }
 
 impl BitCrapsApp {
@@ -125,7 +125,7 @@ impl BitCrapsApp {
             persistence,
             proof_of_relay,
             config,
-            active_games: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            active_games: Arc::new(tokio::sync::RwLock::new(rustc_hash::FxHashMap::default())),
         })
     }
     
@@ -175,7 +175,7 @@ impl BitCrapsApp {
     }
     
     /// Get a snapshot of active games
-    pub async fn get_active_games(&self) -> std::collections::HashMap<GameId, GameInfo> {
+    pub async fn get_active_games(&self) -> rustc_hash::FxHashMap<GameId, GameInfo> {
         let games = self.active_games.read().await;
         games.iter()
             .map(|(id, game)| (*id, GameInfo {

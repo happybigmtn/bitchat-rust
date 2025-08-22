@@ -103,7 +103,7 @@ impl DhtDiscovery {
                         }
                     }
                 } else {
-                    // Queue empty, sleep and retry
+                    // Queue empty, wait with exponential backoff
                     tokio::time::sleep(Duration::from_secs(10)).await;
                 }
             }

@@ -1,5 +1,8 @@
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+use tokio::sync::Notify;
+use std::sync::Arc;
 use crate::protocol::BitchatPacket;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -25,6 +28,9 @@ pub struct MessageQueue {
     normal_size: AtomicUsize,
     low_size: AtomicUsize,
     max_size: usize,
+    
+    // Notification for async waiting
+    notify: Arc<Notify>,
 }
 
 impl MessageQueue {
@@ -44,6 +50,7 @@ impl MessageQueue {
             normal_size: AtomicUsize::new(0),
             low_size: AtomicUsize::new(0),
             max_size,
+            notify: Arc::new(Notify::new()),
         }
     }
     
@@ -61,6 +68,7 @@ impl MessageQueue {
                 match self.high_sender.try_send(packet) {
                     Ok(_) => {
                         self.high_size.fetch_add(1, Ordering::AcqRel);
+                        self.notify.notify_one();
                         Ok(())
                     }
                     Err(_) => Err("Failed to send high priority message"),
@@ -71,6 +79,7 @@ impl MessageQueue {
                 match self.normal_sender.try_send(packet) {
                     Ok(_) => {
                         self.normal_size.fetch_add(1, Ordering::AcqRel);
+                        self.notify.notify_one();
                         Ok(())
                     }
                     Err(_) => Err("Failed to send normal priority message"),
@@ -81,6 +90,7 @@ impl MessageQueue {
                 match self.low_sender.try_send(packet) {
                     Ok(_) => {
                         self.low_size.fetch_add(1, Ordering::AcqRel);
+                        self.notify.notify_one();
                         Ok(())
                     }
                     Err(_) => Err("Failed to send low priority message"),
@@ -160,6 +170,33 @@ impl MessageQueue {
     /// Get maximum queue size
     pub fn max_size(&self) -> usize {
         self.max_size
+    }
+    
+    /// Async dequeue that waits for messages without busy-waiting
+    pub async fn dequeue_async(&self) -> Option<BitchatPacket> {
+        loop {
+            // Try to dequeue immediately
+            if let Some(packet) = self.dequeue() {
+                return Some(packet);
+            }
+            
+            // No messages available, wait for notification
+            self.notify.notified().await;
+        }
+    }
+    
+    /// Async dequeue with timeout
+    pub async fn dequeue_async_timeout(&self, timeout: Duration) -> Option<BitchatPacket> {
+        // Try immediate dequeue first
+        if let Some(packet) = self.dequeue() {
+            return Some(packet);
+        }
+        
+        // Wait with timeout
+        match tokio::time::timeout(timeout, self.notify.notified()).await {
+            Ok(_) => self.dequeue(), // Check again after notification
+            Err(_) => None, // Timeout
+        }
     }
 }
 

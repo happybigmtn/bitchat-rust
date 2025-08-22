@@ -240,11 +240,10 @@ impl GameRuntime {
         if self.config.enable_consensus {
             let participants = vec![creator, crate::TREASURY_ADDRESS];
             let consensus_engine = ConsensusEngine::new(
-                self.config.consensus_config.clone(),
                 game_id,
                 participants,
                 self.local_peer_id,
-                game,
+                self.config.consensus_config.clone(),
             )?;
             
             let mut consensus_engines = self.consensus_engines.write().await;

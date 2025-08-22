@@ -57,6 +57,7 @@ dirs = "5.0"
 serde_json = "1.0"
 lru = "0.12"
 dashmap = "6.1"  # Lock-free concurrent hashmap
+rustc-hash = "2.0"  # Fast non-cryptographic HashMap
 
 # New optimizations and security dependencies
 bitvec = "1.0"       # Bit vectors for efficient vote tracking

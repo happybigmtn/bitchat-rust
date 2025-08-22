@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, mpsc, broadcast};
@@ -59,7 +59,7 @@ pub struct MeshService {
     proof_of_relay: Option<Arc<ProofOfRelay>>,
     
     // Peer management
-    peers: Arc<RwLock<HashMap<PeerId, PeerInfo>>>,
+    peers: Arc<RwLock<FxHashMap<PeerId, PeerInfo>>>,
     _routing_table: Arc<RwLock<RoutingTable>>,
     
     // Event channels
@@ -98,8 +98,8 @@ pub struct PeerCapabilities {
 /// Routing table for efficient message forwarding
 #[allow(dead_code)]
 pub struct RoutingTable {
-    routes: HashMap<PeerId, Vec<Route>>,
-    direct_peers: HashMap<PeerId, DirectConnection>,
+    routes: FxHashMap<PeerId, Vec<Route>>,
+    direct_peers: FxHashMap<PeerId, DirectConnection>,
 }
 
 #[derive(Clone)]
@@ -179,10 +179,10 @@ impl MeshService {
             game_sessions,
             anti_cheat,
             proof_of_relay: None, // Will be set later via set_proof_of_relay
-            peers: Arc::new(RwLock::new(HashMap::new())),
+            peers: Arc::new(RwLock::new(FxHashMap::default())),
             _routing_table: Arc::new(RwLock::new(RoutingTable {
-                routes: HashMap::new(),
-                direct_peers: HashMap::new(),
+                routes: FxHashMap::default(),
+                direct_peers: FxHashMap::default(),
             })),
             event_tx,
             command_rx,
@@ -556,13 +556,12 @@ impl MeshService {
         
         tokio::spawn(async move {
             while *is_running.read().await {
-                if let Some(packet) = message_queue.dequeue() {
+                // Use async dequeue to avoid busy-waiting
+                if let Some(packet) = message_queue.dequeue_async_timeout(Duration::from_secs(1)).await {
                     // Process with appropriate component
                     let _ = components.process_packet(packet).await;
-                } else {
-                    // No messages available, sleep briefly to avoid busy waiting
-                    tokio::time::sleep(Duration::from_millis(10)).await;
                 }
+                // If timeout occurs, continue loop to check is_running
             }
         });
     }
