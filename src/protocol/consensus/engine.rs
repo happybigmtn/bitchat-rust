@@ -9,7 +9,7 @@ use serde::{Serialize, Deserialize};
 
 use crate::protocol::{PeerId, GameId, Hash256, Signature};
 use crate::protocol::craps::{CrapsGame, GamePhase, BetResolution, Bet, DiceRoll, CrapTokens};
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 use super::{ConsensusConfig, ConsensusMetrics, CompactSignature};
 use super::voting::{VoteTracker, ConfirmationTracker, Fork};

@@ -326,7 +326,18 @@ impl CompactGameState {
     fn calculate_compression_ratio(&self) -> f32 {
         // Estimate uncompressed size based on typical game state
         let estimated_uncompressed = 1024; // Rough estimate for full CrapsGame struct
-        let actual_size = self.memory_usage().total_bytes;
+        
+        // Calculate actual size directly without calling memory_usage() to avoid recursion
+        let static_size = size_of::<Self>() - size_of::<Arc<DynamicGameData>>();
+        let dynamic_size = size_of::<DynamicGameData>() + 
+                          self.dynamic_data.compressed_bets.amounts.len() +
+                          self.dynamic_data.compressed_bets.player_mappings.len() +
+                          self.dynamic_data.roll_deltas.len() +
+                          self.dynamic_data.balance_deltas.len() * (size_of::<PeerId>() + size_of::<i64>()) +
+                          self.dynamic_data.come_points.point_amounts.len() +
+                          self.dynamic_data.come_points.player_associations.len();
+        
+        let actual_size = static_size + dynamic_size;
         actual_size as f32 / estimated_uncompressed as f32
     }
 }

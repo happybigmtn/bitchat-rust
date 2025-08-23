@@ -5,7 +5,7 @@ use sha2::{Sha256, Digest};
 use serde::{Serialize, Deserialize};
 
 use crate::protocol::{GameId, Hash256};
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 use super::state_manager::GameStateNode;
 

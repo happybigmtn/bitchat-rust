@@ -28,7 +28,7 @@ pub mod validation;
 use std::time::Duration;
 use serde::{Serialize, Deserialize};
 
-use crate::protocol::{PeerId, GameId, Hash256};
+use crate::protocol::Hash256;
 
 // Re-export main types
 pub use engine::{ConsensusEngine, GameConsensusState, GameProposal, GameOperation};

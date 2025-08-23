@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use criterion::{black_box, Criterion};
 
 use crate::protocol::efficient_game_state::CompactGameState;
-use crate::protocol::efficient_history::{EfficientGameHistory, HistoryConfig, CompactGameHistory};
-use crate::protocol::efficient_bet_resolution::EfficientBetResolver;
-use crate::protocol::{BetType, CrapTokens, DiceRoll};
+use crate::protocol::efficient_history::{EfficientGameHistory, HistoryConfig};
+// Removed unused import: EfficientBetResolver
+// Removed unused imports: BetType, CrapTokens, DiceRoll
 
 use super::{BenchmarkResults, BenchmarkConfig, MemoryBenchmarkStats};
 

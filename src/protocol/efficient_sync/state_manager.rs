@@ -1,18 +1,18 @@
 //! State management for efficient synchronization
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::protocol::{PeerId, GameId, Hash256};
 use crate::protocol::efficient_game_state::CompactGameState;
 use crate::protocol::efficient_history::{CompactGameHistory, BloomFilter};
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 use super::merkle::{StateMerkleTree, MerkleNode};
 use super::diff_engine::BinaryDiffEngine;
-use super::sync_protocol::{SyncMessage, SyncPhase, SyncSession, SyncStats};
-use super::{SyncConfig, SyncMetrics, CompressionStats};
+use super::sync_protocol::{SyncMessage, SyncSession, SyncStats};
+use super::{SyncConfig, SyncMetrics};
 
 /// Node in the state tree
 #[derive(Debug, Clone)]

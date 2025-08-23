@@ -9,15 +9,7 @@ pub mod diff_engine;
 pub mod sync_protocol;
 pub mod state_manager;
 
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Serialize, Deserialize};
-
-use crate::protocol::{PeerId, GameId, Hash256};
-use crate::protocol::efficient_game_state::CompactGameState;
-use crate::protocol::efficient_history::{CompactGameHistory, BloomFilter};
-use crate::error::{Error, Result};
+// Removed unused imports
 
 // Re-export main types
 pub use merkle::{StateMerkleTree, MerkleNode, NodeMetadata, MerkleProof};
