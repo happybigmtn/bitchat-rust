@@ -1,0 +1,77 @@
+# BitCraps Development Configuration
+
+[app]
+name = "BitCraps"
+version = "0.1.0"
+environment = "Development"
+data_dir = "./data"
+log_level = "debug"
+worker_threads = 4
+enable_tui = true
+
+[network]
+listen_address = "127.0.0.1"
+listen_port = 8334
+max_connections = 50
+connection_timeout = { secs = 30, nanos = 0 }
+keepalive_interval = { secs = 60, nanos = 0 }
+max_packet_size = 65536
+enable_bluetooth = true
+enable_tcp = true
+enable_compression = true
+mtu_discovery = true
+
+[consensus]
+min_participants = 2
+max_participants = 10
+proposal_timeout = { secs = 10, nanos = 0 }
+voting_timeout = { secs = 5, nanos = 0 }
+finality_threshold = 0.67
+byzantine_tolerance = 0.33
+enable_fast_path = true
+checkpoint_interval = 100
+
+[database]
+url = "sqlite://./data/bitcraps.db"
+max_connections = 10
+connection_timeout = { secs = 10, nanos = 0 }
+idle_timeout = { secs = 300, nanos = 0 }
+enable_wal = true
+checkpoint_interval = { secs = 60, nanos = 0 }
+backup_dir = "./data/backups"
+backup_interval = { secs = 3600, nanos = 0 }
+
+[security]
+pow_difficulty = 8
+key_rotation_interval = { secs = 86400, nanos = 0 }
+session_timeout = { secs = 3600, nanos = 0 }
+max_session_count = 100
+enable_rate_limiting = false
+rate_limit_requests = 1000
+rate_limit_window = { secs = 60, nanos = 0 }
+enable_tls = false
+
+[monitoring]
+enable_metrics = true
+metrics_port = 9091
+enable_tracing = false
+health_check_interval = { secs = 30, nanos = 0 }
+log_retention_days = 7
+metric_retention_days = 30
+
+[game]
+min_bet = 1
+max_bet = 1000
+max_players_per_game = 8
+game_timeout = { secs = 300, nanos = 0 }
+auto_resolve_timeout = { secs = 60, nanos = 0 }
+enable_side_bets = true
+house_edge = 0.0136
+
+[treasury]
+initial_supply = 1000000000
+treasury_address = "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+rake_percentage = 0.02
+min_reserve = 100000
+max_exposure = 500000
+rebalance_interval = { secs = 3600, nanos = 0 }

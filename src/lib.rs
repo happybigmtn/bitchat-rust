@@ -14,6 +14,9 @@
 //! decentralized craps casino over Bluetooth mesh networks.
 
 pub mod error;
+pub mod config;
+pub mod database;
+pub mod validation;
 pub mod protocol;     // Core protocol and binary serialization
 pub mod crypto;       // Cryptographic foundations
 pub mod transport;    // Network transport layer (Bluetooth mesh)

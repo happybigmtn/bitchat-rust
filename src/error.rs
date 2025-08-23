@@ -73,4 +73,10 @@ pub enum Error {
     
     #[error("Unknown error: {0}")]
     Unknown(String),
+    
+    #[error("Configuration error: {0}")]
+    Config(String),
+    
+    #[error("Database error: {0}")]
+    Database(String),
 }
