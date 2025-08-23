@@ -18,6 +18,8 @@ pub mod config;
 pub mod database;
 pub mod validation;
 pub mod logging;      // Production logging and observability
+pub mod resilience;   // Network resilience and fault tolerance
+pub mod keystore;     // Secure key management
 pub mod protocol;     // Core protocol and binary serialization
 pub mod crypto;       // Cryptographic foundations
 pub mod transport;    // Network transport layer (Bluetooth mesh)
