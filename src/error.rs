@@ -14,6 +14,9 @@ pub enum Error {
     #[error("Serialization error: {0}")]
     Serialization(String),
     
+    #[error("Bincode error: {0}")]
+    Bincode(#[from] bincode::Error),
+    
     #[error("Cryptographic error: {0}")]
     Crypto(String),
     

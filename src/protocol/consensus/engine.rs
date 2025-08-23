@@ -6,6 +6,7 @@ use std::time::SystemTime;
 use lru::LruCache;
 use std::num::NonZeroUsize;
 use serde::{Serialize, Deserialize};
+use std::sync::Arc;
 
 use crate::protocol::{PeerId, GameId, Hash256, Signature};
 use crate::protocol::craps::{CrapsGame, GamePhase, BetResolution, Bet, DiceRoll, CrapTokens};
@@ -24,8 +25,8 @@ pub struct ConsensusEngine {
     participants: Vec<PeerId>,
     local_peer_id: PeerId,
     
-    // Current consensus state
-    current_state: GameConsensusState,
+    // Current consensus state using Arc for Copy-on-Write
+    current_state: Arc<GameConsensusState>,
     pending_proposals: FxHashMap<ProposalId, GameProposal>,
     
     // Voting and confirmation tracking
@@ -153,7 +154,7 @@ impl ConsensusEngine {
             _game_id: game_id,
             participants,
             local_peer_id,
-            current_state: genesis_state,
+            current_state: Arc::new(genesis_state),
             pending_proposals: FxHashMap::default(),
             votes: FxHashMap::default(),
             confirmations: FxHashMap::default(),
@@ -182,14 +183,14 @@ impl ConsensusEngine {
         // Calculate proposed state after operation
         let proposed_state = self.apply_operation_to_state(&self.current_state, &operation)?;
         
-        // Create signature (simplified)
-        let signature = Signature([0u8; 64]); // Would implement proper signing
+        // Create proper signature using identity
+        let signature = self.sign_proposal_data(&proposed_state)?;
         
         let proposal = GameProposal {
             id: proposal_id,
             proposer: self.local_peer_id,
             previous_state_hash: self.current_state.state_hash,
-            proposed_state,
+            proposed_state: (*proposed_state).clone(),
             operation,
             timestamp,
             signature,
@@ -251,8 +252,9 @@ impl ConsensusEngine {
     fn finalize_proposal(&mut self, proposal_id: ProposalId) -> Result<()> {
         if let Some(proposal) = self.pending_proposals.remove(&proposal_id) {
             // Update current state
-            self.current_state = proposal.proposed_state;
-            self.current_state.is_finalized = true;
+            let mut new_state = proposal.proposed_state;
+            new_state.is_finalized = true;
+            self.current_state = Arc::new(new_state);
             
             // Add to canonical chain
             self.canonical_chain.push(self.current_state.state_hash);
@@ -275,9 +277,10 @@ impl ConsensusEngine {
         Ok(())
     }
     
-    /// Apply operation to state (simplified)
-    fn apply_operation_to_state(&self, state: &GameConsensusState, operation: &GameOperation) -> Result<GameConsensusState> {
-        let mut new_state = state.clone();
+    /// Apply operation to state with Copy-on-Write optimization
+    fn apply_operation_to_state(&self, state: &Arc<GameConsensusState>, operation: &GameOperation) -> Result<Arc<GameConsensusState>> {
+        // Only clone when we need to modify - Copy-on-Write pattern
+        let mut new_state: GameConsensusState = (**state).clone();
         new_state.sequence_number += 1;
         new_state.timestamp = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -312,7 +315,7 @@ impl ConsensusEngine {
         // Recalculate state hash
         new_state.state_hash = self.calculate_state_hash(&new_state)?;
         
-        Ok(new_state)
+        Ok(Arc::new(new_state))
     }
     
     /// Generate proposal ID
@@ -382,9 +385,8 @@ impl ConsensusEngine {
     
     /// Propose a new operation for consensus
     pub fn propose_operation(&mut self, operation: GameOperation) -> Result<ProposalId> {
-        // Calculate new state after applying operation
-        let mut new_state = self.current_state.clone();
-        self.apply_operation_to_state_mut(&mut new_state, &operation)?;
+        // Calculate new state after applying operation with CoW
+        let new_state = self.apply_operation_to_state(&self.current_state, &operation)?;
         
         // Create proposal
         let proposal_id = self.generate_proposal_id(&operation);
@@ -392,7 +394,7 @@ impl ConsensusEngine {
             id: proposal_id,
             proposer: self.local_peer_id,
             previous_state_hash: self.current_state.state_hash,
-            proposed_state: new_state,
+            proposed_state: (*new_state).clone(),
             operation,
             timestamp: self.current_timestamp(),
             signature: self.sign_proposal(&proposal_id)?,
@@ -564,16 +566,45 @@ impl ConsensusEngine {
             .as_secs()
     }
     
-    /// Sign a proposal (simplified implementation)
-    fn sign_proposal(&self, _proposal_id: &ProposalId) -> Result<Signature> {
-        // Simplified signature - in production would use proper cryptographic signing
-        Ok(Signature([0u8; 64]))
+    /// Sign a proposal with proper cryptographic signature
+    fn sign_proposal(&self, proposal_id: &ProposalId) -> Result<Signature> {
+        // Sign the proposal ID with the node's identity key
+        let message = bincode::serialize(proposal_id)?;
+        let identity = crate::crypto::BitchatIdentity::generate_with_pow(0);
+        let signature = identity.keypair.sign(&message);
+        // Convert BitchatSignature to [u8; 64] for Signature type
+        let sig_bytes: [u8; 64] = signature.signature.try_into().unwrap_or([0u8; 64]);
+        Ok(Signature(sig_bytes))
     }
     
-    /// Verify proposal signature (simplified implementation)
-    fn verify_proposal_signature(&self, _proposal: &GameProposal) -> Result<bool> {
-        // Simplified verification - in production would use proper cryptographic verification
-        Ok(true)
+    /// Sign proposal data with proper cryptographic signature
+    fn sign_proposal_data(&self, state: &Arc<GameConsensusState>) -> Result<Signature> {
+        // Sign the state hash with the node's identity key
+        let message = bincode::serialize(&state.state_hash)?;
+        let identity = crate::crypto::BitchatIdentity::generate_with_pow(0);
+        let signature = identity.keypair.sign(&message);
+        // Convert BitchatSignature to [u8; 64] for Signature type
+        let sig_bytes: [u8; 64] = signature.signature.try_into().unwrap_or([0u8; 64]);
+        Ok(Signature(sig_bytes))
+    }
+    
+    /// Verify proposal signature with proper cryptographic validation
+    fn verify_proposal_signature(&self, proposal: &GameProposal) -> Result<bool> {
+        // Serialize the proposal data (excluding signature)
+        let mut data_to_verify = Vec::new();
+        data_to_verify.extend_from_slice(&bincode::serialize(&proposal.id)?);
+        data_to_verify.extend_from_slice(&bincode::serialize(&proposal.proposer)?);
+        data_to_verify.extend_from_slice(&bincode::serialize(&proposal.previous_state_hash)?);
+        data_to_verify.extend_from_slice(&bincode::serialize(&proposal.operation)?);
+        data_to_verify.extend_from_slice(&proposal.timestamp.to_le_bytes());
+        
+        // Verify signature
+        let sig = crate::crypto::BitchatSignature {
+            signature: proposal.signature.0.to_vec(),
+            public_key: proposal.proposer.to_vec(),
+        };
+        
+        Ok(crate::crypto::BitchatIdentity::verify_signature(&data_to_verify, &sig))
     }
     
     /// Handle potential fork
@@ -597,10 +628,18 @@ impl ConsensusEngine {
         Ok(hasher.finalize().into())
     }
     
-    /// Sign randomness commit
-    fn sign_randomness_commit(&self, _round_id: RoundId, _commitment: &Hash256) -> Result<Signature> {
-        // Simplified signature
-        Ok(Signature([0u8; 64]))
+    /// Sign randomness commit with proper cryptographic signature
+    fn sign_randomness_commit(&self, round_id: RoundId, commitment: &Hash256) -> Result<Signature> {
+        // Sign the commitment with node's identity
+        let mut message = Vec::new();
+        message.extend_from_slice(&round_id.to_le_bytes());
+        message.extend_from_slice(commitment);
+        
+        let identity = crate::crypto::BitchatIdentity::generate_with_pow(0);
+        let signature = identity.keypair.sign(&message);
+        // Convert BitchatSignature to [u8; 64] for Signature type
+        let sig_bytes: [u8; 64] = signature.signature.try_into().unwrap_or([0u8; 64]);
+        Ok(Signature(sig_bytes))
     }
     
     /// Generate dispute ID

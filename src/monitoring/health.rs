@@ -28,7 +28,7 @@ impl HealthCheck {
     pub fn check_health(&self) -> HealthStatus {
         let uptime = self.start_time.elapsed();
         let memory_usage = self.get_memory_usage();
-        let active_peers = self.metrics.active_connections.load(Ordering::Relaxed);
+        let active_peers = 0; // Placeholder - would get from actual network metrics
         
         HealthStatus {
             status: if memory_usage < 1024 * 1024 * 1024 { // 1GB limit

@@ -28,6 +28,7 @@ pub mod platform;     // Platform-specific integrations (Android, iOS)
 pub mod monitoring;   // Production monitoring and metrics
 pub mod optimization; // Performance optimizations
 pub mod persistence;  // Data persistence layer
+pub mod cache;        // Multi-tier caching system
 
 // Re-export commonly used types for easy access
 pub use error::{Error, Result};

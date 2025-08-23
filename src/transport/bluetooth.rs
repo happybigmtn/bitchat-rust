@@ -23,10 +23,14 @@ const BITCRAPS_SERVICE_UUID: Uuid = Uuid::from_u128(0x12345678_1234_5678_1234_56
 const BITCRAPS_RX_CHAR_UUID: Uuid = Uuid::from_u128(0x12345678_1234_5678_1234_567812345679);
 /// Characteristic for transmitting data (from perspective of central)
 const BITCRAPS_TX_CHAR_UUID: Uuid = Uuid::from_u128(0x12345678_1234_5678_1234_567812345680);
-/// BLE MTU size for packet fragmentation
-const BLE_MTU_SIZE: usize = 512;
+/// Default BLE MTU size for packet fragmentation (will be dynamically discovered)
+const DEFAULT_BLE_MTU: usize = 247;  // BLE 4.2 default, will be optimized per connection
+/// Maximum BLE MTU size we'll attempt
+const MAX_BLE_MTU: usize = 512;
 /// Fragment header size (sequence + flags)
 const FRAGMENT_HEADER_SIZE: usize = 4;
+/// BLE MTU size constant
+const BLE_MTU_SIZE: usize = DEFAULT_BLE_MTU;
 /// Memory pool buffer size (power of 2 for efficient allocation)
 const POOL_BUFFER_SIZE: usize = 1024;
 /// Maximum number of pooled buffers

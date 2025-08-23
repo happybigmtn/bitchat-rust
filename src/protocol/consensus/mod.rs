@@ -24,6 +24,7 @@ pub mod engine;
 pub mod voting;
 pub mod commit_reveal;
 pub mod validation;
+pub mod lockfree_engine;
 
 use std::time::Duration;
 use serde::{Serialize, Deserialize};

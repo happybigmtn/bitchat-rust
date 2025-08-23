@@ -30,6 +30,7 @@ pub mod efficient_history;
 pub mod consensus;
 pub mod efficient_sync;
 pub mod benchmark;
+pub mod compression;
 
 use std::collections::HashSet;
 use std::io::{Read, Write};

@@ -232,12 +232,20 @@ impl RekeyMessage {
         }
     }
     
-    pub fn verify(&self, _public_key: &[u8; 32]) -> bool {
+    pub fn verify(&self, public_key: &[u8; 32]) -> bool {
         let mut message = Vec::new();
         message.extend_from_slice(&self.epoch.to_le_bytes());
         message.extend_from_slice(&self.new_public_key);
         
-        // Simplified verification - in production would use proper signature verification
-        true // Placeholder
+        // Proper Ed25519 signature verification
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        
+        let Ok(verifying_key) = VerifyingKey::from_bytes(public_key) else {
+            return false;
+        };
+        
+        let signature = Signature::from_bytes(&self.signature);
+        
+        verifying_key.verify(&message, &signature).is_ok()
     }
 }

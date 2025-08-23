@@ -6,6 +6,9 @@
 //! - Gaming-specific cryptography (commitment schemes, randomness)
 //! - Proof-of-work for identity generation
 //! - Signature verification and validation
+//! - SIMD-accelerated batch operations
+
+pub mod simd_acceleration;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier};

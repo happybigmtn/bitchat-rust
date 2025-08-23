@@ -10,6 +10,8 @@ pub mod bluetooth;
 pub mod traits;
 pub mod kademlia;
 pub mod pow_identity;
+pub mod mtu_discovery;
+pub mod connection_pool;
 
 #[cfg(test)]
 mod connection_limits_test;
