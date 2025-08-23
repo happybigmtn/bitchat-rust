@@ -367,6 +367,7 @@ pub mod validation {
     use super::*;
     
     /// Validate bet amount
+    #[allow(dead_code)]
     pub fn validate_bet_amount(amount: u64, min_bet: u64, max_bet: u64) -> Result<()> {
         if amount < min_bet {
             return Err(Error::InvalidBet(
@@ -384,11 +385,13 @@ pub mod validation {
     }
     
     /// Validate game ID format
+    #[allow(dead_code)]
     pub fn validate_game_id(game_id_str: &str) -> Result<GameId> {
         parse_game_id(game_id_str).map_err(|e| Error::Protocol(e))
     }
     
     /// Validate bet type for current game phase
+    #[allow(dead_code)]
     pub fn validate_bet_for_phase(bet_type: &BetType, game: &CrapsGame) -> Result<()> {
         
         if !bet_type.is_valid_for_phase(&game.phase) {

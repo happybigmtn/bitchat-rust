@@ -90,7 +90,6 @@ pub struct MerkleProof {
 /// Optimized dice consensus engine
 pub struct EfficientDiceConsensus {
     /// Game ID this consensus is for
-    #[allow(dead_code)]
     game_id: GameId,
     
     /// List of participating players

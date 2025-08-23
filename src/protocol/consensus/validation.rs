@@ -292,14 +292,14 @@ impl DisputeValidator {
         // Count votes
         let mut uphold_count = 0;
         let mut reject_count = 0;
-        let mut abstain_count = 0;
+        let mut _abstain_count = 0; // Prefixed with _ to indicate intentionally unused
         let mut need_evidence_count = 0;
         
         for vote in votes {
             match vote.vote {
                 DisputeVoteType::Uphold => uphold_count += 1,
                 DisputeVoteType::Reject => reject_count += 1,
-                DisputeVoteType::Abstain => abstain_count += 1,
+                DisputeVoteType::Abstain => _abstain_count += 1,
                 DisputeVoteType::NeedMoreEvidence => need_evidence_count += 1,
             }
         }

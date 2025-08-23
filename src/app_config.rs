@@ -224,6 +224,7 @@ pub fn resolve_data_dir(data_dir: &str) -> Result<String, String> {
 }
 
 /// Get available bet types with descriptions
+#[allow(dead_code)]
 pub fn get_bet_type_help() -> &'static str {
     r#"Available bet types:
 
