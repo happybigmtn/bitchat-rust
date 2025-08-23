@@ -1,6 +1,6 @@
 //! Adaptive compression for network messages
 
-use std::io::{Read, Write};
+use std::io::Write;
 use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 use flate2::write::{ZlibEncoder, ZlibDecoder};
 use flate2::Compression;

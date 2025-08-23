@@ -208,7 +208,7 @@ impl BluetoothConnectionPool {
                 conn.usage_count += 1;
                 
                 // Move to active connections
-                let peer_id = conn.peer_id;
+                let _peer_id = conn.peer_id;
                 
                 return Some(conn);
             }

@@ -355,7 +355,7 @@ fn bench_memory_allocation_patterns(config: &BenchmarkConfig) -> BenchmarkResult
     }
 }
 
-pub fn criterion_state_benchmarks(c: &mut Criterion, config: &BenchmarkConfig) {
+pub fn criterion_state_benchmarks(c: &mut Criterion, _config: &BenchmarkConfig) {
     // History storage benchmarks
     c.bench_function("ring_buffer_store", |b| {
         let history_config = HistoryConfig {

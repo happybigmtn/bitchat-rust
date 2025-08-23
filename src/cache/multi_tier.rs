@@ -1,13 +1,13 @@
 //! Multi-tier caching system for high-performance data access
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use lru::LruCache;
 use parking_lot::RwLock;
-use memmap2::{Mmap, MmapOptions};
+use memmap2::MmapOptions;
 use serde::{Serialize, Deserialize};
-use std::fs::{File, OpenOptions};
-use std::path::{Path, PathBuf};
+use std::fs::File;
+use std::path::PathBuf;
 use std::collections::HashMap;
 use dashmap::DashMap;
 use crate::error::Result;

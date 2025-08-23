@@ -106,19 +106,19 @@ impl PayoutCalculator for CrapsGame {
                 player: *player,
                 bet_type: BetType::Fire,
                 amount: bet.amount,
-                payout: CrapTokens::new_unchecked(bet.amount.amount * 25), // 24:1
+                payout: CrapTokens::new_unchecked(bet.amount.amount() * 25), // 24:1
             }),
             5 => Some(BetResolution::Won {
                 player: *player,
                 bet_type: BetType::Fire,
                 amount: bet.amount,
-                payout: CrapTokens::new_unchecked(bet.amount.amount * 250), // 249:1
+                payout: CrapTokens::new_unchecked(bet.amount.amount() * 250), // 249:1
             }),
             6 => Some(BetResolution::Won {
                 player: *player,
                 bet_type: BetType::Fire,
                 amount: bet.amount,
-                payout: CrapTokens::new_unchecked(bet.amount.amount * 1000), // 999:1
+                payout: CrapTokens::new_unchecked(bet.amount.amount() * 1000), // 999:1
             }),
             _ => None, // Still active
         }
@@ -150,7 +150,7 @@ impl PayoutCalculator for CrapsGame {
                 
                 if count >= *required {
                     let multiplier = self.get_repeater_multiplier(*number);
-                    let payout = CrapTokens::new_unchecked(bet.amount.amount + (bet.amount.amount * multiplier as u64 / 100));
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount() + (bet.amount.amount() * multiplier as u64 / 100));
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type: *bet_type,
@@ -175,7 +175,7 @@ impl PayoutCalculator for CrapsGame {
         if let Some(bet) = bets.get(&BetType::BonusSmall) {
             let small_numbers: HashSet<u8> = [2, 3, 4, 5, 6].iter().copied().collect();
             if small_numbers.is_subset(&self.bonus_numbers) {
-                let payout = CrapTokens::new_unchecked(bet.amount.amount * 31); // 30:1
+                let payout = CrapTokens::new_unchecked(bet.amount.amount() * 31); // 30:1
                 resolutions.push(BetResolution::Won {
                     player: *player,
                     bet_type: BetType::BonusSmall,
@@ -189,7 +189,7 @@ impl PayoutCalculator for CrapsGame {
         if let Some(bet) = bets.get(&BetType::BonusTall) {
             let tall_numbers: HashSet<u8> = [8, 9, 10, 11, 12].iter().copied().collect();
             if tall_numbers.is_subset(&self.bonus_numbers) {
-                let payout = CrapTokens::new_unchecked(bet.amount.amount * 31); // 30:1
+                let payout = CrapTokens::new_unchecked(bet.amount.amount() * 31); // 30:1
                 resolutions.push(BetResolution::Won {
                     player: *player,
                     bet_type: BetType::BonusTall,
@@ -203,7 +203,7 @@ impl PayoutCalculator for CrapsGame {
         if let Some(bet) = bets.get(&BetType::BonusAll) {
             let all_numbers: HashSet<u8> = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12].iter().copied().collect();
             if all_numbers.is_subset(&self.bonus_numbers) {
-                let payout = CrapTokens::new_unchecked(bet.amount.amount * 151); // 150:1
+                let payout = CrapTokens::new_unchecked(bet.amount.amount() * 151); // 150:1
                 resolutions.push(BetResolution::Won {
                     player: *player,
                     bet_type: BetType::BonusAll,
@@ -232,12 +232,12 @@ impl PayoutCalculator for CrapsGame {
                 41..=50 => 1000,  // 10:1
                 _ => 2000,        // 20:1 for 50+ rolls
             };
-            let payout = CrapTokens::new_unchecked((bet.amount.amount * multiplier as u64) / 100);
+            let payout = CrapTokens::new_unchecked((bet.amount.amount() * multiplier as u64) / 100);
             return Some(BetResolution::Won {
                 player: *player,
                 bet_type: BetType::HotRoller,
                 amount: bet.amount,
-                payout: CrapTokens::new_unchecked(bet.amount.amount + payout.amount),
+                payout: CrapTokens::new_unchecked(bet.amount.amount() + payout.0),
             });
         }
         None
@@ -252,7 +252,7 @@ impl PayoutCalculator for CrapsGame {
         // Check hardway streak tracker
         for (_number, &count) in &self.hardway_streak {
             if count >= 2 {
-                let payout = CrapTokens::new_unchecked(bet.amount.amount * 7); // 6:1 + original
+                let payout = CrapTokens::new_unchecked(bet.amount.amount() * 7); // 6:1 + original
                 return Some(BetResolution::Won {
                     player: *player,
                     bet_type: BetType::TwiceHard,
@@ -276,12 +276,12 @@ impl PayoutCalculator for CrapsGame {
                 5 => 1000,  // 10:1
                 _ => 2500,  // 25:1 for 6+ wins
             };
-            let payout = CrapTokens::new_unchecked((bet.amount.amount * multiplier as u64) / 100);
+            let payout = CrapTokens::new_unchecked((bet.amount.amount() * multiplier as u64) / 100);
             return Some(BetResolution::Won {
                 player: *player,
                 bet_type: BetType::RideLine,
                 amount: bet.amount,
-                payout: CrapTokens::new_unchecked(bet.amount.amount + payout.amount),
+                payout: CrapTokens::new_unchecked(bet.amount.amount() + payout.0),
             });
         }
         None
@@ -303,7 +303,7 @@ impl PayoutCalculator for CrapsGame {
             if prev == 7 && self.phase == GamePhase::ComeOut {
                 // Natural 7 on comeout followed by establishing point
                 if curr >= 4 && curr <= 10 && curr != 7 {
-                    let payout = CrapTokens::new_unchecked(bet.amount.amount * 3); // 2:1 + original
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount() * 3); // 2:1 + original
                     return Some(BetResolution::Won {
                         player: *player,
                         bet_type: BetType::Muggsy,
@@ -334,12 +334,12 @@ impl PayoutCalculator for CrapsGame {
                     4 => 2500,  // 25:1
                     _ => 5000,  // 50:1 for 5+
                 };
-                let payout = CrapTokens::new_unchecked((bet.amount.amount * multiplier as u64) / 100);
+                let payout = CrapTokens::new_unchecked((bet.amount.amount() * multiplier as u64) / 100);
                 return Some(BetResolution::Won {
                     player: *player,
                     bet_type: BetType::Replay,
                     amount: bet.amount,
-                    payout: CrapTokens::new_unchecked(bet.amount.amount + payout.amount),
+                    payout: CrapTokens::new_unchecked(bet.amount.amount() + payout.0),
                 });
             }
         }
@@ -360,12 +360,12 @@ impl PayoutCalculator for CrapsGame {
                 4 => 10000, // 100:1
                 _ => 25000, // 250:1 for all 5
             };
-            let payout = CrapTokens::new_unchecked((bet.amount.amount * multiplier as u64) / 100);
+            let payout = CrapTokens::new_unchecked((bet.amount.amount() * multiplier as u64) / 100);
             return Some(BetResolution::Won {
                 player: *player,
                 bet_type: BetType::DifferentDoubles,
                 amount: bet.amount,
-                payout: CrapTokens::new_unchecked(bet.amount.amount + payout.amount),
+                payout: CrapTokens::new_unchecked(bet.amount.amount() + payout.0),
             });
         }
         None

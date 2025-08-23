@@ -207,7 +207,7 @@ fn bench_consensus_rounds(config: &BenchmarkConfig) -> BenchmarkResults {
     }
 }
 
-pub fn criterion_crypto_benchmarks(c: &mut Criterion, config: &BenchmarkConfig) {
+pub fn criterion_crypto_benchmarks(c: &mut Criterion, _config: &BenchmarkConfig) {
     // Merkle tree benchmarks
     c.bench_function("merkle_tree_creation", |b| {
         let leaves: Vec<[u8; 32]> = (0..100).map(|i| [i; 32]).collect();

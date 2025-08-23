@@ -3,8 +3,6 @@
 use ed25519_dalek::{Signature, VerifyingKey, Verifier};
 use sha2::{Sha256, Digest};
 use rayon::prelude::*;
-use std::sync::Arc;
-use crate::error::Result;
 
 /// SIMD acceleration availability
 #[derive(Debug, Clone, Copy)]
@@ -142,6 +140,7 @@ impl SimdHash {
 mod tests {
     use super::*;
     use crate::crypto::BitchatKeypair;
+    use ed25519_dalek::Signer;
     
     #[test]
     fn test_simd_capabilities() {
@@ -159,13 +158,15 @@ mod tests {
         let mut public_keys = Vec::new();
         
         for i in 0..4 {
-            let keypair = BitchatKeypair::generate();
+            // Use ed25519_dalek types directly for this test
+            let signing_key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
+            let verifying_key = signing_key.verifying_key();
             let message = format!("Message {}", i).into_bytes();
-            let signature = keypair.sign(&message);
+            let signature = signing_key.sign(&message);
             
             signatures.push(signature);
             messages.push(message);
-            public_keys.push(keypair.public_key());
+            public_keys.push(verifying_key);
         }
         
         let results = crypto.batch_verify(&signatures, &messages, &public_keys);

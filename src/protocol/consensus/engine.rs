@@ -291,8 +291,8 @@ impl ConsensusEngine {
             GameOperation::PlaceBet { player, bet, .. } => {
                 // Would implement bet placement logic
                 if let Some(balance) = new_state.player_balances.get_mut(player) {
-                    if balance.amount >= bet.amount.amount {
-                        *balance = CrapTokens::new_unchecked(balance.amount - bet.amount.amount);
+                    if balance.0 >= bet.amount.0 {
+                        *balance = CrapTokens::new_unchecked(balance.0 - bet.amount.0);
                     }
                 }
             },
@@ -303,7 +303,7 @@ impl ConsensusEngine {
             GameOperation::UpdateBalances { changes, .. } => {
                 for (player, change) in changes {
                     if let Some(balance) = new_state.player_balances.get_mut(player) {
-                        *balance = CrapTokens::new_unchecked(balance.amount.saturating_add(change.amount));
+                        *balance = CrapTokens::new_unchecked(balance.0.saturating_add(change.0));
                     }
                 }
             },
@@ -331,7 +331,7 @@ impl ConsensusEngine {
             GameOperation::PlaceBet { player, bet, nonce } => {
                 hasher.update(b"place_bet");
                 hasher.update(player);
-                hasher.update(&bet.amount.amount.to_le_bytes());
+                hasher.update(&bet.amount.0.to_le_bytes());
                 hasher.update(&nonce.to_le_bytes());
             },
             GameOperation::ProcessRoll { round_id, dice_roll, .. } => {
@@ -362,7 +362,7 @@ impl ConsensusEngine {
         // Add balance data
         for (&player, &balance) in &state.player_balances {
             hasher.update(&player);
-            hasher.update(&balance.amount.to_le_bytes());
+            hasher.update(&balance.0.to_le_bytes());
         }
         
         Ok(hasher.finalize().into())
@@ -532,8 +532,8 @@ impl ConsensusEngine {
         match operation {
             GameOperation::PlaceBet { player, bet, .. } => {
                 if let Some(balance) = state.player_balances.get_mut(player) {
-                    if balance.amount >= bet.amount.amount {
-                        *balance = CrapTokens::new_unchecked(balance.amount - bet.amount.amount);
+                    if balance.0 >= bet.amount.0 {
+                        *balance = CrapTokens::new_unchecked(balance.0 - bet.amount.0);
                     }
                 }
             },
@@ -543,7 +543,7 @@ impl ConsensusEngine {
             GameOperation::UpdateBalances { changes, .. } => {
                 for (player, change) in changes {
                     if let Some(balance) = state.player_balances.get_mut(player) {
-                        *balance = CrapTokens::new_unchecked(balance.amount.saturating_add(change.amount));
+                        *balance = CrapTokens::new_unchecked(balance.0.saturating_add(change.0));
                     }
                 }
             },
@@ -688,6 +688,49 @@ impl ConsensusEngine {
     fn resolve_dispute(&mut self, dispute_id: DisputeId, _upheld: bool) -> Result<()> {
         self.active_disputes.remove(&dispute_id);
         self.dispute_votes.remove(&dispute_id);
+        Ok(())
+    }
+    
+    // Public methods needed by ConsensusCoordinator
+    
+    /// Add a participant to consensus
+    pub fn add_participant(&mut self, participant: PeerId) -> Result<()> {
+        if !self.participants.contains(&participant) {
+            self.participants.push(participant);
+        }
+        Ok(())
+    }
+    
+    /// Remove a participant from consensus
+    pub fn remove_participant(&mut self, participant: PeerId) -> Result<()> {
+        self.participants.retain(|&p| p != participant);
+        Ok(())
+    }
+    
+    
+    /// Process consensus round
+    pub fn process_round(&self) -> Result<()> {
+        // Process pending proposals and votes
+        // This would be implemented fully in production
+        Ok(())
+    }
+    
+    /// Check if consensus has been reached
+    pub fn has_consensus(&self) -> bool {
+        self.current_state.confirmations >= self.config.min_confirmations as u32
+    }
+    
+    /// Get current consensus state
+    pub fn get_consensus_state(&self) -> Result<Vec<u8>> {
+        // Serialize current state
+        bincode::serialize(&*self.current_state)
+            .map_err(|e| crate::error::Error::Serialization(e.to_string()))
+    }
+    
+    /// Handle timeout for consensus round
+    pub fn handle_timeout(&mut self) -> Result<()> {
+        // Move to next round or handle stuck consensus
+        // This would be implemented fully in production
         Ok(())
     }
 }

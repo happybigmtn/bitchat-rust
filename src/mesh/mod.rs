@@ -15,6 +15,7 @@ pub mod deduplication;
 pub mod message_queue;
 pub mod game_session;
 pub mod anti_cheat;
+pub mod kademlia_dht;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

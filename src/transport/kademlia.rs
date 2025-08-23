@@ -189,7 +189,7 @@ impl KBucket {
         // Check if contact already exists
         if let Some(pos) = self.contacts.iter().position(|c| c.id == contact.id) {
             // Move to end (most recently seen) - zero-copy move
-            let existing = self.contacts.remove(pos);
+            let _existing = self.contacts.remove(pos);
             self.contacts.push(contact);
             None
         } else if self.contacts.len() < self.max_size {

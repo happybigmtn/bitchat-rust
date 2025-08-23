@@ -1,6 +1,5 @@
 //! Platform-specific optimizations for maximum performance
 
-use std::sync::Arc;
 use crate::error::Result;
 
 /// Platform optimizer facade
@@ -32,7 +31,7 @@ impl PlatformOptimizer {
 
 /// Cross-platform SIMD optimizations
 pub mod simd {
-    use super::*;
+    
     
     /// Optimized memory copy using standard library
     pub unsafe fn simd_memcpy(dst: *mut u8, src: *const u8, len: usize) {

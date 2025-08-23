@@ -49,7 +49,7 @@ impl BetResolver for CrapsGame {
             if let Some(bet) = bets.get(&BetType::Pass) {
                 match total {
                     7 | 11 => {
-                        let payout = CrapTokens::new_unchecked(bet.amount.amount * 2); // 1:1 payout
+                        let payout = CrapTokens::new_unchecked(bet.amount.amount() * 2); // 1:1 payout
                         resolutions.push(BetResolution::Won {
                             player: *player,
                             bet_type: BetType::Pass,
@@ -72,7 +72,7 @@ impl BetResolver for CrapsGame {
             if let Some(bet) = bets.get(&BetType::DontPass) {
                 match total {
                     2 | 3 => {
-                        let payout = CrapTokens::new_unchecked(bet.amount.amount * 2); // 1:1 payout
+                        let payout = CrapTokens::new_unchecked(bet.amount.amount() * 2); // 1:1 payout
                         resolutions.push(BetResolution::Won {
                             player: *player,
                             bet_type: BetType::DontPass,
@@ -121,7 +121,7 @@ impl BetResolver for CrapsGame {
             if total == point {
                 // Point made - Pass wins
                 if let Some(bet) = bets.get(&BetType::Pass) {
-                    let payout = CrapTokens::new_unchecked(bet.amount.amount * 2);
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount() * 2);
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type: BetType::Pass,
@@ -142,7 +142,7 @@ impl BetResolver for CrapsGame {
                 // Resolve Pass Odds bets
                 if let Some(bet) = bets.get(&BetType::OddsPass) {
                     let multiplier = get_odds_multiplier(point, true);
-                    let payout = CrapTokens::new_unchecked(bet.amount.amount + (bet.amount.amount * multiplier as u64 / 100));
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount() + (bet.amount.amount() * multiplier as u64 / 100));
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type: BetType::OddsPass,
@@ -162,7 +162,7 @@ impl BetResolver for CrapsGame {
                 
                 // Don't Pass wins
                 if let Some(bet) = bets.get(&BetType::DontPass) {
-                    let payout = CrapTokens::new_unchecked(bet.amount.amount * 2);
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount() * 2);
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type: BetType::DontPass,
@@ -228,7 +228,7 @@ impl BetResolver for CrapsGame {
                 match total {
                     2 | 12 => {
                         // Field pays 2:1 on 2 and 12
-                        let payout = CrapTokens::new_unchecked(bet.amount.amount * 3);
+                        let payout = CrapTokens::new_unchecked(bet.amount.amount() * 3);
                         resolutions.push(BetResolution::Won {
                             player: *player,
                             bet_type: BetType::Field,
@@ -238,7 +238,7 @@ impl BetResolver for CrapsGame {
                     },
                     3 | 4 | 9 | 10 | 11 => {
                         // Field pays 1:1 on these
-                        let payout = CrapTokens::new_unchecked(bet.amount.amount * 2);
+                        let payout = CrapTokens::new_unchecked(bet.amount.amount() * 2);
                         resolutions.push(BetResolution::Won {
                             player: *player,
                             bet_type: BetType::Field,
@@ -289,7 +289,7 @@ impl BetResolver for CrapsGame {
                     // Win! Number came up
                     use crate::protocol::payouts::PayoutCalculator;
                     let multiplier = self.get_yes_bet_multiplier(target);
-                    let payout = CrapTokens::new_unchecked(bet.amount.amount + (bet.amount.amount * multiplier as u64 / 100));
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount() + (bet.amount.amount() * multiplier as u64 / 100));
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type,
@@ -337,7 +337,7 @@ impl BetResolver for CrapsGame {
                     // Win! Seven came first
                     use crate::protocol::payouts::PayoutCalculator;
                     let multiplier = self.get_no_bet_multiplier(target);
-                    let payout = CrapTokens::new_unchecked(bet.amount.amount + (bet.amount.amount * multiplier as u64 / 100));
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount() + (bet.amount.amount() * multiplier as u64 / 100));
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type,
@@ -369,7 +369,7 @@ impl BetResolver for CrapsGame {
             if total == 4 {
                 if is_hard {
                     // Win - came the hard way!
-                    let payout = CrapTokens::new_unchecked(bet.amount.amount * 8); // 7:1 + original
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount() * 8); // 7:1 + original
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type: BetType::Hard4,
@@ -403,7 +403,7 @@ impl BetResolver for CrapsGame {
             if let Some(bet) = bets.get(&bet_type) {
                 if total == target {
                     if is_hard {
-                        let payout = CrapTokens::new_unchecked(bet.amount.amount * payout_mult);
+                        let payout = CrapTokens::new_unchecked(bet.amount.amount() * payout_mult);
                         resolutions.push(BetResolution::Won {
                             player: *player,
                             bet_type,
@@ -439,7 +439,7 @@ impl BetResolver for CrapsGame {
             match total {
                 7 | 11 => {
                     // Come bet wins immediately
-                    let payout = CrapTokens::new_unchecked(bet.amount.amount * 2); // 1:1 payout
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount() * 2); // 1:1 payout
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type: BetType::Come,
@@ -471,7 +471,7 @@ impl BetResolver for CrapsGame {
             for (&point, &amount) in player_come_points.iter() {
                 if total == point {
                     // Come point made - win
-                    let payout = CrapTokens::new_unchecked(amount.amount * 2);
+                    let payout = CrapTokens::new_unchecked(amount.amount() * 2);
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type: BetType::Come,
@@ -501,7 +501,7 @@ impl BetResolver for CrapsGame {
             match total {
                 2 | 3 => {
                     // Don't Come bet wins immediately
-                    let payout = CrapTokens::new_unchecked(bet.amount.amount * 2); // 1:1 payout
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount() * 2); // 1:1 payout
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type: BetType::DontCome,
@@ -541,7 +541,7 @@ impl BetResolver for CrapsGame {
             for (&point, &amount) in player_dont_come_points.iter() {
                 if total == 7 {
                     // Seven out - Don't Come bets win
-                    let payout = CrapTokens::new_unchecked(amount.amount * 2);
+                    let payout = CrapTokens::new_unchecked(amount.amount() * 2);
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type: BetType::DontCome,
@@ -590,7 +590,7 @@ impl BetResolver for CrapsGame {
                     // Win!
                     use crate::protocol::payouts::PayoutCalculator;
                     let multiplier = self.get_next_bet_multiplier(target);
-                    let payout = CrapTokens::new_unchecked(bet.amount.amount + (bet.amount.amount * multiplier as u64 / 100));
+                    let payout = CrapTokens::new_unchecked(bet.amount.amount() + (bet.amount.amount() * multiplier as u64 / 100));
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type,

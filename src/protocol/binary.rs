@@ -247,7 +247,7 @@ impl BinarySerializable for BetType {
 
 impl BinarySerializable for CrapTokens {
     fn serialize(&self, buf: &mut BytesMut) -> Result<(), Error> {
-        buf.put_u64(self.amount);
+        buf.put_u64(self.amount());
         Ok(())
     }
     

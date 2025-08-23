@@ -32,6 +32,10 @@ pub mod efficient_sync;
 pub mod benchmark;
 pub mod compression;
 
+// New robust modules
+pub mod treasury;
+pub mod reputation;
+
 use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -63,6 +67,113 @@ pub type PeerId = [u8; 32];
 
 /// Game identifier - 16 bytes UUID
 pub type GameId = [u8; 16];
+
+/// Hash type for state hashes
+pub type Hash256 = [u8; 32];
+
+/// CrapTokens - The native currency of BitCraps
+/// Newtype wrapper around u64 for type safety
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
+pub struct CrapTokens(pub u64);
+
+impl CrapTokens {
+    pub const ZERO: Self = Self(0);
+    
+    pub fn new(amount: u64) -> Self {
+        Self(amount)
+    }
+    
+    /// Create tokens without validation (for internal use)
+    pub fn new_unchecked(amount: u64) -> Self {
+        Self(amount)
+    }
+    
+    pub fn amount(&self) -> u64 {
+        self.0
+    }
+    
+    pub fn checked_add(self, other: Self) -> Option<Self> {
+        self.0.checked_add(other.0).map(Self)
+    }
+    
+    pub fn checked_sub(self, other: Self) -> Option<Self> {
+        self.0.checked_sub(other.0).map(Self)
+    }
+    
+    pub fn saturating_add(self, other: Self) -> Self {
+        Self(self.0.saturating_add(other.0))
+    }
+    
+    pub fn saturating_sub(self, other: Self) -> Self {
+        Self(self.0.saturating_sub(other.0))
+    }
+    
+    pub fn from_crap(crap: f64) -> crate::error::Result<Self> {
+        if crap < 0.0 {
+            return Err(crate::error::Error::InvalidData("CRAP amount cannot be negative".to_string()));
+        }
+        if crap > (u64::MAX as f64 / 2.0) / 1_000_000.0 {
+            return Err(crate::error::Error::InvalidData("CRAP amount too large".to_string()));
+        }
+        
+        let amount = (crap * 1_000_000.0) as u64;
+        if amount == 0 && crap > 0.0 {
+            return Err(crate::error::Error::InvalidData("CRAP amount too small (below minimum unit)".to_string()));
+        }
+        
+        Ok(Self(amount))
+    }
+    
+    pub fn to_crap(&self) -> f64 {
+        self.0 as f64 / 1_000_000.0
+    }
+}
+
+impl From<u64> for CrapTokens {
+    fn from(value: u64) -> Self {
+        Self(value)
+    }
+}
+
+impl From<CrapTokens> for u64 {
+    fn from(tokens: CrapTokens) -> Self {
+        tokens.0
+    }
+}
+
+impl std::ops::Add for CrapTokens {
+    type Output = Self;
+    
+    fn add(self, other: Self) -> Self {
+        Self(self.0 + other.0)
+    }
+}
+
+impl std::ops::AddAssign for CrapTokens {
+    fn add_assign(&mut self, other: Self) {
+        self.0 += other.0;
+    }
+}
+
+impl std::ops::Sub for CrapTokens {
+    type Output = Self;
+    
+    fn sub(self, other: Self) -> Self {
+        Self(self.0 - other.0)
+    }
+}
+
+impl std::ops::SubAssign for CrapTokens {
+    fn sub_assign(&mut self, other: Self) {
+        self.0 -= other.0;
+    }
+}
+
+impl std::fmt::Display for CrapTokens {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}Ȼ", self.0)
+    }
+}
 
 /// Helper function to create a new GameId using cryptographic randomness
 pub fn new_game_id() -> GameId {
@@ -238,65 +349,6 @@ pub enum BetType {
     Repeater12 = 63,    // 12 must appear 2 times before 7
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct CrapTokens {
-    pub amount: u64, // Amount in smallest unit (like satoshis)
-}
-
-impl CrapTokens {
-    pub fn new(amount: u64) -> crate::error::Result<Self> {
-        if amount == 0 {
-            return Err(crate::error::Error::InvalidData("Token amount cannot be zero".to_string()));
-        }
-        if amount > u64::MAX / 2 {
-            return Err(crate::error::Error::InvalidData("Token amount too large".to_string()));
-        }
-        Ok(Self { amount })
-    }
-    
-    /// Create tokens without validation (for internal use)
-    pub fn new_unchecked(amount: u64) -> Self {
-        Self { amount }
-    }
-    
-    pub fn amount(&self) -> u64 {
-        self.amount
-    }
-    
-    pub fn from_crap(crap: f64) -> crate::error::Result<Self> {
-        if crap < 0.0 {
-            return Err(crate::error::Error::InvalidData("CRAP amount cannot be negative".to_string()));
-        }
-        if crap > (u64::MAX as f64 / 2.0) / 1_000_000.0 {
-            return Err(crate::error::Error::InvalidData("CRAP amount too large".to_string()));
-        }
-        
-        let amount = (crap * 1_000_000.0) as u64;
-        if amount == 0 && crap > 0.0 {
-            return Err(crate::error::Error::InvalidData("CRAP amount too small (below minimum unit)".to_string()));
-        }
-        
-        Ok(Self { amount })
-    }
-    
-    pub fn to_crap(&self) -> f64 {
-        self.amount as f64 / 1_000_000.0
-    }
-    
-    /// Add tokens with overflow checking
-    pub fn checked_add(&self, other: &CrapTokens) -> crate::error::Result<CrapTokens> {
-        self.amount.checked_add(other.amount)
-            .map(|amount| CrapTokens { amount })
-            .ok_or_else(|| crate::error::Error::InvalidData("Token addition overflow".to_string()))
-    }
-    
-    /// Subtract tokens with underflow checking
-    pub fn checked_sub(&self, other: &CrapTokens) -> crate::error::Result<CrapTokens> {
-        self.amount.checked_sub(other.amount)
-            .map(|amount| CrapTokens { amount })
-            .ok_or_else(|| crate::error::Error::InsufficientBalance)
-    }
-}
 
 /// Represents a dice roll result
 /// Feynman: Two cubes, each showing 1-6, determine everyone's fate
@@ -374,19 +426,19 @@ impl Bet {
         amount: CrapTokens,
     ) -> crate::error::Result<Self> {
         // Validate bet amount
-        if amount.amount < MIN_BET_AMOUNT {
+        if amount.0 < MIN_BET_AMOUNT {
             return Err(crate::error::Error::InvalidBet(
-                format!("Bet amount {} below minimum {}", amount.amount, MIN_BET_AMOUNT)
+                format!("Bet amount {} below minimum {}", amount.0, MIN_BET_AMOUNT)
             ));
         }
-        if amount.amount > MAX_BET_AMOUNT {
+        if amount.0 > MAX_BET_AMOUNT {
             return Err(crate::error::Error::InvalidBet(
-                format!("Bet amount {} exceeds maximum {}", amount.amount, MAX_BET_AMOUNT)
+                format!("Bet amount {} exceeds maximum {}", amount.0, MAX_BET_AMOUNT)
             ));
         }
         
         // Validate bet amount is not zero
-        if amount.amount == 0 {
+        if amount.0 == 0 {
             return Err(crate::error::Error::InvalidBet(
                 "Bet amount cannot be zero".to_string()
             ));
@@ -926,9 +978,6 @@ pub enum ProtocolError {
 }
 
 // Event sourcing types for light consensus layer
-
-/// Type aliases for clarity
-pub type Hash256 = [u8; 32];
 
 /// Wrapper for signature to enable serialization
 /// Feynman: A cryptographic signature is like a tamper-proof seal

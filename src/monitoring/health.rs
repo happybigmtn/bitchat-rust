@@ -1,6 +1,5 @@
 use std::time::Instant;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use crate::monitoring::metrics::PerformanceMetrics;
 
 #[derive(Debug, Clone)]

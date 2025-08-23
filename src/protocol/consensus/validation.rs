@@ -138,7 +138,7 @@ impl Dispute {
             DisputeClaim::InvalidBet { player, bet, .. } => {
                 hasher.update(b"invalid_bet");
                 hasher.update(player);
-                hasher.update(&bet.amount.amount.to_le_bytes());
+                hasher.update(&bet.amount.0.to_le_bytes());
             },
             DisputeClaim::InvalidRoll { round_id, claimed_roll, .. } => {
                 hasher.update(b"invalid_roll");
@@ -148,8 +148,8 @@ impl Dispute {
             DisputeClaim::InvalidPayout { player, expected, actual } => {
                 hasher.update(b"invalid_payout");
                 hasher.update(player);
-                hasher.update(&expected.amount.to_le_bytes());
-                hasher.update(&actual.amount.to_le_bytes());
+                hasher.update(&expected.0.to_le_bytes());
+                hasher.update(&actual.0.to_le_bytes());
             },
             DisputeClaim::DoubleSpending { player, .. } => {
                 hasher.update(b"double_spending");
@@ -183,7 +183,7 @@ impl Dispute {
         match &self.claim {
             DisputeClaim::InvalidBet { bet, .. } => {
                 // Validate bet parameters
-                bet.amount.amount > 0 && bet.amount.amount <= 1000000 // Max bet limit
+                bet.amount.0 > 0 && bet.amount.0 <= 1000000 // Max bet limit
             },
             DisputeClaim::InvalidRoll { claimed_roll, .. } => {
                 // Validate dice roll
@@ -192,7 +192,7 @@ impl Dispute {
             },
             DisputeClaim::InvalidPayout { expected, actual, .. } => {
                 // Check if payout amounts are reasonable
-                expected.amount != actual.amount && expected.amount > 0 && actual.amount >= 0
+                expected.0 != actual.0 && expected.0 > 0 && actual.0 >= 0
             },
             DisputeClaim::DoubleSpending { conflicting_bets, .. } => {
                 // Check if there are actually conflicting bets
@@ -281,7 +281,7 @@ impl DisputeValidator {
     
     /// Resolve dispute based on votes
     pub fn resolve_dispute(
-        dispute: &Dispute,
+        _dispute: &Dispute,
         votes: &[DisputeVote],
         min_votes: usize,
     ) -> Option<DisputeVoteType> {

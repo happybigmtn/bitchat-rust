@@ -55,7 +55,7 @@ pub use protocol::craps::{
     CrapsGame, GamePhase,
 };
 pub use protocol::runtime::{
-    GameRuntime, TreasuryParticipant,
+    GameRuntime,
 };
 pub const TREASURY_ADDRESS: PeerId = [0xFFu8; 32];
 pub use session::{

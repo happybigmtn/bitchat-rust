@@ -41,6 +41,30 @@ pub struct BitchatIdentity {
 /// Gaming cryptography utilities
 pub struct GameCrypto;
 
+impl GameCrypto {
+    /// Compute SHA256 hash
+    pub fn hash(data: &[u8]) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+        hasher.finalize().into()
+    }
+    
+    /// Compute HMAC-SHA256
+    pub fn hmac(key: &[u8], data: &[u8]) -> [u8; 32] {
+        type HmacSha256 = Hmac<Sha256>;
+        let mut mac = HmacSha256::new_from_slice(key).expect("HMAC key error");
+        mac.update(data);
+        mac.finalize().into_bytes().into()
+    }
+    
+    /// Generate random bytes
+    pub fn random_bytes<const N: usize>() -> [u8; N] {
+        let mut bytes = [0u8; N];
+        thread_rng().fill_bytes(&mut bytes);
+        bytes
+    }
+}
+
 /// Key derivation utilities
 pub struct KeyDerivation;
 

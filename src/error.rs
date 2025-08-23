@@ -14,6 +14,12 @@ pub enum Error {
     #[error("Serialization error: {0}")]
     Serialization(String),
     
+    #[error("Deserialization error: {0}")]
+    DeserializationError(String),
+    
+    #[error("IO error: {0}")]
+    IoError(String),
+    
     #[error("Bincode error: {0}")]
     Bincode(#[from] bincode::Error),
     
@@ -35,11 +41,23 @@ pub enum Error {
     #[error("Game not found")]
     GameNotFound,
     
+    #[error("Player not found")]
+    PlayerNotFound,
+    
     #[error("Invalid bet: {0}")]
     InvalidBet(String),
     
     #[error("Insufficient balance")]
     InsufficientBalance,
+    
+    #[error("Insufficient funds: {0}")]
+    InsufficientFunds(String),
+    
+    #[error("Invalid signature: {0}")]
+    InvalidSignature(String),
+    
+    #[error("Invalid transaction: {0}")]
+    InvalidTransaction(String),
     
     #[error("Session not found")]
     SessionNotFound,

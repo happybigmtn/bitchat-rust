@@ -25,6 +25,9 @@ pub mod voting;
 pub mod commit_reveal;
 pub mod validation;
 pub mod lockfree_engine;
+pub mod robust_engine;
+pub mod merkle_cache;
+pub mod persistence;
 
 use std::time::Duration;
 use serde::{Serialize, Deserialize};

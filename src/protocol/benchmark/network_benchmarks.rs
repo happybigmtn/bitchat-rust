@@ -63,7 +63,7 @@ pub fn benchmark_state_sync(_config: &BenchmarkConfig) -> Vec<BenchmarkResults> 
     results
 }
 
-pub fn criterion_network_benchmarks(c: &mut Criterion, config: &BenchmarkConfig) {
+pub fn criterion_network_benchmarks(c: &mut Criterion, _config: &BenchmarkConfig) {
     // Placeholder network benchmarks
     c.bench_function("merkle_sync_simulation", |b| {
         b.iter(|| {

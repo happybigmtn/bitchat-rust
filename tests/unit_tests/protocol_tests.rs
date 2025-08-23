@@ -15,7 +15,7 @@ async fn test_packet_serialization() {
 async fn test_game_packet_creation() {
     let sender = [1u8; 32];
     let game_id = [2u8; 16];
-    let packet = PacketUtils::create_game_create(sender, game_id, 8, CrapTokens::new(100).unwrap());
+    let packet = PacketUtils::create_game_create(sender, game_id, 8, CrapTokens::new(100));
     
     assert_eq!(packet.source, sender);
     assert_eq!(packet.packet_type as u8, 0x20); // PACKET_TYPE_GAME_CREATE
@@ -31,7 +31,7 @@ async fn test_bet_packet_creation() {
         game_id: [4u8; 16],
         player: sender,
         bet_type: BetType::Pass,
-        amount: CrapTokens::new(50).unwrap(),
+        amount: CrapTokens::new(50),
         timestamp: 0,
     };
     

@@ -7,6 +7,8 @@
 //! - Transaction validation and consensus
 //! - Staking and reward distribution
 
+pub mod persistent_ledger;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -104,10 +106,10 @@ pub struct MiningConfig {
 impl Default for MiningConfig {
     fn default() -> Self {
         Self {
-            base_reward: CrapTokens::from_crap(0.1).unwrap_or_else(|_| CrapTokens::new_unchecked(100_000)).amount(), // 0.1 CRAP per relay
+            base_reward: CrapTokens::from_crap(0.1).unwrap_or_else(|_| CrapTokens::new_unchecked(100_000)).0, // 0.1 CRAP per relay
             difficulty_adjustment_interval: Duration::from_secs(3600), // 1 hour
             target_block_time: Duration::from_secs(60), // 1 minute average
-            max_supply: CrapTokens::from_crap(21_000_000.0).unwrap_or_else(|_| CrapTokens::new_unchecked(21_000_000_000_000)).amount(), // 21M CRAP total
+            max_supply: CrapTokens::from_crap(21_000_000.0).unwrap_or_else(|_| CrapTokens::new_unchecked(21_000_000_000_000)).0, // 21M CRAP total
             halving_interval: 210_000, // Halve rewards every 210k transactions
         }
     }

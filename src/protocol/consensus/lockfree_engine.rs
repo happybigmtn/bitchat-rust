@@ -3,12 +3,12 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-use crossbeam_epoch::{self as epoch, Atomic, Owned, Shared, Guard};
+use crossbeam_epoch::{self as epoch, Atomic, Owned};
 use rustc_hash::FxHashMap;
 use serde::{Serialize, Deserialize};
 
 use crate::protocol::{PeerId, GameId, Hash256, Signature};
-use crate::protocol::craps::{CrapsGame, GamePhase, Bet, DiceRoll, CrapTokens};
+use crate::protocol::craps::CrapTokens;
 use crate::error::Result;
 
 use super::{ProposalId, StateHash};
@@ -163,8 +163,8 @@ impl LockFreeConsensusEngine {
             GameOperation::PlaceBet { player, bet, .. } => {
                 // Apply bet
                 if let Some(balance) = state.player_balances.get_mut(player) {
-                    if balance.amount >= bet.amount.amount {
-                        *balance = CrapTokens::new_unchecked(balance.amount - bet.amount.amount);
+                    if balance.0 >= bet.amount.0 {
+                        *balance = CrapTokens::new_unchecked(balance.0 - bet.amount.0);
                     } else {
                         return Err(crate::error::Error::InsufficientBalance);
                     }
@@ -178,8 +178,8 @@ impl LockFreeConsensusEngine {
                 // Update balances
                 for (player, change) in changes {
                     if let Some(balance) = state.player_balances.get_mut(player) {
-                        if change.amount > 0 {
-                            *balance = CrapTokens::new_unchecked(balance.amount + change.amount);
+                        if let Some(new_balance) = balance.checked_add(*change) {
+                            *balance = new_balance;
                         }
                     }
                 }
@@ -242,7 +242,7 @@ impl LockFreeConsensusEngine {
     }
     
     /// Check if a state transition is valid (lock-free)
-    pub fn validate_transition(&self, from_state: &StateHash, to_state: &StateHash) -> bool {
+    pub fn validate_transition(&self, from_state: &StateHash, _to_state: &StateHash) -> bool {
         let guard = &epoch::pin();
         let current = self.current_state.load(Ordering::Acquire, guard);
         
@@ -351,7 +351,7 @@ impl LockFreeConsensusEngine {
             GameOperation::PlaceBet { player, bet, nonce } => {
                 hasher.update(b"place_bet");
                 hasher.update(player);
-                hasher.update(&bet.amount.amount.to_le_bytes());
+                hasher.update(&bet.amount.0.to_le_bytes());
                 hasher.update(&nonce.to_le_bytes());
             }
             _ => {
@@ -381,6 +381,7 @@ mod tests {
     use super::*;
     use std::thread;
     use std::sync::Arc;
+    use crate::protocol::craps::CrapsGame;
     
     #[test]
     fn test_lock_free_consensus() {
@@ -392,7 +393,7 @@ mod tests {
             state_hash: [0u8; 32],
             sequence_number: 0,
             timestamp: 0,
-            game_state: CrapsGame::new(),
+            game_state: CrapsGame::new(game_id, peer_id),
             player_balances: FxHashMap::default(),
             last_proposer: peer_id,
             confirmations: 0,
@@ -412,9 +413,11 @@ mod tests {
         for i in 0..10 {
             let engine_clone = engine.clone();
             let handle = thread::spawn(move || {
+                let mut changes = FxHashMap::default();
+                changes.insert(peer_id, CrapTokens::new(i as u64));
                 let operation = GameOperation::UpdateBalances {
-                    changes: vec![(peer_id, i as i64)],
-                    nonce: i,
+                    changes,
+                    reason: format!("Test update {}", i),
                 };
                 
                 engine_clone.apply_operation(&operation).unwrap();
@@ -445,7 +448,7 @@ mod tests {
             state_hash: [0u8; 32],
             sequence_number: 0,
             timestamp: 0,
-            game_state: CrapsGame::new(),
+            game_state: CrapsGame::new(game_id, peer_id),
             player_balances: FxHashMap::default(),
             last_proposer: peer_id,
             confirmations: 0,

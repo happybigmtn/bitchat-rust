@@ -287,6 +287,7 @@ dependencies = [
  "rusqlite",
  "rustc-hash",
  "serde",
+ "serde_bytes",
  "serde_json",
  "sha2",
  "snow",
@@ -2180,6 +2181,15 @@ dependencies = [
  "serde",
  "thiserror 1.0.69",
  "xml-rs",
+]
+
+[[package]]
+name = "serde_bytes"
+version = "0.11.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8437fd221bde2d4ca316d61b90e337e9e702b3820b87d63caa9ba6c02bd06d96"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

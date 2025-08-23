@@ -582,7 +582,7 @@ fn simulate_complete_game() -> bool {
     true
 }
 
-pub fn criterion_game_benchmarks(c: &mut Criterion, config: &BenchmarkConfig) {
+pub fn criterion_game_benchmarks(c: &mut Criterion, _config: &BenchmarkConfig) {
     // Game state benchmarks
     c.bench_function("state_creation", |b| {
         b.iter(|| {

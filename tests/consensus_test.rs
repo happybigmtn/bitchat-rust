@@ -12,14 +12,11 @@ async fn test_consensus_engine_creation() {
     let player2: PeerId = [2u8; 32];
     let participants = vec![player1, player2];
     
-    let initial_game = CrapsGame::new(game_id, player1);
-    
     let result = ConsensusEngine::new(
-        config,
         game_id,
         participants,
         player1,
-        initial_game,
+        config,
     );
     
     assert!(result.is_ok(), "Consensus engine should be created successfully");
@@ -33,14 +30,11 @@ async fn test_bet_proposal() {
     let player2: PeerId = [2u8; 32];
     let participants = vec![player1, player2];
     
-    let initial_game = CrapsGame::new(game_id, player1);
-    
     let mut consensus_engine = ConsensusEngine::new(
-        config,
         game_id,
         participants,
         player1,
-        initial_game,
+        config,
     ).unwrap();
     
     let bet = Bet::new(
@@ -48,7 +42,7 @@ async fn test_bet_proposal() {
         game_id,
         player1,
         BetType::Pass,
-        CrapTokens::new(100).unwrap(),
+        CrapTokens::new(100),
     ).unwrap();
     
     let bet_operation = GameOperation::PlaceBet {
@@ -69,14 +63,11 @@ async fn test_dice_commit_reveal() {
     let player2: PeerId = [2u8; 32];
     let participants = vec![player1, player2];
     
-    let initial_game = CrapsGame::new(game_id, player1);
-    
     let mut consensus_engine = ConsensusEngine::new(
-        config,
         game_id,
         participants,
         player1,
-        initial_game,
+        config,
     ).unwrap();
     
     let round_id = 1;
@@ -95,11 +86,10 @@ async fn test_consensus_health() {
     let initial_game = CrapsGame::new(game_id, player1);
     
     let consensus_engine = ConsensusEngine::new(
-        config,
         game_id,
         participants,
         player1,
-        initial_game,
+        config,
     ).unwrap();
     
     let is_healthy = consensus_engine.is_consensus_healthy();
