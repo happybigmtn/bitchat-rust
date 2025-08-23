@@ -190,10 +190,10 @@ impl CompactGameState {
     pub fn get_last_roll(&self) -> Option<DiceRoll> {
         if self.last_roll == 0 { return None; }
         
-        let die1 = (self.last_roll & 0x7) as u8;
-        let die2 = ((self.last_roll >> 3) & 0x7) as u8;
+        let die1 = ((self.last_roll & 0x7) as u8) + 1;
+        let die2 = (((self.last_roll >> 3) & 0x7) as u8) + 1;
         
-        if die1 == 0 || die2 == 0 || die1 > 6 || die2 > 6 {
+        if die1 < 1 || die2 < 1 || die1 > 6 || die2 > 6 {
             return None;
         }
         

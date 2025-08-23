@@ -155,9 +155,8 @@ impl PayoutLookupTable {
             }
         }
         
-        // Add special requirements for point phase
-        self.special_requirements.insert(BetType::Pass, SpecialRequirement::RequiresPhase(0b011)); // ComeOut or Point
-        self.special_requirements.insert(BetType::DontPass, SpecialRequirement::RequiresPhase(0b011));
+        // Pass line bets are handled entirely through lookup table
+        // No special requirements needed as they follow standard win/lose/push rules
     }
     
     /// Populate Field bet lookup data

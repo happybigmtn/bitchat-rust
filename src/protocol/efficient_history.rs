@@ -344,10 +344,23 @@ impl<T> RingBuffer<T> {
             return None;
         }
         
+        // Calculate the buffer index for the item at position 'index'
+        // The most recent item (index 0) is at (head - 1), going backwards from there
         let buffer_index = if self.head == 0 {
-            self.capacity - 1 - index
+            // When head is 0, the most recent item is at capacity - 1
+            if index < self.capacity {
+                self.capacity - 1 - index
+            } else {
+                return None;
+            }
         } else {
-            (self.head - 1 - index) % self.capacity
+            // When head > 0, calculate backwards from head - 1
+            if index < self.head {
+                self.head - 1 - index
+            } else {
+                // Wrap around to end of buffer
+                self.capacity - (index - (self.head - 1))
+            }
         };
         
         self.buffer[buffer_index].as_ref()

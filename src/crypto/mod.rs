@@ -14,6 +14,7 @@ use sha2::{Sha256, Digest};
 use hmac::{Hmac, Mac};
 use pbkdf2::pbkdf2_hmac;
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 
 use crate::protocol::{PeerId, GameId};
 use crate::error::Result;
@@ -252,7 +253,7 @@ impl GameCrypto {
     /// Verify randomness commitment
     pub fn verify_commitment(commitment: &[u8; 32], secret: &[u8; 32]) -> bool {
         let computed_commitment = Self::commit_randomness(secret);
-        commitment == &computed_commitment
+        commitment.ct_eq(&computed_commitment).into()
     }
     
     /// Combine multiple sources of randomness for fair dice rolls using cryptographic RNG
@@ -393,7 +394,7 @@ impl GameCrypto {
     /// Verify HMAC
     pub fn verify_hmac(key: &[u8], message: &[u8], expected_hmac: &[u8; 32]) -> bool {
         let computed_hmac = Self::create_hmac(key, message);
-        computed_hmac == *expected_hmac
+        computed_hmac.ct_eq(expected_hmac).into()
     }
 }
 
@@ -633,35 +634,42 @@ impl MerkleTree {
         Some(proof)
     }
     
-    /// Verify merkle proof
-    pub fn verify_proof(leaf: &[u8; 32], proof: &[[u8; 32]], root: &[u8; 32]) -> bool {
+    /// Verify merkle proof with position information
+    pub fn verify_proof_with_index(leaf: &[u8; 32], proof: &[[u8; 32]], root: &[u8; 32], mut index: usize) -> bool {
+        if proof.is_empty() {
+            return leaf == root;
+        }
+        
         let mut current_hash = *leaf;
         
         for sibling in proof {
             let mut hasher = Sha256::new();
-            // We don't know the order, so we need to try both
-            hasher.update(&current_hash);
-            hasher.update(sibling);
-            let hash1 = hasher.finalize();
             
-            hasher = Sha256::new();
-            hasher.update(sibling);
-            hasher.update(&current_hash);
-            let hash2 = hasher.finalize();
-            
-            // Use lexicographically smaller hash for deterministic ordering
-            current_hash = if hash1 <= hash2 {
-                let mut h = [0u8; 32];
-                h.copy_from_slice(&hash1);
-                h
+            // Use consistent left-to-right order like compute_root
+            if index % 2 == 0 {
+                // Current node is on the left, sibling on the right
+                hasher.update(&current_hash);
+                hasher.update(sibling);
             } else {
-                let mut h = [0u8; 32];
-                h.copy_from_slice(&hash2);
-                h
-            };
+                // Current node is on the right, sibling on the left
+                hasher.update(sibling);
+                hasher.update(&current_hash);
+            }
+            
+            let result = hasher.finalize();
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&result);
+            current_hash = hash;
+            
+            index /= 2;
         }
         
-        current_hash == *root
+        current_hash.ct_eq(root).into()
+    }
+    
+    /// Verify merkle proof (backward compatibility - assumes index 0)
+    pub fn verify_proof(leaf: &[u8; 32], proof: &[[u8; 32]], root: &[u8; 32]) -> bool {
+        Self::verify_proof_with_index(leaf, proof, root, 0)
     }
 }
 

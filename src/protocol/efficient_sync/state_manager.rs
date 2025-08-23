@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use subtle::ConstantTimeEq;
 
 use crate::protocol::{PeerId, GameId, Hash256};
 use crate::protocol::efficient_game_state::CompactGameState;
@@ -161,7 +162,7 @@ impl EfficientStateSync {
         // Compare merkle roots
         let local_root = self.merkle_tree.root();
         
-        if local_root == remote_root_hash {
+        if local_root.ct_eq(&remote_root_hash).into() {
             // States are identical
             return Ok(Some(SyncMessage::SyncComplete {
                 session_id,

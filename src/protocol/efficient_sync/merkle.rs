@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use sha2::{Sha256, Digest};
 use serde::{Serialize, Deserialize};
+use subtle::ConstantTimeEq;
 
 use crate::protocol::{GameId, Hash256};
 use crate::error::Result;
@@ -318,6 +319,6 @@ impl MerkleProof {
             directions >>= 1;
         }
         
-        current_hash == root_hash
+        current_hash.ct_eq(&root_hash).into()
     }
 }

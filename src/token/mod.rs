@@ -245,7 +245,7 @@ impl TokenLedger {
             },
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                 .as_secs(),
             nonce: account.transaction_count,
             fee: 0,
@@ -281,7 +281,7 @@ impl TokenLedger {
             reputation: 0.5,
             last_activity: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                 .as_secs(),
         });
         
@@ -297,7 +297,7 @@ impl TokenLedger {
             },
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                 .as_secs(),
             nonce: 0, // Payouts don't use account nonces
             fee: 0,
@@ -319,7 +319,7 @@ impl TokenLedger {
         let mut hasher = Sha256::new();
         hasher.update(SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| std::time::Duration::from_nanos(0))
             .as_nanos()
             .to_be_bytes());
         hasher.update(&rand::random::<[u8; 16]>());
@@ -368,7 +368,7 @@ impl TokenLedger {
             reputation: 0.5,
             last_activity: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                 .as_secs(),
         });
         
@@ -377,7 +377,7 @@ impl TokenLedger {
         account.reputation = (account.reputation + 0.01).min(1.0); // Increase reputation
         account.last_activity = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_secs();
         
         // Create proof of relay for transaction record
@@ -388,7 +388,7 @@ impl TokenLedger {
             destination: [0u8; 32], // Would be filled with actual destination
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                 .as_secs(),
             hop_count: 1, // Default hop count
             signature: crate::crypto::BitchatSignature {
@@ -407,7 +407,7 @@ impl TokenLedger {
             },
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                 .as_secs(),
             nonce: account.transaction_count,
             fee: 0,
@@ -445,7 +445,7 @@ impl TokenLedger {
         hasher.update(seed.to_be_bytes());
         hasher.update(SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| std::time::Duration::from_nanos(0))
             .as_nanos()
             .to_be_bytes());
         
@@ -487,7 +487,7 @@ impl ProofOfRelay {
     ) -> Result<()> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_secs();
         
         let relay_entry = RelayEntry {
@@ -598,7 +598,7 @@ impl ProofOfRelay {
     pub async fn cleanup_old_entries(&self) -> Result<()> {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_secs();
         
         let mut relay_log = self.relay_log.write().await;
@@ -643,7 +643,7 @@ mod tests {
         let ledger = TokenLedger::new();
         
         // Create treasury account
-        ledger.create_account(TREASURY_ADDRESS).await.unwrap();
+        ledger.create_account(TREASURY_ADDRESS).await.expect("Failed to create treasury account");
         
         let treasury_balance = ledger.get_balance(&TREASURY_ADDRESS).await;
         assert!(treasury_balance > 0);

@@ -106,8 +106,8 @@ impl BetValidator for BetType {
             // Odds bets can only be placed after point is established
             (BetType::OddsPass | BetType::OddsDontPass, GamePhase::Point) => true,
             
-            // Field bets and proposition bets can be placed anytime
-            (BetType::Field, _) => true,
+            // Field bets can be placed during active play phases only
+            (BetType::Field, GamePhase::ComeOut | GamePhase::Point) => true,
             
             // YES/NO bets can be placed anytime during active play
             (BetType::Yes2 | BetType::Yes3 | BetType::Yes4 | BetType::Yes5 |

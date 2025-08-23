@@ -2,6 +2,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::collections::HashMap;
 use sha2::{Sha256, Digest};
 use serde::{Serialize, Deserialize};
+use subtle::ConstantTimeEq;
 use crate::protocol::PeerId;
 
 /// Standalone Proof of Work for NodeId validation
@@ -69,7 +70,7 @@ impl ProofOfWork {
         
         let computed_hash: [u8; 32] = hasher.finalize().into();
         
-        if computed_hash != self.hash {
+        if computed_hash.ct_ne(&self.hash).into() {
             return false;
         }
         
@@ -182,7 +183,7 @@ impl ProofOfWorkIdentity {
         
         let computed_hash: [u8; 32] = hasher.finalize().into();
         
-        if computed_hash != self.hash {
+        if computed_hash.ct_ne(&self.hash).into() {
             return false;
         }
         

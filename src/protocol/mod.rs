@@ -55,7 +55,7 @@ pub const FLAG_GAMING_MESSAGE: u8 = 0x08;       // Bit 3
 // Gaming constants
 pub const INITIAL_CRAP_TOKENS: u64 = 1000;
 pub const MIN_BET_AMOUNT: u64 = 1;
-pub const MAX_BET_AMOUNT: u64 = 100;
+pub const MAX_BET_AMOUNT: u64 = 10_000_000;
 
 /// Peer identifier - 32 bytes for Ed25519 public key compatibility
 pub type PeerId = [u8; 32];

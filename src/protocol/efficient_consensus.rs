@@ -8,6 +8,7 @@ use std::collections::{HashMap, BTreeMap};
 use std::sync::{Arc, RwLock};
 use sha2::{Sha256, Digest};
 use serde::{Serialize, Deserialize};
+use subtle::ConstantTimeEq;
 
 use super::{PeerId, GameId, DiceRoll, Hash256};
 use crate::error::{Error, Result};
@@ -299,7 +300,7 @@ impl MerkleTree {
             };
         }
         
-        current_hash == root
+        current_hash.ct_eq(&root).into()
     }
     
     /// Hash two nodes together
@@ -770,11 +771,11 @@ mod tests {
             [1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]
         ];
         
-        let tree = MerkleTree::new(&leaves).unwrap();
+        let tree = MerkleTree::new(&leaves).expect("Failed to create merkle tree in test");
         let root = tree.root();
         
         // Generate and verify proof for first leaf
-        let proof = tree.generate_proof(0).unwrap();
+        let proof = tree.generate_proof(0).expect("Failed to generate merkle proof in test");
         assert!(MerkleTree::verify_proof(root, leaves[0], &proof));
         
         // Verify proof fails for wrong leaf
@@ -788,8 +789,8 @@ mod tests {
         let entropy1 = [1u8; 32];
         let entropy2 = [2u8; 32];
         
-        aggregator.add_entropy(&entropy1).unwrap();
-        aggregator.add_entropy(&entropy2).unwrap();
+        aggregator.add_entropy(&entropy1).expect("Failed to add entropy1 in test");
+        aggregator.add_entropy(&entropy2).expect("Failed to add entropy2 in test");
         
         let final_entropy = aggregator.finalize_entropy();
         
@@ -807,11 +808,11 @@ mod tests {
         let mut aggregator = EntropyAggregator::new();
         
         // Add some entropy sources
-        aggregator.add_entropy(&[1u8; 32]).unwrap();
-        aggregator.add_entropy(&[255u8; 32]).unwrap();
-        aggregator.add_entropy(&[128u8; 32]).unwrap();
+        aggregator.add_entropy(&[1u8; 32]).expect("Failed to add entropy in test");
+        aggregator.add_entropy(&[255u8; 32]).expect("Failed to add entropy in test");
+        aggregator.add_entropy(&[128u8; 32]).expect("Failed to add entropy in test");
         
-        let dice_roll = aggregator.generate_dice_roll().unwrap();
+        let dice_roll = aggregator.generate_dice_roll().expect("Failed to generate dice roll in test");
         
         // Dice values should be valid (1-6)
         assert!(dice_roll.die1 >= 1 && dice_roll.die1 <= 6);
@@ -830,21 +831,21 @@ mod tests {
         let commitment1 = CachedConsensusRound::hash_nonce(&nonce1, round_id);
         let commitment2 = CachedConsensusRound::hash_nonce(&nonce2, round_id);
         
-        round.add_commitment(participants[0], commitment1).unwrap();
-        round.add_commitment(participants[1], commitment2).unwrap();
+        round.add_commitment(participants[0], commitment1).expect("Failed to add commitment1 in test");
+        round.add_commitment(participants[1], commitment2).expect("Failed to add commitment2 in test");
         
         // Round should not be complete yet
         assert!(!round.is_complete());
         
         // Add reveals
-        round.add_reveal(participants[0], nonce1).unwrap();
-        round.add_reveal(participants[1], nonce2).unwrap();
+        round.add_reveal(participants[0], nonce1).expect("Failed to add reveal1 in test");
+        round.add_reveal(participants[1], nonce2).expect("Failed to add reveal2 in test");
         
         // Round should now be complete
         assert!(round.is_complete());
         
         // Should be able to get result
-        let result = round.get_result().unwrap();
+        let result = round.get_result().expect("Failed to get round result in test");
         assert!(result.die1 >= 1 && result.die1 <= 6);
         assert!(result.die2 >= 1 && result.die2 <= 6);
     }
@@ -859,22 +860,22 @@ mod tests {
         
         // Start a round
         let round_id = 1;
-        consensus.start_round(round_id).unwrap();
+        consensus.start_round(round_id).expect("Failed to start round in test");
         
         // Add commitments
         let nonces = [[10u8; 32], [20u8; 32], [30u8; 32]];
         for (i, &player) in participants.iter().enumerate() {
             let commitment = CachedConsensusRound::hash_nonce(&nonces[i], round_id);
-            consensus.add_commitment(round_id, player, commitment).unwrap();
+            consensus.add_commitment(round_id, player, commitment).expect("Failed to add commitment in test");
         }
         
         // Add reveals
         for (i, &player) in participants.iter().enumerate() {
-            consensus.add_reveal(round_id, player, nonces[i]).unwrap();
+            consensus.add_reveal(round_id, player, nonces[i]).expect("Failed to add reveal in test");
         }
         
         // Process round
-        let dice_roll = consensus.process_round(round_id).unwrap();
+        let dice_roll = consensus.process_round(round_id).expect("Failed to process round in test");
         assert!(dice_roll.die1 >= 1 && dice_roll.die1 <= 6);
         assert!(dice_roll.die2 >= 1 && dice_roll.die2 <= 6);
         
@@ -892,17 +893,17 @@ mod tests {
         let mut consensus = EfficientDiceConsensus::new(game_id, participants.clone(), config);
         
         let round_id = 1;
-        consensus.start_round(round_id).unwrap();
+        consensus.start_round(round_id).expect("Failed to start round in byzantine test");
         
         // Use same nonce for different players (Byzantine behavior)
         let same_nonce = [42u8; 32];
         let commitment = CachedConsensusRound::hash_nonce(&same_nonce, round_id);
         
-        consensus.add_commitment(round_id, participants[0], commitment).unwrap();
-        consensus.add_commitment(round_id, participants[1], commitment).unwrap();
+        consensus.add_commitment(round_id, participants[0], commitment).expect("Failed to add commitment for participant 0 in test");
+        consensus.add_commitment(round_id, participants[1], commitment).expect("Failed to add commitment for participant 1 in test");
         
-        consensus.add_reveal(round_id, participants[0], same_nonce).unwrap();
-        consensus.add_reveal(round_id, participants[1], same_nonce).unwrap();
+        consensus.add_reveal(round_id, participants[0], same_nonce).expect("Failed to add reveal for participant 0 in test");
+        consensus.add_reveal(round_id, participants[1], same_nonce).expect("Failed to add reveal for participant 1 in test");
         
         // Should detect Byzantine fault
         let faults = consensus.detect_byzantine_behavior(round_id);
@@ -924,7 +925,7 @@ mod tests {
         let mut consensus = EfficientDiceConsensus::new(game_id, participants.clone(), config);
         
         let round_id = 1;
-        consensus.start_round(round_id).unwrap();
+        consensus.start_round(round_id).expect("Failed to start round in cache test");
         
         let commitment = [42u8; 32];
         let proof = MerkleProof {
@@ -933,7 +934,7 @@ mod tests {
             leaf_index: 0,
         };
         
-        consensus.add_commitment(round_id, participants[0], commitment).unwrap();
+        consensus.add_commitment(round_id, participants[0], commitment).expect("Failed to add commitment in cache test");
         
         // First verification should be a cache miss
         let _result1 = consensus.verify_commitment_proof(round_id, commitment, &proof);

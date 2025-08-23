@@ -129,12 +129,27 @@ pub struct Contact {
     pub validation_attempts: u32, // Track validation failures
 }
 
+/// Type alias for shared contact to enable zero-copy sharing
+pub type SharedContact = Arc<Contact>;
+
+impl Contact {
+    /// Convert a Vec<Contact> to Vec<SharedContact> for internal use
+    pub fn to_shared_vec(contacts: Vec<Contact>) -> Vec<SharedContact> {
+        contacts.into_iter().map(Arc::new).collect()
+    }
+    
+    /// Convert a Vec<SharedContact> to Vec<Contact> for serialization
+    pub fn from_shared_vec(contacts: Vec<SharedContact>) -> Vec<Contact> {
+        contacts.into_iter().map(|arc| (*arc).clone()).collect()
+    }
+}
+
 impl Default for Contact {
     fn default() -> Self {
         Self {
             id: NodeId::new_legacy([0; 32]),
             peer_id: [0; 32],
-            address: "0.0.0.0:0".parse().unwrap(),
+            address: "0.0.0.0:0".parse().unwrap_or_else(|_| ([0, 0, 0, 0], 0).into()),
             last_seen: Instant::now(),
             rtt: None,
             reputation_score: 0.5, // Neutral score
@@ -150,7 +165,7 @@ impl Default for Contact {
 /// differ by a specific number of initial digits. The genius is that
 /// you keep more contacts who are "close" to you and fewer who are "far".
 pub struct KBucket {
-    contacts: Vec<Contact>,
+    contacts: Vec<SharedContact>,
     max_size: usize,
     _last_updated: Instant,
 }
@@ -170,11 +185,11 @@ impl KBucket {
     /// 1. Move it to the end if it exists (most recently seen)
     /// 2. Add it if there's room
     /// 3. Ping the oldest node if bucket is full (to check if it's alive)
-    pub fn add_contact(&mut self, contact: Contact) -> Option<Contact> {
+    pub fn add_contact(&mut self, contact: SharedContact) -> Option<SharedContact> {
         // Check if contact already exists
         if let Some(pos) = self.contacts.iter().position(|c| c.id == contact.id) {
-            // Move to end (most recently seen)
-            self.contacts.remove(pos);
+            // Move to end (most recently seen) - zero-copy move
+            let existing = self.contacts.remove(pos);
             self.contacts.push(contact);
             None
         } else if self.contacts.len() < self.max_size {
@@ -182,7 +197,7 @@ impl KBucket {
             self.contacts.push(contact);
             None
         } else {
-            // Bucket full - return oldest for eviction check
+            // Bucket full - return oldest for eviction check (zero-copy)
             Some(self.contacts[0].clone())
         }
     }
@@ -193,8 +208,8 @@ impl KBucket {
     }
     
     /// Get K closest contacts to a target
-    pub fn closest_contacts(&self, target: &NodeId, k: usize) -> Vec<Contact> {
-        let mut contacts = self.contacts.clone();
+    pub fn closest_contacts(&self, target: &NodeId, k: usize) -> Vec<SharedContact> {
+        let mut contacts = self.contacts.clone(); // Arc cloning is cheap
         contacts.sort_by_key(|c| c.id.distance(target));
         contacts.truncate(k);
         contacts
@@ -229,19 +244,27 @@ impl RoutingTable {
     }
     
     /// Add a contact to the appropriate bucket
-    pub async fn add_contact(&self, mut contact: Contact) {
+    pub async fn add_contact(&self, contact: SharedContact) {
         // Don't add ourselves
         if contact.id == self.local_id {
             return;
         }
         
-        // Update last seen time
-        contact.last_seen = Instant::now();
+        // Create updated contact with current timestamp
+        let updated_contact = Arc::new(Contact {
+            id: contact.id.clone(),
+            peer_id: contact.peer_id,
+            address: contact.address,
+            last_seen: Instant::now(),
+            rtt: contact.rtt,
+            reputation_score: contact.reputation_score,
+            validation_attempts: contact.validation_attempts,
+        });
         
         let bucket_idx = self.local_id.bucket_index(&contact.id);
         if bucket_idx < 256 {
             let mut bucket = self.buckets[bucket_idx].write().await;
-            if let Some(_eviction_candidate) = bucket.add_contact(contact) {
+            if let Some(_eviction_candidate) = bucket.add_contact(updated_contact) {
                 // TODO: Ping eviction candidate to check if still alive
                 // If dead, replace with new contact
                 // For now, just keep the existing contact
@@ -256,7 +279,7 @@ impl RoutingTable {
     /// 2. Expand outward to neighboring buckets
     /// 3. Collect K total nodes sorted by distance
     /// This is like asking "who do you know near address X?"
-    pub async fn find_closest(&self, target: &NodeId, k: usize) -> Vec<Contact> {
+    pub async fn find_closest(&self, target: &NodeId, k: usize) -> Vec<SharedContact> {
         let mut all_contacts = Vec::new();
         let bucket_idx = self.local_id.bucket_index(target);
         
@@ -265,13 +288,13 @@ impl RoutingTable {
             // Check bucket at +distance
             if bucket_idx + distance < 256 {
                 let bucket = self.buckets[bucket_idx + distance].read().await;
-                all_contacts.extend(bucket.contacts.clone());
+                all_contacts.extend(bucket.contacts.clone()); // Arc cloning is cheap
             }
             
             // Check bucket at -distance
             if distance > 0 && bucket_idx >= distance {
                 let bucket = self.buckets[bucket_idx - distance].read().await;
-                all_contacts.extend(bucket.contacts.clone());
+                all_contacts.extend(bucket.contacts.clone()); // Arc cloning is cheap
             }
             
             // Stop if we have enough contacts
@@ -345,7 +368,7 @@ pub enum FindValueResult {
 /// Response wrapper for queries
 #[derive(Debug, Clone)]
 pub enum KademliaResponse {
-    Nodes(Vec<Contact>),
+    Nodes(Vec<SharedContact>),
     Value(Vec<u8>),
     Success(bool),
 }
@@ -408,14 +431,14 @@ impl KademliaNode {
     /// 2. From responses, pick α new nodes even closer
     /// 3. Repeat until no closer nodes are found
     /// This converges in O(log n) steps!
-    pub async fn lookup_node(&self, target: NodeId) -> Vec<Contact> {
+    pub async fn lookup_node(&self, target: NodeId) -> Vec<SharedContact> {
         let mut queried = HashSet::new();
         let mut to_query = self.routing_table.find_closest(&target, self.routing_table.alpha).await;
         let mut closest = BTreeMap::new();
         
         // Add ourselves to closest if we're close
         let self_distance = self.local_id.distance(&target);
-        let self_contact = Contact {
+        let self_contact = Arc::new(Contact {
             id: self.local_id.clone(),
             peer_id: [0u8; 32], // Would be actual peer ID
             address: self.local_address,
@@ -423,7 +446,7 @@ impl KademliaNode {
             rtt: Some(Duration::from_millis(0)),
             reputation_score: 1.0, // We trust ourselves
             validation_attempts: 0,
-        };
+        });
         closest.insert(self_distance, self_contact);
         
         let mut round = 0;
@@ -433,11 +456,12 @@ impl KademliaNode {
             round += 1;
             let mut futures = Vec::new();
             
-            // Query α nodes in parallel
-            for contact in to_query.drain(..).take(self.routing_table.alpha) {
-                let contact_clone = contact.clone();
-                if queried.insert(contact.id) {
-                    futures.push(self.send_find_node(contact_clone, target.clone()));
+            // Query α nodes in parallel - optimize by avoiding unnecessary clones
+            let contacts_to_query: Vec<_> = to_query.drain(..).take(self.routing_table.alpha).collect();
+            for contact in contacts_to_query {
+                if queried.insert(contact.id.clone()) {
+                    // Pass the Arc directly - no expensive cloning
+                    futures.push(self.send_find_node_arc(contact, target.clone()));
                 }
             }
             
@@ -457,12 +481,13 @@ impl KademliaNode {
                             let distance = contact.id.distance(&target);
                             if !closest.contains_key(&distance) {
                                 improved = true;
+                                // Arc cloning is cheap - only reference counting
                                 closest.insert(distance, contact.clone());
                                 
-                                // Add to routing table
+                                // Add to routing table - zero-copy
                                 self.routing_table.add_contact(contact.clone()).await;
                                 
-                                // Consider querying this node
+                                // Consider querying this node - O(1) lookup in HashSet
                                 if !queried.contains(&contact.id) {
                                     to_query.push(contact);
                                 }
@@ -509,7 +534,7 @@ impl KademliaNode {
         
         // Store on each node
         for node in nodes {
-            futures.push(self.send_store(node, key.clone(), value.clone()));
+            futures.push(self.send_store_arc(node, key.clone(), value.clone()));
         }
         
         // Store locally if we're among the closest
@@ -594,11 +619,12 @@ impl KademliaNode {
             round += 1;
             let mut futures = Vec::new();
             
-            // Query α nodes in parallel
-            for contact in to_query.drain(..).take(self.routing_table.alpha) {
-                let contact_clone = contact.clone();
-                if queried.insert(contact.id) {
-                    futures.push(self.send_find_value(contact_clone, key.clone()));
+            // Query α nodes in parallel - optimize by avoiding unnecessary clones
+            let contacts_to_query: Vec<_> = to_query.drain(..).take(self.routing_table.alpha).collect();
+            for contact in contacts_to_query {
+                if queried.insert(contact.id.clone()) {
+                    // Pass the Arc directly - no expensive cloning
+                    futures.push(self.send_find_value_arc(contact, key.clone()));
                 }
             }
             
@@ -616,12 +642,14 @@ impl KademliaNode {
                             return Some(value);
                         },
                         Ok(FindValueResult::Nodes(nodes)) => {
-                            // Add nodes to query list
-                            for node in nodes {
+                            // Convert to SharedContact for internal use
+                            let shared_nodes = Contact::to_shared_vec(nodes);
+                            // Add nodes to query list - O(1) HashSet lookup
+                            for node in shared_nodes {
                                 if !queried.contains(&node.id) {
-                                    to_query.push(node.clone());
+                                    to_query.push(node.clone()); // Arc clone is cheap
                                 }
-                                // Add to routing table
+                                // Add to routing table - zero-copy
                                 self.routing_table.add_contact(node).await;
                             }
                         },
@@ -637,7 +665,20 @@ impl KademliaNode {
     }
     
     // Network operations
-    async fn send_find_node(&self, contact: Contact, target: NodeId) -> Result<Vec<Contact>, Box<dyn std::error::Error>> {
+    async fn send_find_node(&self, contact: Contact, target: NodeId) -> Result<Vec<SharedContact>, Box<dyn std::error::Error>> {
+        let message = KademliaMessage::FindNode {
+            target,
+            requester: self.create_self_contact(),
+        };
+        
+        match self.send_message(contact.address, message).await? {
+            KademliaResponse::Nodes(nodes) => Ok(nodes),
+            _ => Err("Unexpected response type".into()),
+        }
+    }
+    
+    /// Optimized version that works with Arc<Contact> directly
+    async fn send_find_node_arc(&self, contact: SharedContact, target: NodeId) -> Result<Vec<SharedContact>, Box<dyn std::error::Error>> {
         let message = KademliaMessage::FindNode {
             target,
             requester: self.create_self_contact(),
@@ -662,6 +703,20 @@ impl KademliaNode {
         }
     }
     
+    /// Optimized version that works with Arc<Contact> directly
+    async fn send_store_arc(&self, contact: SharedContact, key: Vec<u8>, value: Vec<u8>) -> Result<bool, Box<dyn std::error::Error>> {
+        let message = KademliaMessage::Store {
+            key,
+            value,
+            publisher: self.create_self_contact(),
+        };
+        
+        match self.send_message(contact.address, message).await? {
+            KademliaResponse::Success(success) => Ok(success),
+            _ => Err("Unexpected response type".into()),
+        }
+    }
+    
     async fn send_find_value(&self, contact: Contact, key: Vec<u8>) -> Result<FindValueResult, Box<dyn std::error::Error>> {
         let message = KademliaMessage::FindValue {
             key,
@@ -670,7 +725,27 @@ impl KademliaNode {
         
         match self.send_message(contact.address, message).await? {
             KademliaResponse::Value(value) => Ok(FindValueResult::Found(value)),
-            KademliaResponse::Nodes(nodes) => Ok(FindValueResult::Nodes(nodes)),
+            KademliaResponse::Nodes(shared_nodes) => {
+                let nodes = Contact::from_shared_vec(shared_nodes);
+                Ok(FindValueResult::Nodes(nodes))
+            },
+            _ => Err("Unexpected response type".into()),
+        }
+    }
+    
+    /// Optimized version that works with Arc<Contact> directly
+    async fn send_find_value_arc(&self, contact: SharedContact, key: Vec<u8>) -> Result<FindValueResult, Box<dyn std::error::Error>> {
+        let message = KademliaMessage::FindValue {
+            key,
+            requester: self.create_self_contact(),
+        };
+        
+        match self.send_message(contact.address, message).await? {
+            KademliaResponse::Value(value) => Ok(FindValueResult::Found(value)),
+            KademliaResponse::Nodes(shared_nodes) => {
+                let nodes = Contact::from_shared_vec(shared_nodes);
+                Ok(FindValueResult::Nodes(nodes))
+            },
             _ => Err("Unexpected response type".into()),
         }
     }
@@ -801,10 +876,11 @@ impl KademliaNode {
         match message {
             KademliaMessage::FindNode { target, requester } => {
                 // Add requester to routing table
-                routing_table.add_contact(requester).await;
+                routing_table.add_contact(Arc::new(requester)).await;
                 
                 // Find closest nodes
-                let nodes = routing_table.find_closest(&target, routing_table.k).await;
+                let shared_nodes = routing_table.find_closest(&target, routing_table.k).await;
+                let nodes = Contact::from_shared_vec(shared_nodes);
                 
                 let response = KademliaMessage::FindNodeResponse { nodes };
                 Self::send_response(query_id, response, from, udp_socket).await;
@@ -812,7 +888,7 @@ impl KademliaNode {
             
             KademliaMessage::Store { key, value, publisher } => {
                 // Add publisher to routing table
-                routing_table.add_contact(publisher.clone()).await;
+                routing_table.add_contact(Arc::new(publisher.clone())).await;
                 
                 // Store the value
                 let stored_value = StoredValue {
@@ -830,7 +906,7 @@ impl KademliaNode {
             
             KademliaMessage::FindValue { key, requester } => {
                 // Add requester to routing table
-                routing_table.add_contact(requester).await;
+                routing_table.add_contact(Arc::new(requester)).await;
                 
                 let result = if let Some(stored_value) = storage.read().await.get(&key) {
                     // Check if value hasn't expired
@@ -842,7 +918,8 @@ impl KademliaNode {
                         let mut hasher = Sha256::new();
                         hasher.update(&key);
                         let key_id = NodeId::new_legacy(hasher.finalize().into());
-                        let nodes = routing_table.find_closest(&key_id, routing_table.k).await;
+                        let shared_nodes = routing_table.find_closest(&key_id, routing_table.k).await;
+                        let nodes = Contact::from_shared_vec(shared_nodes);
                         FindValueResult::Nodes(nodes)
                     }
                 } else {
@@ -850,7 +927,8 @@ impl KademliaNode {
                     let mut hasher = Sha256::new();
                     hasher.update(&key);
                     let key_id = NodeId::new_legacy(hasher.finalize().into());
-                    let nodes = routing_table.find_closest(&key_id, routing_table.k).await;
+                    let shared_nodes = routing_table.find_closest(&key_id, routing_table.k).await;
+                    let nodes = Contact::from_shared_vec(shared_nodes);
                     FindValueResult::Nodes(nodes)
                 };
                 
@@ -860,7 +938,7 @@ impl KademliaNode {
             
             KademliaMessage::Ping { requester } => {
                 // Add requester to routing table
-                routing_table.add_contact(requester).await;
+                routing_table.add_contact(Arc::new(requester)).await;
                 
                 let responder = Contact {
                     id: local_id,
@@ -879,7 +957,8 @@ impl KademliaNode {
             // Handle responses
             KademliaMessage::FindNodeResponse { nodes } => {
                 if let Some(tx) = pending_queries.write().await.remove(&query_id) {
-                    tx.send(KademliaResponse::Nodes(nodes)).ok();
+                    let shared_nodes = Contact::to_shared_vec(nodes);
+                    tx.send(KademliaResponse::Nodes(shared_nodes)).ok();
                 }
             },
             
@@ -896,7 +975,8 @@ impl KademliaNode {
                             tx.send(KademliaResponse::Value(value)).ok();
                         },
                         FindValueResult::Nodes(nodes) => {
-                            tx.send(KademliaResponse::Nodes(nodes)).ok();
+                            let shared_nodes = Contact::to_shared_vec(nodes);
+                            tx.send(KademliaResponse::Nodes(shared_nodes)).ok();
                         },
                     }
                 }
@@ -904,7 +984,8 @@ impl KademliaNode {
             
             KademliaMessage::Pong { responder } => {
                 // Add responder to routing table
-                routing_table.add_contact(responder.clone()).await;
+                let responder_arc = Arc::new(responder.clone());
+                routing_table.add_contact(responder_arc).await;
                 event_sender.send(KademliaEvent::NodeDiscovered {
                     contact: responder,
                 }).ok();
@@ -1028,14 +1109,13 @@ use rand::RngCore;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::time::sleep;
     
     #[tokio::test]
     async fn test_node_creation() {
         let peer_id = [1u8; 32];
-        let addr = "127.0.0.1:0".parse().unwrap();
+        let addr = "127.0.0.1:0".parse().expect("Failed to parse test address");
         
-        let node = KademliaNode::new(peer_id, addr, 20, 3).await.unwrap();
+        let node = KademliaNode::new(peer_id, addr, 20, 3).await.expect("Failed to create KademliaNode");
         assert_eq!(node.local_id, NodeId::from_peer_id(&peer_id));
     }
     
@@ -1056,15 +1136,15 @@ mod tests {
         let local_id = NodeId::new_legacy([0u8; 32]);
         let routing_table = RoutingTable::new(local_id, 20, 3);
         
-        let contact = Contact {
+        let contact = Arc::new(Contact {
             id: NodeId::new_legacy([1u8; 32]),
             peer_id: [1u8; 32],
-            address: "127.0.0.1:8000".parse().unwrap(),
+            address: "127.0.0.1:8000".parse().expect("Failed to parse test address"),
             last_seen: Instant::now(),
             rtt: Some(Duration::from_millis(10)),
             reputation_score: 0.8,
             validation_attempts: 0,
-        };
+        });
         
         routing_table.add_contact(contact.clone()).await;
         
