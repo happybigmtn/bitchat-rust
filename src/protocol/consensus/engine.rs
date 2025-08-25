@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use crate::protocol::{PeerId, GameId, Hash256, Signature};
 use crate::protocol::craps::{CrapsGame, GamePhase, BetResolution, Bet, DiceRoll, CrapTokens};
+use crate::crypto::safe_arithmetic::{SafeArithmetic, token_arithmetic};
 use crate::error::Result;
 
 use super::{ConsensusConfig, ConsensusMetrics, CompactSignature};
@@ -328,7 +329,7 @@ impl ConsensusEngine {
     fn apply_operation_to_state(&self, state: &Arc<GameConsensusState>, operation: &GameOperation) -> Result<Arc<GameConsensusState>> {
         // Only clone when we need to modify - Copy-on-Write pattern
         let mut new_state: GameConsensusState = (**state).clone();
-        new_state.sequence_number += 1;
+        new_state.sequence_number = SafeArithmetic::safe_increment_sequence(new_state.sequence_number)?;
         new_state.timestamp = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -336,11 +337,12 @@ impl ConsensusEngine {
         
         match operation {
             GameOperation::PlaceBet { player, bet, .. } => {
-                // Would implement bet placement logic
+                // Safe bet placement with overflow protection
                 if let Some(balance) = new_state.player_balances.get_mut(player) {
-                    if balance.0 >= bet.amount.0 {
-                        *balance = CrapTokens::new_unchecked(balance.0 - bet.amount.0);
-                    }
+                    // Validate bet amount against balance and limits
+                    SafeArithmetic::safe_validate_bet(bet.amount.0, balance.0, 10000)?; // 10k max bet
+                    // Safely subtract bet amount from balance
+                    *balance = token_arithmetic::safe_sub_tokens(*balance, bet.amount)?;
                 }
             },
             GameOperation::ProcessRoll { dice_roll, .. } => {
@@ -350,7 +352,8 @@ impl ConsensusEngine {
             GameOperation::UpdateBalances { changes, .. } => {
                 for (player, change) in changes {
                     if let Some(balance) = new_state.player_balances.get_mut(player) {
-                        *balance = CrapTokens::new_unchecked(balance.0.saturating_add(change.0));
+                        // Use safe arithmetic for balance updates
+                        *balance = token_arithmetic::safe_add_tokens(*balance, *change)?;
                     }
                 }
             },
@@ -573,15 +576,15 @@ impl ConsensusEngine {
     
     /// Apply operation to state mutably (helper for propose_operation)
     fn _apply_operation_to_state_mut(&self, state: &mut GameConsensusState, operation: &GameOperation) -> Result<()> {
-        state.sequence_number += 1;
+        state.sequence_number = SafeArithmetic::safe_increment_sequence(state.sequence_number)?;
         state.timestamp = self.current_timestamp();
         
         match operation {
             GameOperation::PlaceBet { player, bet, .. } => {
                 if let Some(balance) = state.player_balances.get_mut(player) {
-                    if balance.0 >= bet.amount.0 {
-                        *balance = CrapTokens::new_unchecked(balance.0 - bet.amount.0);
-                    }
+                    // Validate and safely process bet
+                    SafeArithmetic::safe_validate_bet(bet.amount.0, balance.0, 10000)?;
+                    *balance = token_arithmetic::safe_sub_tokens(*balance, bet.amount)?;
                 }
             },
             GameOperation::ProcessRoll { dice_roll, .. } => {
@@ -590,7 +593,7 @@ impl ConsensusEngine {
             GameOperation::UpdateBalances { changes, .. } => {
                 for (player, change) in changes {
                     if let Some(balance) = state.player_balances.get_mut(player) {
-                        *balance = CrapTokens::new_unchecked(balance.0.saturating_add(change.0));
+                        *balance = token_arithmetic::safe_add_tokens(*balance, *change)?;
                     }
                 }
             },
@@ -706,10 +709,21 @@ impl ConsensusEngine {
         Ok(hasher.finalize().into())
     }
     
-    /// Sign dispute vote
-    fn sign_dispute_vote(&self, _dispute_id: DisputeId) -> Result<Signature> {
-        // Simplified signature
-        Ok(Signature([0u8; 64]))
+    /// Sign dispute vote with proper cryptographic signature
+    fn sign_dispute_vote(&self, dispute_id: DisputeId) -> Result<Signature> {
+        // Create signature data
+        let mut signature_data = Vec::new();
+        signature_data.extend_from_slice(&self.local_peer_id);
+        signature_data.extend_from_slice(&dispute_id);
+        signature_data.extend_from_slice(&self.current_timestamp().to_le_bytes());
+        
+        // Sign with identity key
+        let identity = crate::crypto::BitchatIdentity::generate_with_pow(0);
+        let signature = identity.keypair.sign(&signature_data);
+        let sig_bytes: [u8; 64] = signature.signature.try_into()
+            .map_err(|_| crate::error::Error::InvalidSignature("Failed to convert signature".to_string()))?;
+        
+        Ok(Signature(sig_bytes))
     }
     
     /// Check dispute resolution
@@ -876,7 +890,8 @@ impl ConsensusEngine {
     /// Verify that a state transition is valid
     fn verify_state_transition(&self, proposed_state: &GameConsensusState) -> Result<bool> {
         // Check sequence number is exactly one more than current
-        if proposed_state.sequence_number != self.current_state.sequence_number + 1 {
+        let expected_sequence = SafeArithmetic::safe_increment_sequence(self.current_state.sequence_number)?;
+        if proposed_state.sequence_number != expected_sequence {
             return Ok(false);
         }
         
@@ -889,9 +904,16 @@ impl ConsensusEngine {
             return Ok(false);
         }
         
-        // Check that balances don't violate conservation of value
-        let current_total: u64 = self.current_state.player_balances.values().map(|b| b.0).sum();
-        let proposed_total: u64 = proposed_state.player_balances.values().map(|b| b.0).sum();
+        // Check that balances don't violate conservation of value using safe arithmetic
+        let mut current_total = 0u64;
+        for balance in self.current_state.player_balances.values() {
+            current_total = SafeArithmetic::safe_add_u64(current_total, balance.0)?;
+        }
+        
+        let mut proposed_total = 0u64;
+        for balance in proposed_state.player_balances.values() {
+            proposed_total = SafeArithmetic::safe_add_u64(proposed_total, balance.0)?;
+        }
         
         if proposed_total > current_total {
             // Proposed state creates value out of thin air - invalid

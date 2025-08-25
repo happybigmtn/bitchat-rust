@@ -9,6 +9,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+// Performance optimization modules
+pub mod performance;
+pub mod ble_optimizer;
+pub mod power_manager;
+pub mod memory_manager;
+pub mod compression;
+pub mod cpu_optimizer;
+pub mod battery_thermal;
+pub mod network_optimizer;
+
+// Legacy mobile platform modules
 mod uniffi_impl;
 mod ffi;
 mod power_management;

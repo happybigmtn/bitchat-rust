@@ -4,6 +4,8 @@ use serde::{Serialize, Deserialize};
 
 use crate::protocol::{PeerId, Signature};
 use crate::protocol::craps::{Bet, DiceRoll, CrapTokens};
+use crate::crypto::SecureKeystore;
+use crate::error::Result;
 
 use super::{DisputeId, RoundId};
 
@@ -81,7 +83,7 @@ pub struct DisputeVote {
 }
 
 /// Types of dispute votes
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum DisputeVoteType {
     /// Dispute is valid, punish the accused
     Uphold,
@@ -207,32 +209,52 @@ impl Dispute {
 }
 
 impl DisputeVote {
-    /// Create new dispute vote
+    /// Create new dispute vote with proper cryptographic signature
     pub fn new(
         voter: PeerId,
         dispute_id: DisputeId,
         vote: DisputeVoteType,
         reasoning: String,
-    ) -> Self {
+        keystore: &mut SecureKeystore,
+    ) -> Result<Self> {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
         
-        Self {
+        // Create signature data
+        let mut signature_data = Vec::new();
+        signature_data.extend_from_slice(&voter);
+        signature_data.extend_from_slice(&dispute_id);
+        signature_data.extend_from_slice(&(vote as u8).to_le_bytes());
+        signature_data.extend_from_slice(reasoning.as_bytes());
+        signature_data.extend_from_slice(&timestamp.to_le_bytes());
+        
+        // Sign with dispute context key
+        let signature = keystore.sign(&signature_data)?;
+        
+        Ok(Self {
             voter,
             dispute_id,
             vote,
             reasoning,
             timestamp,
-            signature: crate::protocol::Signature([0u8; 64]), // Would implement proper signing
-        }
+            signature,
+        })
     }
     
-    /// Verify vote signature
-    pub fn verify_signature(&self) -> bool {
-        // Would implement signature verification
-        true
+    /// Verify vote signature with proper cryptographic validation
+    pub fn verify_signature(&self, voter_public_key: &[u8; 32]) -> Result<bool> {
+        // Reconstruct signature data
+        let mut signature_data = Vec::new();
+        signature_data.extend_from_slice(&self.voter);
+        signature_data.extend_from_slice(&self.dispute_id);
+        signature_data.extend_from_slice(&(self.vote as u8).to_le_bytes());
+        signature_data.extend_from_slice(self.reasoning.as_bytes());
+        signature_data.extend_from_slice(&self.timestamp.to_le_bytes());
+        
+        // Verify signature
+        SecureKeystore::verify_signature(&signature_data, &self.signature, voter_public_key)
     }
 }
 

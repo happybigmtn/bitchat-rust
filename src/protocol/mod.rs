@@ -40,6 +40,15 @@ pub mod reputation;
 // Infrastructure modules
 pub mod versioning;
 
+// P2P Networking Protocol modules
+pub mod p2p_messages;
+pub mod consensus_coordinator;
+pub mod state_sync;
+pub mod ble_dispatch;
+pub mod partition_recovery;
+pub mod anti_cheat;
+pub mod ble_optimization;
+
 use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 

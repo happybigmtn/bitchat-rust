@@ -11,10 +11,12 @@
 pub mod simd_acceleration;
 pub mod random;
 pub mod encryption;
+pub mod secure_keystore;
+pub mod safe_arithmetic;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier};
-use rand::{RngCore, thread_rng};
+use rand::{RngCore, rngs::OsRng};
 use sha2::{Sha256, Digest};
 use hmac::{Hmac, Mac};
 use pbkdf2::pbkdf2_hmac;
@@ -25,6 +27,8 @@ use crate::protocol::{PeerId, GameId};
 use crate::error::Result;
 
 pub use encryption::{Encryption, EncryptionKeypair};
+pub use secure_keystore::SecureKeystore;
+pub use safe_arithmetic::SafeArithmetic;
 
 /// Ed25519 keypair for signing and identity
 #[derive(Debug, Clone)]
@@ -91,10 +95,11 @@ impl GameCrypto {
         mac.finalize().into_bytes().into()
     }
     
-    /// Generate random bytes
+    /// Generate cryptographically secure random bytes
     pub fn random_bytes<const N: usize>() -> [u8; N] {
         let mut bytes = [0u8; N];
-        thread_rng().fill_bytes(&mut bytes);
+        let mut secure_rng = OsRng;
+        secure_rng.fill_bytes(&mut bytes);
         bytes
     }
 }
@@ -120,10 +125,10 @@ pub struct BitchatSignature {
 }
 
 impl BitchatKeypair {
-    /// Generate a new keypair
+    /// Generate a new keypair using secure randomness
     pub fn generate() -> Self {
-        let mut rng = thread_rng();
-        let signing_key = SigningKey::generate(&mut rng);
+        let mut secure_rng = OsRng;
+        let signing_key = SigningKey::generate(&mut secure_rng);
         let verifying_key = signing_key.verifying_key();
         Self { signing_key, verifying_key }
     }
@@ -291,11 +296,11 @@ impl ProofOfWork {
 }
 
 impl GameCrypto {
-    /// Generate a secure game ID
+    /// Generate a cryptographically secure game ID
     pub fn generate_game_id() -> GameId {
-        let mut rng = thread_rng();
+        let mut secure_rng = OsRng;
         let mut game_id = [0u8; 16];
-        rng.fill_bytes(&mut game_id);
+        secure_rng.fill_bytes(&mut game_id);
         game_id
     }
     
@@ -331,8 +336,8 @@ impl GameCrypto {
         // Add fresh cryptographic randomness
         let mut csprng_bytes = [0u8; 32];
         use rand::RngCore;
-        let mut rng = rand::thread_rng();
-        rng.fill_bytes(&mut csprng_bytes);
+        let mut secure_rng = OsRng;
+        secure_rng.fill_bytes(&mut csprng_bytes);
         
         // Combine with existing sources
         for (i, byte) in csprng_bytes.iter().enumerate() {
@@ -416,21 +421,21 @@ impl GameCrypto {
         hash
     }
     
-    /// Generate cryptographically secure random bytes
+    /// Generate cryptographically secure random bytes using OS entropy
     pub fn generate_random_bytes(length: usize) -> Vec<u8> {
         use rand::RngCore;
-        let mut rng = rand::thread_rng();
+        let mut secure_rng = OsRng;
         let mut bytes = vec![0u8; length];
-        rng.fill_bytes(&mut bytes);
+        secure_rng.fill_bytes(&mut bytes);
         bytes
     }
     
-    /// Generate a secure dice roll without external sources
+    /// Generate a cryptographically secure dice roll using OS entropy
     pub fn generate_secure_dice_roll() -> (u8, u8) {
         use rand::RngCore;
-        let mut rng = rand::thread_rng();
+        let mut secure_rng = OsRng;
         let mut bytes = [0u8; 16];
-        rng.fill_bytes(&mut bytes);
+        secure_rng.fill_bytes(&mut bytes);
         
         let die1 = Self::hash_to_die_value(&bytes[0..8]);
         let die2 = Self::hash_to_die_value(&bytes[8..16]);
@@ -524,9 +529,9 @@ impl SecureRng {
         
         // Add fresh cryptographic randomness
         use rand::RngCore;
-        let mut rng = rand::thread_rng();
+        let mut secure_rng = OsRng;
         let mut csprng_bytes = [0u8; 32];
-        rng.fill_bytes(&mut csprng_bytes);
+        secure_rng.fill_bytes(&mut csprng_bytes);
         
         for (i, byte) in csprng_bytes.iter().enumerate() {
             state[i] ^= byte;

@@ -96,6 +96,25 @@ pub enum Error {
     #[error("Unknown peer: {0}")]
     UnknownPeer(String),
     
+    // Security and arithmetic errors
+    #[error("Arithmetic overflow: {0}")]
+    ArithmeticOverflow(String),
+    
+    #[error("Division by zero: {0}")]
+    DivisionByZero(String),
+    
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+    
+    #[error("Invalid timestamp: {0}")]
+    InvalidTimestamp(String),
+    
+    #[error("Index out of bounds: {0}")]
+    IndexOutOfBounds(String),
+    
+    #[error("Invalid public key: {0}")]
+    InvalidPublicKey(String),
+    
     #[error("Authentication error: {0}")]
     Authentication(String),
     
@@ -104,9 +123,6 @@ pub enum Error {
     
     #[error("Not found: {0}")]
     NotFound(String),
-    
-    #[error("Invalid input: {0}")]
-    InvalidInput(String),
     
     #[error("Platform error: {0}")]
     Platform(String),
