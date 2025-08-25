@@ -128,6 +128,12 @@ pub struct InputState {
     pub completion_index: Option<usize>,
 }
 
+impl Default for InputState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InputState {
     pub fn new() -> Self {
         Self {
@@ -302,6 +308,12 @@ pub struct CasinoInputHandler {
     pub selected_bet_type: Option<BetType>,
     pub quick_bet_amounts: Vec<u64>,
     pub quick_bet_index: usize,
+}
+
+impl Default for CasinoInputHandler {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CasinoInputHandler {
@@ -523,9 +535,7 @@ impl CasinoInputHandler {
             if let Some(pos) = bet_types.iter().position(|&x| x == current) {
                 let new_pos = if forward {
                     (pos + 1) % bet_types.len()
-                } else {
-                    if pos == 0 { bet_types.len() - 1 } else { pos - 1 }
-                };
+                } else if pos == 0 { bet_types.len() - 1 } else { pos - 1 };
                 self.selected_bet_type = Some(bet_types[new_pos]);
             }
         } else {
@@ -610,7 +620,7 @@ impl AppState {
     pub async fn new(config_path: Option<PathBuf>) -> Result<Self, AppError> {
         let config_path = config_path.unwrap_or_else(|| {
             dirs::config_dir()
-                .unwrap_or_else(|| std::env::temp_dir()) // Fallback to temp dir
+                .unwrap_or_else(std::env::temp_dir) // Fallback to temp dir
                 .join("bitchat")
                 .join("config.toml")
         });

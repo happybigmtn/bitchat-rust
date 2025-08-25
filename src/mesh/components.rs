@@ -56,6 +56,12 @@ pub struct ComponentManager {
     components: Arc<RwLock<HashMap<ComponentType, Box<dyn MeshComponent>>>>,
 }
 
+impl Default for ComponentManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ComponentManager {
     /// Create a new component manager
     pub fn new() -> Self {

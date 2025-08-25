@@ -421,7 +421,7 @@ impl RobustConsensusEngine {
                     self.phase_start = Instant::now();
                     
                     // Penalize non-revealers
-                    for (peer, _) in &self.commits {
+                    for peer in self.commits.keys() {
                         if !self.reveals.contains_key(peer) {
                             *self.penalties.entry(*peer).or_insert(0.0) += PENALTY_MULTIPLIER;
                         }

@@ -1,0 +1,39 @@
+// Simplified Mobile Interface for BitCraps
+// This UDL only includes types that are actually implemented
+
+namespace bitcraps {
+    [Throws=BitCrapsError]
+    BitCrapsNode create_node(BitCrapsConfig config);
+    
+    sequence<string> get_available_bluetooth_adapters();
+};
+
+// Main node interface
+interface BitCrapsNode {
+    [Throws=BitCrapsError, Async]
+    void start_discovery();
+    
+    [Async]
+    void stop_discovery();
+};
+
+// Configuration
+dictionary BitCrapsConfig {
+    string bluetooth_name;
+    boolean enable_battery_optimization;
+    u32 max_peers;
+    u32 discovery_timeout_seconds;
+};
+
+// Error type
+[Error]
+enum BitCrapsError {
+    "InitializationError",
+    "BluetoothError",
+    "NetworkError",
+    "GameError",
+    "CryptoError",
+    "InvalidInput",
+    "Timeout",
+    "NotFound",
+};

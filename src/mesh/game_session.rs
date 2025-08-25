@@ -64,7 +64,7 @@ impl GameSessionManager {
         for participant in participants {
             self.player_sessions
                 .entry(participant)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(game_id);
         }
     }
@@ -88,10 +88,10 @@ impl GameSessionManager {
                 
                 // Update state based on packet type
                 match packet.packet_type {
-                    p if p as u8 == 0x21 => { // GameStart
+                    p if p == 0x21 => { // GameStart
                         session.state = SessionState::Active;
                     }
-                    p if p as u8 == 0x27 => { // GameEnd
+                    p if p == 0x27 => { // GameEnd
                         session.state = SessionState::Completed;
                     }
                     _ => {}

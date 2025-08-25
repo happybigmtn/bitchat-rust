@@ -6,17 +6,16 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::{sleep, timeout};
-use ed25519_dalek::{SigningKey, Signer};
+use tokio::time::sleep;
+use ed25519_dalek::SigningKey;
 use rand::rngs::OsRng;
 
 use bitcraps::protocol::consensus::robust_engine::{
     RobustConsensusEngine, ConsensusPhase, SignedMessage,
-    RandomnessCommit, RandomnessReveal, StateProposal, Settlement,
+    RandomnessCommit, RandomnessReveal, Settlement,
     ProposalVote
 };
 use bitcraps::protocol::treasury::TreasuryManager;
-use bitcraps::protocol::reputation::Verdict;
 use bitcraps::protocol::reputation::{ReputationManager, DisputeType};
 use bitcraps::protocol::{PeerId, GameId};
 use bitcraps::crypto::GameCrypto;

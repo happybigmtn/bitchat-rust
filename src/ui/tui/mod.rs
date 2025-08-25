@@ -86,6 +86,12 @@ pub struct AnimationState {
     pub animation_start: Option<Instant>,
 }
 
+impl Default for TuiApp {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TuiApp {
     pub fn new() -> Self {
         Self {
@@ -471,7 +477,7 @@ fn render_dice_area(f: &mut Frame, area: Rect, app: &TuiApp) {
     let dice_faces = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
     
     // Die 1
-    let die1_text = if die1 >= 1 && die1 <= 6 {
+    let die1_text = if (1..=6).contains(&die1) {
         dice_faces[(die1 - 1) as usize]
     } else {
         "⚀"
@@ -518,7 +524,7 @@ fn render_dice_area(f: &mut Frame, area: Rect, app: &TuiApp) {
     f.render_widget(status_widget, dice_chunks[1]);
     
     // Die 2
-    let die2_text = if die2 >= 1 && die2 <= 6 {
+    let die2_text = if (1..=6).contains(&die2) {
         dice_faces[(die2 - 1) as usize]
     } else {
         "⚀"

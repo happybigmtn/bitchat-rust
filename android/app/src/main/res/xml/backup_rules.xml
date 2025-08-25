@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Exclude sensitive BitCraps data from backup -->
+    <exclude domain="file" path="bitcraps/" />
+    <exclude domain="database" />
+    <exclude domain="sharedpref" path="bitcraps_prefs.xml" />
+</full-backup-content>

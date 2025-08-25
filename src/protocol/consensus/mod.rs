@@ -28,6 +28,7 @@ pub mod lockfree_engine;
 pub mod robust_engine;
 pub mod merkle_cache;
 pub mod persistence;
+pub mod byzantine_engine;
 
 use std::time::Duration;
 use serde::{Serialize, Deserialize};

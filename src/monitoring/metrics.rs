@@ -25,6 +25,12 @@ pub struct MetricsCollector {
     start_time: Instant,
 }
 
+impl Default for MetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MetricsCollector {
     pub fn new() -> Self {
         Self {
@@ -520,8 +526,8 @@ pub struct ErrorSnapshot {
     pub gaming_errors: u64,
 }
 
-/// Global metrics instance
 lazy_static::lazy_static! {
+    /// Global metrics instance
     pub static ref METRICS: Arc<MetricsCollector> = Arc::new(MetricsCollector::new());
 }
 

@@ -58,7 +58,7 @@ impl ConsensusCoordinator {
     pub async fn add_participant(&self, game_id: GameId, participant: PeerId) -> Result<()> {
         let mut engines = self.engines.write().await;
         let engine = engines.get_mut(&game_id)
-            .ok_or_else(|| Error::GameNotFound)?;
+            .ok_or(Error::GameNotFound)?;
         
         engine.add_participant(participant)?;
         Ok(())
@@ -68,7 +68,7 @@ impl ConsensusCoordinator {
     pub async fn remove_participant(&self, game_id: GameId, participant: PeerId) -> Result<()> {
         let mut engines = self.engines.write().await;
         let engine = engines.get_mut(&game_id)
-            .ok_or_else(|| Error::GameNotFound)?;
+            .ok_or(Error::GameNotFound)?;
         
         engine.remove_participant(participant)?;
         Ok(())
@@ -82,7 +82,7 @@ impl ConsensusCoordinator {
     ) -> Result<()> {
         let mut engines = self.engines.write().await;
         let engine = engines.get_mut(&game_id)
-            .ok_or_else(|| Error::GameNotFound)?;
+            .ok_or(Error::GameNotFound)?;
         
         engine.propose_operation(operation)?;
         Ok(())
@@ -114,7 +114,7 @@ impl ConsensusCoordinator {
     pub async fn check_consensus(&self, game_id: GameId) -> Result<bool> {
         let engines = self.engines.read().await;
         let engine = engines.get(&game_id)
-            .ok_or_else(|| Error::GameNotFound)?;
+            .ok_or(Error::GameNotFound)?;
         
         Ok(engine.has_consensus())
     }
@@ -123,7 +123,7 @@ impl ConsensusCoordinator {
     pub async fn get_consensus_state(&self, game_id: GameId) -> Result<Vec<u8>> {
         let engines = self.engines.read().await;
         let engine = engines.get(&game_id)
-            .ok_or_else(|| Error::GameNotFound)?;
+            .ok_or(Error::GameNotFound)?;
         
         engine.get_consensus_state()
     }
@@ -132,7 +132,7 @@ impl ConsensusCoordinator {
     pub async fn handle_timeout(&self, game_id: GameId) -> Result<()> {
         let mut engines = self.engines.write().await;
         let engine = engines.get_mut(&game_id)
-            .ok_or_else(|| Error::GameNotFound)?;
+            .ok_or(Error::GameNotFound)?;
         
         engine.handle_timeout()?;
         Ok(())

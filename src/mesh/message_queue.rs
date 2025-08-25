@@ -63,7 +63,7 @@ impl MessageQueue {
         
         // Determine priority based on packet type and route to appropriate channel
         match packet.packet_type {
-            p if p >= 0x20 && p <= 0x27 => {
+            p if (0x20..=0x27).contains(&p) => {
                 // High priority: Game packets
                 match self.high_sender.try_send(packet) {
                     Ok(_) => {
@@ -74,7 +74,7 @@ impl MessageQueue {
                     Err(_) => Err("Failed to send high priority message"),
                 }
             }
-            p if p >= 0x10 && p <= 0x17 => {
+            p if (0x10..=0x17).contains(&p) => {
                 // Normal priority: Regular messages
                 match self.normal_sender.try_send(packet) {
                     Ok(_) => {
@@ -295,7 +295,7 @@ mod tests {
                 tlv_data: vec![],
                 source: [i as u8; 32],
                 target: [(i + 1) as u8; 32],
-                sequence: i as u32,
+                sequence: i as u64,
                 payload: Some(vec![i as u8]),
             };
             

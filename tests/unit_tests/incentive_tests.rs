@@ -1,5 +1,4 @@
 use bitcraps::token::{ProofOfRelay, TokenLedger};
-use bitcraps::protocol::{PeerId, BitchatPacket, PacketUtils};
 use std::sync::Arc;
 
 #[tokio::test]

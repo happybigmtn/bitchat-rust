@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use bitchat::protocol::*;
+use bitcraps::protocol::*;
 
 fn message_serialization_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("message_serialization");

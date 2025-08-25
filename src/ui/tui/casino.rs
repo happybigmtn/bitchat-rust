@@ -81,6 +81,12 @@ pub struct GameStats {
     pub favorite_bet_type: Option<BetType>,
 }
 
+impl Default for CasinoUI {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CasinoUI {
     pub fn new() -> Self {
         Self {
@@ -529,7 +535,7 @@ impl CasinoUI {
     }
 
     /// Create the betting list widget with all available bet types
-    fn create_bet_list_widget(&self, bet_options: &[(BetType, &str, &str, &str)]) -> List {
+    fn create_bet_list_widget(&self, bet_options: &[(BetType, &str, &str, &str)]) -> List<'_> {
         let bet_items: Vec<ListItem> = bet_options
             .iter()
             .map(|(bet_type, name, odds, desc)| {
@@ -571,12 +577,12 @@ impl CasinoUI {
     }
 
     /// Create the dice display widget showing current roll or ready state
-    fn create_dice_widget(&self, dice_result: Option<(u8, u8)>) -> Paragraph {
+    fn create_dice_widget(&self, dice_result: Option<(u8, u8)>) -> Paragraph<'_> {
         let dice_display = if let Some((d1, d2)) = dice_result {
             let total = d1 + d2;
             let dice_faces = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
-            let d1_face = if d1 >= 1 && d1 <= 6 { dice_faces[(d1-1) as usize] } else { "?" };
-            let d2_face = if d2 >= 1 && d2 <= 6 { dice_faces[(d2-1) as usize] } else { "?" };
+            let d1_face = if (1..=6).contains(&d1) { dice_faces[(d1-1) as usize] } else { "?" };
+            let d2_face = if (1..=6).contains(&d2) { dice_faces[(d2-1) as usize] } else { "?" };
             
             let (total_color, result_text) = match total {
                 7 | 11 => (Color::Green, "🎉 NATURAL!"),
@@ -666,7 +672,7 @@ impl CasinoUI {
     }
 
     /// Create the players list widget showing current players and their status
-    fn create_players_list_widget(&self, game: &GameSession) -> List {
+    fn create_players_list_widget(&self, game: &GameSession) -> List<'_> {
         let player_items: Vec<ListItem> = game.players
             .iter()
             .enumerate()
@@ -703,7 +709,7 @@ impl CasinoUI {
     }
 
     /// Create the betting history widget showing recent bets and activity
-    fn create_betting_history_widget(&self) -> Paragraph {
+    fn create_betting_history_widget(&self) -> Paragraph<'_> {
         let bet_display = if self.bet_history.is_empty() {
             vec![
                 Line::from("📊 No bets placed yet"),

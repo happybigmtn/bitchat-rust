@@ -91,6 +91,12 @@ pub struct TransportCoordinator {
     event_receiver: Arc<RwLock<mpsc::UnboundedReceiver<TransportEvent>>>,
 }
 
+impl Default for TransportCoordinator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TransportCoordinator {
     pub fn new() -> Self {
         Self::new_with_limits(ConnectionLimits::default())
@@ -188,6 +194,23 @@ impl TransportCoordinator {
         }
         
         Ok(())
+    }
+    
+    /// Set maximum connections allowed
+    pub fn set_max_connections(&mut self, max_connections: u32) {
+        self.connection_limits.max_total_connections = max_connections as usize;
+    }
+    
+    /// Set discovery interval for peer finding
+    pub fn set_discovery_interval(&mut self, _interval: Duration) {
+        // TODO: Implement discovery interval configuration
+        // This would update how often we scan for new peers
+    }
+    
+    /// Add a transport to the coordinator
+    pub fn add_transport(&mut self, _transport: Box<dyn Transport>) {
+        // TODO: Implement multiple transport support
+        // For now we only support Bluetooth
     }
     
     /// Record a connection attempt for rate limiting
@@ -399,6 +422,7 @@ impl TransportCoordinator {
 
 /// Transport statistics for monitoring
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct TransportStats {
     pub bytes_sent: u64,
     pub bytes_received: u64,
@@ -408,18 +432,6 @@ pub struct TransportStats {
     pub error_count: u64,
 }
 
-impl Default for TransportStats {
-    fn default() -> Self {
-        Self {
-            bytes_sent: 0,
-            bytes_received: 0,
-            packets_sent: 0,
-            packets_received: 0,
-            connection_count: 0,
-            error_count: 0,
-        }
-    }
-}
 
 /// Connection statistics for DoS protection monitoring
 #[derive(Debug, Clone)]

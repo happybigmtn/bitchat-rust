@@ -79,7 +79,7 @@ impl PayloadAnalyzer {
         
         // Check for text patterns (ASCII printable characters)
         let text_chars = data.iter()
-            .filter(|&&b| b >= 32 && b <= 126)
+            .filter(|&&b| (32..=126).contains(&b))
             .count();
         let text_ratio = text_chars as f64 / data.len() as f64;
         
@@ -147,6 +147,12 @@ impl PayloadAnalyzer {
 /// Adaptive compression system
 pub struct AdaptiveCompression {
     stats: CompressionStats,
+}
+
+impl Default for AdaptiveCompression {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AdaptiveCompression {

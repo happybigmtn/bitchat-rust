@@ -51,7 +51,7 @@ pub struct LockFreeConsensusEngine {
     pending_proposals: Arc<parking_lot::RwLock<FxHashMap<ProposalId, GameProposal>>>,
     
     /// Consensus participants
-    participants: Vec<PeerId>,
+    _participants: Vec<PeerId>,
     
     /// Performance metrics
     metrics: Arc<LockFreeMetrics>,
@@ -80,7 +80,7 @@ impl LockFreeConsensusEngine {
             game_id,
             local_peer_id,
             pending_proposals: Arc::new(parking_lot::RwLock::new(FxHashMap::default())),
-            participants,
+            _participants: participants,
             metrics: Arc::new(LockFreeMetrics::default()),
             active: AtomicBool::new(true),
         }
@@ -328,12 +328,12 @@ impl LockFreeConsensusEngine {
         use sha2::{Sha256, Digest};
         let mut hasher = Sha256::new();
         
-        hasher.update(&state.game_id);
-        hasher.update(&state.sequence_number.to_le_bytes());
-        hasher.update(&state.timestamp.to_le_bytes());
+        hasher.update(state.game_id);
+        hasher.update(state.sequence_number.to_le_bytes());
+        hasher.update(state.timestamp.to_le_bytes());
         
         // Add game state data
-        hasher.update(&format!("{:?}", state.game_state.phase));
+        hasher.update(format!("{:?}", state.game_state.phase));
         
         Ok(hasher.finalize().into())
     }
@@ -343,16 +343,16 @@ impl LockFreeConsensusEngine {
         use sha2::{Sha256, Digest};
         let mut hasher = Sha256::new();
         
-        hasher.update(&self.game_id);
-        hasher.update(&self.local_peer_id);
-        hasher.update(&current_timestamp().to_le_bytes());
+        hasher.update(self.game_id);
+        hasher.update(self.local_peer_id);
+        hasher.update(current_timestamp().to_le_bytes());
         
         match operation {
             GameOperation::PlaceBet { player, bet, nonce } => {
                 hasher.update(b"place_bet");
                 hasher.update(player);
-                hasher.update(&bet.amount.0.to_le_bytes());
-                hasher.update(&nonce.to_le_bytes());
+                hasher.update(bet.amount.0.to_le_bytes());
+                hasher.update(nonce.to_le_bytes());
             }
             _ => {
                 hasher.update(b"other_operation");

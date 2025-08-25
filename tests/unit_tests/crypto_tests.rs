@@ -1,5 +1,4 @@
 use bitcraps::crypto::{BitchatKeypair, GameCrypto};
-use bitcraps::protocol::PeerId;
 
 /// Test cryptographic key generation
 /// 

@@ -87,10 +87,18 @@ impl MessageDeduplicator {
         let mut hasher = Sha256::new();
         
         // Hash relevant packet fields (exclude TTL and timestamp)
-        hasher.update(&packet.source);
-        hasher.update(&packet.target);
-        hasher.update(&[packet.packet_type as u8]);
-        hasher.update(&packet.sequence.to_le_bytes());
+        hasher.update([packet.version]);
+        hasher.update([packet.packet_type]);
+        hasher.update([packet.flags]);
+        hasher.update(packet.sequence.to_le_bytes());
+        hasher.update(packet.total_length.to_le_bytes());
+        
+        // Hash TLV data for uniqueness
+        for tlv in &packet.tlv_data {
+            hasher.update([tlv.field_type]);
+            hasher.update(tlv.length.to_le_bytes());
+            hasher.update(&tlv.value);
+        }
         
         // Hash payload if present
         if let Some(ref payload) = packet.payload {
@@ -269,7 +277,7 @@ impl BloomFilter {
     
     fn hash_with_seed(&self, data: &[u8], seed: u32) -> u64 {
         let mut hasher = Sha256::new();
-        hasher.update(&seed.to_le_bytes());
+        hasher.update(seed.to_le_bytes());
         hasher.update(data);
         let result = hasher.finalize();
         u64::from_le_bytes(result[0..8].try_into().unwrap_or([0u8; 8]))
@@ -314,10 +322,19 @@ impl BloomDeduplicator {
     
     fn compute_packet_hash(&self, packet: &BitchatPacket) -> [u8; 32] {
         let mut hasher = Sha256::new();
-        hasher.update(&packet.source);
-        hasher.update(&packet.target);
-        hasher.update(&[packet.packet_type as u8]);
-        hasher.update(&packet.sequence.to_le_bytes());
+        hasher.update([packet.version]);
+        hasher.update([packet.packet_type]);
+        hasher.update([packet.flags]);
+        hasher.update(packet.sequence.to_le_bytes());
+        hasher.update(packet.total_length.to_le_bytes());
+        
+        // Hash TLV data for uniqueness
+        for tlv in &packet.tlv_data {
+            hasher.update([tlv.field_type]);
+            hasher.update(tlv.length.to_le_bytes());
+            hasher.update(&tlv.value);
+        }
+        
         if let Some(ref payload) = packet.payload {
             hasher.update(payload);
         }
@@ -351,7 +368,7 @@ mod tests {
             tlv_data: vec![],
             source: [1u8; 32],
             target: [2u8; 32],
-            sequence,
+            sequence: sequence.into(),
             payload: Some(vec![1, 2, 3, 4]),
         }
     }

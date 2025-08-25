@@ -213,7 +213,7 @@ impl CachedMerkleTree {
             // Move up the tree
             current_hash = parent_hash;
             current_index /= 2;
-            level_size = (level_size + 1) / 2;
+            level_size = level_size.div_ceil(2);
         }
     }
     
@@ -231,25 +231,41 @@ impl CachedMerkleTree {
         
         self.stats.write().misses += 1;
         
-        // Generate proof
+        // Generate proof by simulating tree traversal
         let mut proof = Vec::new();
         let mut current_index = index;
-        let mut level_size = self.leaves.len();
+        let mut level_hashes = self.leaves.clone();
         
-        while level_size > 1 {
+        while level_hashes.len() > 1 {
             let sibling_index = if current_index % 2 == 0 {
                 current_index + 1
             } else {
                 current_index - 1
             };
             
-            if sibling_index < level_size {
-                // In full implementation, would traverse tree structure
-                proof.push(self.leaves[sibling_index.min(self.leaves.len() - 1)]);
+            if sibling_index < level_hashes.len() {
+                proof.push(level_hashes[sibling_index]);
+            } else {
+                // Duplicate last hash for odd number of nodes
+                proof.push(level_hashes[level_hashes.len() - 1]);
             }
             
+            // Build next level
+            let mut next_level = Vec::new();
+            let mut i = 0;
+            while i < level_hashes.len() {
+                let left = level_hashes[i];
+                let right = if i + 1 < level_hashes.len() {
+                    level_hashes[i + 1]
+                } else {
+                    level_hashes[i]
+                };
+                next_level.push(Self::hash_pair(&left, &right));
+                i += 2;
+            }
+            
+            level_hashes = next_level;
             current_index /= 2;
-            level_size = (level_size + 1) / 2;
         }
         
         // Cache the proof
@@ -485,7 +501,7 @@ mod tests {
     
     #[test]
     fn test_incremental_update() {
-        let mut leaves: Vec<Hash256> = (0..8)
+        let leaves: Vec<Hash256> = (0..8)
             .map(|i| {
                 let mut hash = [0; 32];
                 hash[0] = i;

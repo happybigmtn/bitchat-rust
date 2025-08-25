@@ -13,14 +13,14 @@ pub struct HealthStatus {
 
 pub struct HealthCheck {
     start_time: Instant,
-    metrics: Arc<PerformanceMetrics>,
+    _metrics: Arc<PerformanceMetrics>,
 }
 
 impl HealthCheck {
     pub fn new(metrics: Arc<PerformanceMetrics>) -> Self {
         Self {
             start_time: Instant::now(),
-            metrics,
+            _metrics: metrics,
         }
     }
     

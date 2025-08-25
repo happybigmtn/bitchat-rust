@@ -39,13 +39,19 @@ impl SimdCapabilities {
 
 /// SIMD-accelerated cryptographic operations
 pub struct SimdCrypto {
-    capabilities: SimdCapabilities,
+    _capabilities: SimdCapabilities,
+}
+
+impl Default for SimdCrypto {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SimdCrypto {
     pub fn new() -> Self {
         Self {
-            capabilities: SimdCapabilities::detect(),
+            _capabilities: SimdCapabilities::detect(),
         }
     }
     
@@ -108,6 +114,12 @@ pub enum HashType {
     Blake3,
 }
 
+impl Default for SimdHash {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SimdHash {
     pub fn new() -> Self {
         Self {
@@ -139,7 +151,7 @@ impl SimdHash {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::BitchatKeypair;
+    
     use ed25519_dalek::Signer;
     
     #[test]

@@ -33,6 +33,12 @@ pub struct PlayerManager {
     locked_balances: Arc<RwLock<HashMap<PeerId, u64>>>,
 }
 
+impl Default for PlayerManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PlayerManager {
     /// Create a new player manager
     pub fn new() -> Self {

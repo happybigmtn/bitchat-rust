@@ -37,7 +37,7 @@ impl BinarySerializable for u8 {
     }
     
     fn deserialize(buf: &mut &[u8]) -> Result<Self, Error> {
-        if buf.len() < 1 {
+        if buf.is_empty() {
             return Err(Error::Serialization("Not enough data for u8".to_string()));
         }
         Ok(buf.get_u8())
@@ -152,7 +152,7 @@ impl BinarySerializable for BetType {
     }
     
     fn deserialize(buf: &mut &[u8]) -> Result<Self, Error> {
-        if buf.len() < 1 {
+        if buf.is_empty() {
             return Err(Error::Serialization("Not enough data for BetType".to_string()));
         }
         let val = buf.get_u8();
@@ -280,10 +280,10 @@ impl BinarySerializable for DiceRoll {
         let timestamp = buf.get_u64();
         
         // Validate dice values are between 1 and 6 inclusive
-        if die1 < 1 || die1 > 6 {
+        if !(1..=6).contains(&die1) {
             return Err(Error::Serialization(format!("Invalid die1 value: {}, must be 1-6", die1)));
         }
-        if die2 < 1 || die2 > 6 {
+        if !(1..=6).contains(&die2) {
             return Err(Error::Serialization(format!("Invalid die2 value: {}, must be 1-6", die2)));
         }
         

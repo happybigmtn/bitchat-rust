@@ -1,5 +1,4 @@
-use bitcraps::token::{TokenLedger, Account, TransactionType};
-use bitcraps::protocol::PeerId;
+use bitcraps::token::TokenLedger;
 
 #[tokio::test]
 async fn test_token_ledger_creation() {

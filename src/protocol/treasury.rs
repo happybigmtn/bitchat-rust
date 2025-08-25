@@ -45,6 +45,12 @@ pub struct Treasury {
     pub version: u32,
 }
 
+impl Default for Treasury {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Treasury {
     /// Create a new treasury with initial balance
     pub fn new() -> Self {
@@ -276,12 +282,12 @@ impl TreasuryManager {
     }
     
     /// Get a read-only reference to the treasury
-    pub fn read(&self) -> std::sync::RwLockReadGuard<Treasury> {
+    pub fn read(&self) -> std::sync::RwLockReadGuard<'_, Treasury> {
         self.treasury.read().unwrap()
     }
     
     /// Get a mutable reference to the treasury
-    pub fn write(&self) -> std::sync::RwLockWriteGuard<Treasury> {
+    pub fn write(&self) -> std::sync::RwLockWriteGuard<'_, Treasury> {
         self.treasury.write().unwrap()
     }
     

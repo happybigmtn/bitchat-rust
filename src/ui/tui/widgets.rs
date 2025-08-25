@@ -21,6 +21,12 @@ pub struct AutoComplete {
     commands: Vec<String>,
 }
 
+impl Default for AutoComplete {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AutoComplete {
     pub fn new() -> Self {
         Self {

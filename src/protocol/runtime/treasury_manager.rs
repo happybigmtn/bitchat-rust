@@ -50,7 +50,7 @@ impl TreasuryManager {
     pub async fn collect_rake(&self, game_id: GameId) -> Result<u64> {
         let mut pots = self.game_pots.write().await;
         let pot = pots.get_mut(&game_id)
-            .ok_or_else(|| Error::GameNotFound)?;
+            .ok_or(Error::GameNotFound)?;
         
         let rake = (*pot as f32 * self.rake_percentage) as u64;
         *pot = pot.saturating_sub(rake);

@@ -61,8 +61,8 @@ impl RandomnessCommit {
     /// Create commitment hash
     fn create_commitment(nonce: [u8; 32], round_id: RoundId) -> Hash256 {
         let mut hasher = Sha256::new();
-        hasher.update(&nonce);
-        hasher.update(&round_id.to_le_bytes());
+        hasher.update(nonce);
+        hasher.update(round_id.to_le_bytes());
         hasher.finalize().into()
     }
     
@@ -92,6 +92,12 @@ impl RandomnessReveal {
             timestamp,
             signature: crate::protocol::Signature([0u8; 64]), // Would implement proper signing
         }
+    }
+}
+
+impl Default for EntropyPool {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -125,7 +131,7 @@ impl EntropyPool {
         }
         
         // Add round counter for uniqueness
-        hasher.update(&self.round_counter.to_le_bytes());
+        hasher.update(self.round_counter.to_le_bytes());
         
         let entropy = hasher.finalize().into();
         self.combined_entropy = Some(entropy);

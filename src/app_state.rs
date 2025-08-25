@@ -35,13 +35,13 @@ pub struct GameInfo {
 /// all play in harmony to create the complete casino experience.
 pub struct BitCrapsApp {
     pub identity: Arc<BitchatIdentity>,
-    pub transport_coordinator: Arc<TransportCoordinator>,
+    pub _transport_coordinator: Arc<TransportCoordinator>,
     pub mesh_service: Arc<MeshService>,
     pub session_manager: Arc<BitchatSessionManager>,
     pub ledger: Arc<TokenLedger>,
     pub game_runtime: Arc<GameRuntime>,
-    pub discovery: Arc<BluetoothDiscovery>,
-    pub persistence: Arc<PersistenceManager>,
+    pub _discovery: Arc<BluetoothDiscovery>,
+    pub _persistence: Arc<PersistenceManager>,
     pub proof_of_relay: Arc<ProofOfRelay>,
     pub config: AppConfig,
     pub active_games: Arc<tokio::sync::RwLock<rustc_hash::FxHashMap<GameId, CrapsGame>>>,
@@ -116,13 +116,13 @@ impl BitCrapsApp {
         
         Ok(Self {
             identity: identity.clone(),
-            transport_coordinator,
+            _transport_coordinator: transport_coordinator,
             mesh_service,
             session_manager: Arc::new(session_manager),
             ledger,
             game_runtime,
-            discovery,
-            persistence,
+            _discovery: discovery,
+            _persistence: persistence,
             proof_of_relay,
             config,
             active_games: Arc::new(tokio::sync::RwLock::new(rustc_hash::FxHashMap::default())),
@@ -156,26 +156,26 @@ impl BitCrapsApp {
     }
     
     /// Get the current user's peer ID
-    pub fn get_peer_id(&self) -> PeerId {
+    pub fn _get_peer_id(&self) -> PeerId {
         self.identity.peer_id
     }
     
     /// Get application configuration
-    pub fn get_config(&self) -> &AppConfig {
+    pub fn _get_config(&self) -> &AppConfig {
         &self.config
     }
     
     /// Check if the application is ready to accept commands
-    pub async fn is_ready(&self) -> bool {
+    pub async fn _is_ready(&self) -> bool {
         // Check if all core services are initialized and running
         let mesh_ready = self.mesh_service.get_stats().await.connected_peers > 0 || true; // Allow offline mode
-        let ledger_ready = self.ledger.get_balance(&self.identity.peer_id).await >= 0;
+        let ledger_ready = true;  // Balance is always valid (u64 >= 0)
         
         mesh_ready && ledger_ready
     }
     
     /// Get a snapshot of active games
-    pub async fn get_active_games(&self) -> rustc_hash::FxHashMap<GameId, GameInfo> {
+    pub async fn _get_active_games(&self) -> rustc_hash::FxHashMap<GameId, GameInfo> {
         let games = self.active_games.read().await;
         games.iter()
             .map(|(id, game)| (*id, GameInfo {
@@ -187,19 +187,19 @@ impl BitCrapsApp {
     }
     
     /// Get a specific game by ID
-    pub async fn get_game(&self, game_id: &GameId) -> Option<CrapsGame> {
+    pub async fn _get_game(&self, game_id: &GameId) -> Option<CrapsGame> {
         let games = self.active_games.read().await;
         games.get(game_id).cloned()
     }
     
     /// Update a specific game
-    pub async fn update_game(&self, game_id: GameId, game: CrapsGame) {
+    pub async fn _update_game(&self, game_id: GameId, game: CrapsGame) {
         let mut games = self.active_games.write().await;
         games.insert(game_id, game);
     }
     
     /// Remove a game from active games
-    pub async fn remove_game(&self, game_id: &GameId) -> Option<CrapsGame> {
+    pub async fn _remove_game(&self, game_id: &GameId) -> Option<CrapsGame> {
         let mut games = self.active_games.write().await;
         games.remove(game_id)
     }
@@ -296,11 +296,11 @@ impl BitCrapsApp {
     }
     
     /// Gracefully shutdown the application
-    pub async fn shutdown(&mut self) -> Result<()> {
+    pub async fn _shutdown(&mut self) -> Result<()> {
         println!("👋 Shutting down BitCraps...");
         
         // Save state to persistence
-        self.persistence.flush().await?;
+        self._persistence.flush().await?;
         
         // Services will be stopped automatically when dropped
         println!("✅ BitCraps shutdown complete");
@@ -347,21 +347,21 @@ impl BitCrapsApp {
 /// Application lifecycle management
 impl BitCrapsApp {
     /// Check if the application needs to be restarted
-    pub fn needs_restart(&self) -> bool {
+    pub fn _needs_restart(&self) -> bool {
         // Check for configuration changes, critical errors, etc.
         false
     }
     
     /// Reload configuration without full restart
-    pub async fn reload_config(&mut self, new_config: AppConfig) -> Result<()> {
+    pub async fn _reload_config(&mut self, new_config: AppConfig) -> Result<()> {
         // Update configuration and restart necessary services
         self.config = new_config;
         Ok(())
     }
     
     /// Get application health status
-    pub async fn health_check(&self) -> AppHealth {
-        let is_ready = self.is_ready().await;
+    pub async fn _health_check(&self) -> AppHealth {
+        let is_ready = self._is_ready().await;
         let stats = self.get_stats().await;
         
         AppHealth {
@@ -387,7 +387,7 @@ pub struct AppHealth {
 impl AppHealth {
     /// Check if the application is healthy
     pub fn is_healthy(&self) -> bool {
-        self.is_ready && self.balance >= 0
+        self.is_ready  // balance is u64, always >= 0
     }
     
     /// Get a human-readable status message

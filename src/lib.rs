@@ -1,4 +1,7 @@
 //! BitCraps - A decentralized, peer-to-peer casino protocol
+#![allow(dead_code)]  // Allow dead code during development
+#![allow(unused_variables)]  // Allow unused variables during development
+#![allow(unused_assignments)]  // Allow unused assignments during development
 //! 
 //! Feynman Explanation: This is the "master blueprint" for our decentralized casino.
 //! Think of it as a city plan where each module is a different district:
@@ -26,7 +29,7 @@ pub mod transport;    // Network transport layer (Bluetooth mesh)
 pub mod mesh;         // Mesh networking coordination
 pub mod discovery;    // Peer discovery (Bluetooth, DHT)
 pub mod coordinator;  // Network coordination and monitoring
-// Gaming is now integrated into protocol module (protocol/craps.rs and protocol/runtime.rs)
+pub mod gaming;       // Gaming interfaces and session management
 pub mod session;      // Session management with Noise protocol
 pub mod token;        // Token economics and CRAP tokens
 pub mod ui;           // User interface (CLI and TUI)
@@ -35,12 +38,21 @@ pub mod monitoring;   // Production monitoring and metrics
 pub mod optimization; // Performance optimizations
 pub mod persistence;  // Data persistence layer
 pub mod cache;        // Multi-tier caching system
+pub mod mobile;       // Mobile platform bindings and UniFFI interface
+pub mod performance;  // Performance benchmarking and analysis
+
+// UniFFI type tag (required by generated code)
+#[cfg(feature = "uniffi")]
+pub struct UniFfiTag;
+
 
 // Re-export commonly used types for easy access
 pub use error::{Error, Result};
 pub use protocol::{
-    PeerId, GameId, BitchatPacket, BetType, DiceRoll, CrapTokens, 
-    PacketUtils, PACKET_TYPE_PING, PACKET_TYPE_GAME_CREATE,
+    PeerId, GameId, BetType, DiceRoll, CrapTokens,
+};
+pub use protocol::versioning::{
+    ProtocolVersion, ProtocolFeature, ProtocolCompatibility, VersionedMessage,
 };
 pub use crypto::{
     BitchatKeypair, BitchatIdentity, GameCrypto, ProofOfWork,

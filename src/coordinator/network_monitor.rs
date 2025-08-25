@@ -217,8 +217,8 @@ impl NetworkMonitor {
             
             if let Some(node) = topology.nodes.get(&current) {
                 for &neighbor in &node.connections {
-                    if !distances.contains_key(&neighbor) {
-                        distances.insert(neighbor, current_distance + 1);
+                    if let std::collections::hash_map::Entry::Vacant(e) = distances.entry(neighbor) {
+                        e.insert(current_distance + 1);
                         queue.push_back(neighbor);
                     }
                 }
@@ -236,7 +236,7 @@ impl NetworkMonitor {
         let mut total_clustering = 0.0;
         let mut node_count = 0;
         
-        for (_node_id, node) in &topology.nodes {
+        for node in topology.nodes.values() {
             if node.connections.len() < 2 {
                 continue;
             }

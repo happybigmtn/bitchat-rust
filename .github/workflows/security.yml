@@ -1,0 +1,190 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [ master, main, develop ]
+  pull_request:
+    branches: [ master, main, develop ]
+  schedule:
+    # Run daily at 3 AM UTC
+    - cron: '0 3 * * *'
+
+jobs:
+  # Dependency vulnerability scanning
+  dependency-check:
+    name: Dependency Security Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Run cargo-audit
+      uses: actions-rs/audit-check@v1
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Static Application Security Testing (SAST)
+  sast:
+    name: Static Security Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Install cargo-geiger
+      run: cargo install cargo-geiger
+    
+    - name: Check for unsafe code
+      run: cargo geiger
+    
+    - name: Install semgrep
+      run: |
+        python3 -m pip install semgrep
+    
+    - name: Run semgrep security patterns
+      run: |
+        semgrep --config=auto --json --output=semgrep-results.json || true
+    
+    - name: Upload semgrep results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: semgrep-results
+        path: semgrep-results.json
+
+  # License compliance check
+  license-check:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install cargo-license
+      run: cargo install cargo-license
+    
+    - name: Check licenses
+      run: cargo license --json > licenses.json
+    
+    - name: Verify license compatibility
+      run: |
+        # Check for incompatible licenses
+        if grep -E '"license": "(GPL|AGPL|SSPL)"' licenses.json; then
+          echo "Found potentially incompatible licenses"
+          exit 1
+        fi
+    
+    - name: Upload license report
+      uses: actions/upload-artifact@v3
+      with:
+        name: license-report
+        path: licenses.json
+
+  # Cryptography audit
+  crypto-audit:
+    name: Cryptography Audit
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Check for weak cryptography
+      run: |
+        # Check for MD5, SHA1, or other weak algorithms
+        if grep -r "md5\|sha1\|des\|rc4" --include="*.rs" .; then
+          echo "Warning: Found potentially weak cryptographic algorithms"
+        fi
+    
+    - name: Verify random number generation
+      run: |
+        # Ensure secure random number generation
+        if ! grep -r "OsRng\|rand::thread_rng" --include="*.rs" .; then
+          echo "Warning: No secure random number generation found"
+        fi
+
+  # Secret scanning
+  secret-scan:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: TruffleHog OSS
+      uses: trufflesecurity/trufflehog@main
+      with:
+        path: ./
+        base: ${{ github.event.repository.default_branch }}
+        head: HEAD
+        extra_args: --debug --only-verified
+
+  # Container scanning (if using Docker)
+  container-scan:
+    name: Container Security
+    runs-on: ubuntu-latest
+    if: false  # Enable when Docker is added
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'bitcraps:latest'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy results to GitHub Security
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  # Supply chain security
+  supply-chain:
+    name: Supply Chain Security
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Generate SBOM
+      uses: anchore/sbom-action@v0
+      with:
+        format: spdx-json
+        output-file: sbom.spdx.json
+    
+    - name: Upload SBOM
+      uses: actions/upload-artifact@v3
+      with:
+        name: sbom
+        path: sbom.spdx.json
+
+  # Security scorecard
+  scorecard:
+    name: Security Scorecard
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      id-token: write
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    
+    - name: Run analysis
+      uses: ossf/scorecard-action@v2
+      with:
+        results_file: results.sarif
+        results_format: sarif
+        publish_results: true
+    
+    - name: Upload to code-scanning
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: results.sarif

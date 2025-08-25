@@ -101,7 +101,7 @@ impl AntiCheatMonitor {
         behavior.last_packet_time = Some(now);
         
         // Check for suspicious patterns in game packets
-        if packet.packet_type as u8 >= 0x20 && packet.packet_type as u8 <= 0x27 {
+        if packet.packet_type >= 0x20 && packet.packet_type <= 0x27 {
             // Game-specific anti-cheat would go here
             // For example: impossible dice rolls, betting patterns, etc.
         }

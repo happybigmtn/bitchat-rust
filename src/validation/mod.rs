@@ -74,7 +74,7 @@ struct TokenBucket {
 /// Input sanitizer for cleaning dangerous inputs
 pub struct InputSanitizer {
     dangerous_patterns: Vec<regex::Regex>,
-    max_depth: usize,
+    _max_depth: usize,
 }
 
 impl InputValidator {
@@ -333,7 +333,7 @@ impl InputSanitizer {
         
         Self {
             dangerous_patterns: patterns,
-            max_depth: 10,
+            _max_depth: 10,
         }
     }
     

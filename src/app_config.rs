@@ -87,8 +87,22 @@ impl Commands {
         )
     }
     
-    /// Get the command name as a string
+    /// Get the name of this command
     pub fn name(&self) -> &'static str {
+        match self {
+            Commands::Start => "start",
+            Commands::CreateGame { .. } => "create-game",
+            Commands::JoinGame { .. } => "join-game",
+            Commands::Bet { .. } => "bet",
+            Commands::Balance => "balance",
+            Commands::Games => "games",
+            Commands::Stats => "stats",
+            Commands::Ping => "ping",
+        }
+    }
+    
+    /// Get the command name as a string
+    pub fn _name(&self) -> &'static str {
         match self {
             Commands::Start => "start",
             Commands::CreateGame { .. } => "create-game",

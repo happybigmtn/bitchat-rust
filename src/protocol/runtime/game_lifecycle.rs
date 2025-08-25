@@ -118,7 +118,7 @@ impl GameLifecycleManager {
     pub async fn add_player_to_game(&self, game_id: GameId, player: PeerId) -> Result<()> {
         let mut games = self.games.write().await;
         let game = games.get_mut(&game_id)
-            .ok_or_else(|| Error::GameNotFound)?;
+            .ok_or(Error::GameNotFound)?;
         
         // Check if game is full
         if game.game.participants.len() >= self.config.max_players {
@@ -145,7 +145,7 @@ impl GameLifecycleManager {
     pub async fn remove_player_from_game(&self, game_id: GameId, player: PeerId) -> Result<()> {
         let mut games = self.games.write().await;
         let game = games.get_mut(&game_id)
-            .ok_or_else(|| Error::GameNotFound)?;
+            .ok_or(Error::GameNotFound)?;
         
         // Remove player bets
         game.game.clear_player_bets(&player);
@@ -169,7 +169,7 @@ impl GameLifecycleManager {
     pub async fn process_bet(&self, game_id: GameId, player: PeerId, bet: Bet) -> Result<()> {
         let mut games = self.games.write().await;
         let game = games.get_mut(&game_id)
-            .ok_or_else(|| Error::GameNotFound)?;
+            .ok_or(Error::GameNotFound)?;
         
         // Validate bet is allowed
         if !game.config.allowed_bets.is_empty() && 
@@ -194,7 +194,7 @@ impl GameLifecycleManager {
     pub async fn process_dice_roll(&self, game_id: GameId, shooter: PeerId) -> Result<DiceRoll> {
         let mut games = self.games.write().await;
         let game = games.get_mut(&game_id)
-            .ok_or_else(|| Error::GameNotFound)?;
+            .ok_or(Error::GameNotFound)?;
         
         // Verify shooter
         if game.game.get_shooter() != shooter {
@@ -218,7 +218,7 @@ impl GameLifecycleManager {
     pub async fn suspend_game(&self, game_id: GameId, _reason: String) -> Result<()> {
         let mut games = self.games.write().await;
         let game = games.get_mut(&game_id)
-            .ok_or_else(|| Error::GameNotFound)?;
+            .ok_or(Error::GameNotFound)?;
         
         game.is_suspended = true;
         Ok(())
@@ -228,7 +228,7 @@ impl GameLifecycleManager {
     pub async fn resume_game(&self, game_id: GameId) -> Result<()> {
         let mut games = self.games.write().await;
         let game = games.get_mut(&game_id)
-            .ok_or_else(|| Error::GameNotFound)?;
+            .ok_or(Error::GameNotFound)?;
         
         game.is_suspended = false;
         game.last_activity = Instant::now();

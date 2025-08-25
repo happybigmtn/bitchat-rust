@@ -91,7 +91,7 @@ pub struct MerkleProof {
 /// Optimized dice consensus engine
 pub struct EfficientDiceConsensus {
     /// Game ID this consensus is for
-    game_id: GameId,
+    _game_id: GameId,
     
     /// List of participating players
     participants: Vec<PeerId>,
@@ -205,7 +205,7 @@ impl MerkleTree {
         
         while level_size > 1 {
             let next_level_start = level_start + level_size;
-            let next_level_size = (level_size + 1) / 2;
+            let next_level_size = level_size.div_ceil(2);
             
             for i in 0..next_level_size {
                 let left_idx = level_start + i * 2;
@@ -266,7 +266,7 @@ impl MerkleTree {
             
             if is_right {
                 // Safe bit shift with bounds checking
-                if path.len() > 0 && path.len() <= 64 {
+                if !path.is_empty() && path.len() <= 64 {
                     directions |= 1u64 << (path.len() - 1);
                 } else if path.len() > 64 {
                     return Err(Error::Protocol("Merkle proof path too long".into()));
@@ -276,7 +276,7 @@ impl MerkleTree {
             // Move to parent in next level
             current_idx = next_level_start + (current_idx - level_start) / 2;
             level_start = next_level_start;
-            level_size = (level_size + 1) / 2;
+            level_size = level_size.div_ceil(2);
         }
         
         Ok(MerkleProof {
@@ -317,6 +317,12 @@ impl MerkleTree {
     }
 }
 
+impl Default for EntropyAggregator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EntropyAggregator {
     /// Create new entropy aggregator
     pub fn new() -> Self {
@@ -353,8 +359,8 @@ impl EntropyAggregator {
         
         // Apply additional mixing to prevent correlation attacks
         let mut hasher = Sha256::new();
-        hasher.update(&self.accumulated_entropy);
-        hasher.update(&self.source_count.to_be_bytes());
+        hasher.update(self.accumulated_entropy);
+        hasher.update(self.source_count.to_be_bytes());
         hasher.finalize().into()
     }
     
@@ -488,7 +494,7 @@ impl CachedConsensusRound {
     fn hash_nonce(nonce: &[u8; 32], round_id: u64) -> Hash256 {
         let mut hasher = Sha256::new();
         hasher.update(nonce);
-        hasher.update(&round_id.to_be_bytes());
+        hasher.update(round_id.to_be_bytes());
         hasher.finalize().into()
     }
     
@@ -524,7 +530,7 @@ impl EfficientDiceConsensus {
         );
         
         Self {
-            game_id,
+            _game_id: game_id,
             participants,
             current_round: 1,
             active_rounds: BTreeMap::new(),
@@ -712,8 +718,8 @@ impl EfficientDiceConsensus {
     /// Generate cache key for merkle tree
     fn generate_cache_key(&self, round_id: u64, commitment: Hash256) -> u64 {
         let mut hasher = Sha256::new();
-        hasher.update(&round_id.to_be_bytes());
-        hasher.update(&commitment);
+        hasher.update(round_id.to_be_bytes());
+        hasher.update(commitment);
         let hash = hasher.finalize();
         u64::from_be_bytes([hash[0], hash[1], hash[2], hash[3], hash[4], hash[5], hash[6], hash[7]])
     }

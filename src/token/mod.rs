@@ -69,6 +69,25 @@ pub struct Account {
     pub last_activity: u64,
 }
 
+impl Account {
+    pub fn new(peer_id: PeerId, initial_balance: u64) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+            
+        Self {
+            peer_id,
+            balance: initial_balance,
+            staked_amount: 0,
+            pending_rewards: 0,
+            transaction_count: 0,
+            reputation: 1.0,
+            last_activity: now,
+        }
+    }
+}
+
 /// Staking position
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StakingPosition {
@@ -152,6 +171,12 @@ pub struct MiningStats {
     pub average_relay_time: Duration,
 }
 
+impl Default for TokenLedger {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TokenLedger {
     pub fn new() -> Self {
         let (event_sender, _) = mpsc::unbounded_channel();
@@ -175,6 +200,30 @@ impl TokenLedger {
         } else {
             0
         }
+    }
+    
+    /// Transfer tokens between accounts
+    pub async fn transfer(&self, from: PeerId, to: PeerId, amount: u64) -> Result<()> {
+        let mut accounts = self.accounts.write().await;
+        
+        // Get source account
+        let from_account = accounts.get_mut(&from)
+            .ok_or_else(|| Error::Protocol("Source account not found".to_string()))?;
+        
+        if from_account.balance < amount {
+            return Err(Error::Protocol("Insufficient balance".to_string()));
+        }
+        
+        // Deduct from source
+        from_account.balance -= amount;
+        from_account.transaction_count += 1;
+        
+        // Add to destination (create if doesn't exist)
+        let to_account = accounts.entry(to).or_insert_with(|| Account::new(to, 0));
+        to_account.balance += amount;
+        to_account.transaction_count += 1;
+        
+        Ok(())
     }
     
     /// Create new account
@@ -324,7 +373,7 @@ impl TokenLedger {
             .unwrap_or_else(|_| std::time::Duration::from_nanos(0))
             .as_nanos()
             .to_be_bytes());
-        hasher.update(&rand::random::<[u8; 16]>());
+        hasher.update(rand::random::<[u8; 16]>());
         
         let result = hasher.finalize();
         let mut tx_id = [0u8; 32];

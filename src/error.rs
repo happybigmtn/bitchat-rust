@@ -32,6 +32,9 @@ pub enum Error {
     #[error("Network error: {0}")]
     Network(String),
     
+    #[error("Transport error: {0}")]
+    Transport(String),
+    
     #[error("Invalid data: {0}")]
     InvalidData(String),
     
@@ -79,4 +82,38 @@ pub enum Error {
     
     #[error("Database error: {0}")]
     Database(String),
+    
+    // Byzantine Fault Tolerance errors
+    #[error("Invalid proposal: {0}")]
+    InvalidProposal(String),
+    
+    #[error("Duplicate vote: {0}")]
+    DuplicateVote(String),
+    
+    #[error("Insufficient votes: {0}")]
+    InsufficientVotes(String),
+    
+    #[error("Unknown peer: {0}")]
+    UnknownPeer(String),
+    
+    #[error("Authentication error: {0}")]
+    Authentication(String),
+    
+    #[error("Security error: {0}")]
+    Security(String),
+    
+    #[error("Not found: {0}")]
+    NotFound(String),
+    
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+    
+    #[error("Platform error: {0}")]
+    Platform(String),
+}
+
+impl From<std::ffi::NulError> for Error {
+    fn from(err: std::ffi::NulError) -> Self {
+        Error::Platform(format!("Null byte in C string: {}", err))
+    }
 }

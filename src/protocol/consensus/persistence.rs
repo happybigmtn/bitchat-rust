@@ -61,7 +61,7 @@ pub struct ConsensusPersistence {
     wal: Arc<Mutex<WriteAheadLog>>,
     
     /// Storage path
-    storage_path: PathBuf,
+    _storage_path: PathBuf,
     
     /// Current sequence number
     sequence: Arc<Mutex<u64>>,
@@ -98,7 +98,7 @@ impl ConsensusPersistence {
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
             wal: Arc::new(Mutex::new(wal)),
-            storage_path,
+            _storage_path: storage_path,
             sequence: Arc::new(Mutex::new(sequence)),
         })
     }

@@ -15,7 +15,7 @@ use crate::error::Result;
 
 /// Pre-computed payout lookup table for all bet types and dice combinations
 /// This eliminates runtime calculations for maximum performance
-static PAYOUT_LOOKUP_TABLE: Lazy<PayoutLookupTable> = Lazy::new(|| PayoutLookupTable::new());
+static PAYOUT_LOOKUP_TABLE: Lazy<PayoutLookupTable> = Lazy::new(PayoutLookupTable::new);
 
 /// Thread-safe bet resolution cache to avoid re-computing identical scenarios
 static RESOLUTION_CACHE: Lazy<RwLock<ResolutionCache>> = Lazy::new(|| {
@@ -101,6 +101,12 @@ pub struct ResolutionCacheKey {
     phase: u8, 
     point: u8,
     special_state: u64, // Hash of special bet tracking state
+}
+
+impl Default for PayoutLookupTable {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PayoutLookupTable {
@@ -441,6 +447,12 @@ impl ResolutionCache {
     }
 }
 
+impl Default for EfficientBetResolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EfficientBetResolver {
     /// Create new efficient bet resolver
     pub fn new() -> Self {
@@ -704,7 +716,7 @@ impl EfficientBetResolver {
     /// Hash special state for caching
     fn hash_special_state(&self, state: &CompactGameState) -> u64 {
         let mut hash = 0u64;
-        hash |= (state.get_fire_points() as u64) << 0;
+        hash |= ((state.get_fire_points() as u64));
         hash |= (state.get_bonus_numbers() as u64) << 8;
         hash |= (state.get_hot_streak() as u64) << 24;
         hash

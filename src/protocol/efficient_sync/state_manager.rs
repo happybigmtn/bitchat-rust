@@ -351,10 +351,10 @@ impl EfficientStateSync {
         let mut hasher = Sha256::new();
         
         // Serialize state for hashing (simplified)
-        hasher.update(&state.game_id);
+        hasher.update(state.game_id);
         // CompactGameState doesn't store shooter directly - use player 0 state as proxy
-        hasher.update(&state.player_states[0].to_le_bytes());
-        hasher.update(&state.get_roll_count().to_le_bytes());
+        hasher.update(state.player_states[0].to_le_bytes());
+        hasher.update(state.get_roll_count().to_le_bytes());
         
         Ok(hasher.finalize().into())
     }

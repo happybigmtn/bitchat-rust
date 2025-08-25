@@ -250,7 +250,7 @@ impl PayoutCalculator for CrapsGame {
     /// so it pays well.
     fn resolve_twice_hard_bet(&self, player: &PeerId, bet: &Bet) -> Option<BetResolution> {
         // Check hardway streak tracker
-        for (_number, &count) in &self.hardway_streak {
+        for &count in self.hardway_streak.values() {
             if count >= 2 {
                 let payout = CrapTokens::new_unchecked(bet.amount.amount() * 7); // 6:1 + original
                 return Some(BetResolution::Won {
@@ -302,7 +302,7 @@ impl PayoutCalculator for CrapsGame {
             // Check for the Muggsy pattern
             if prev == 7 && self.phase == GamePhase::ComeOut {
                 // Natural 7 on comeout followed by establishing point
-                if curr >= 4 && curr <= 10 && curr != 7 {
+                if (4..=10).contains(&curr) && curr != 7 {
                     let payout = CrapTokens::new_unchecked(bet.amount.amount() * 3); // 2:1 + original
                     return Some(BetResolution::Won {
                         player: *player,

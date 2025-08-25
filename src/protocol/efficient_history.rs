@@ -415,7 +415,7 @@ impl BloomFilter {
         let hash_count = Self::optimal_hash_count(size, expected_items);
         
         Self {
-            bits: vec![0; ((size + 7) / 8) as usize],
+            bits: vec![0; size.div_ceil(8) as usize],
             hash_count,
             size,
         }

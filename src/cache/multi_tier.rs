@@ -207,7 +207,7 @@ where
         let mut current_size = self.current_size_bytes.write();
         
         // Check size constraint
-        while *current_size + size_bytes > self.max_size_bytes && cache.len() > 0 {
+        while *current_size + size_bytes > self.max_size_bytes && !cache.is_empty() {
             // LRU eviction happens automatically
             if let Some((_, evicted)) = cache.pop_lru() {
                 *current_size -= evicted.size_bytes;
@@ -250,7 +250,7 @@ struct L3Entry {
 impl L3Cache {
     pub fn new(cache_dir: PathBuf, max_size_mb: usize) -> Result<Self> {
         std::fs::create_dir_all(&cache_dir)
-            .map_err(|e| crate::error::Error::Io(e))?;
+            .map_err(crate::error::Error::Io)?;
         
         Ok(Self {
             cache_dir,
@@ -268,14 +268,14 @@ impl L3Cache {
             
             // Memory map the file
             let file = File::open(&entry.file_path)
-                .map_err(|e| crate::error::Error::Io(e))?;
+                .map_err(crate::error::Error::Io)?;
             
             let mmap = unsafe {
                 MmapOptions::new()
                     .offset(entry.offset as u64)
                     .len(entry.size)
                     .map(&file)
-                    .map_err(|e| crate::error::Error::Io(e))?
+                    .map_err(crate::error::Error::Io)?
             };
             
             Ok(mmap[..].to_vec())
@@ -296,7 +296,7 @@ impl L3Cache {
         // Write to file
         let file_path = self.cache_dir.join(format!("{}.cache", key));
         std::fs::write(&file_path, value)
-            .map_err(|e| crate::error::Error::Io(e))?;
+            .map_err(crate::error::Error::Io)?;
         
         let entry = L3Entry {
             file_path,
@@ -341,7 +341,7 @@ where
     l2: L2Cache<K, V>,
     l3: L3Cache,
     stats: Arc<RwLock<CacheStats>>,
-    promotion_threshold: u64,  // Access count for promotion
+    _promotion_threshold: u64,  // Access count for promotion
 }
 
 impl<K, V> MultiTierCache<K, V>
@@ -355,7 +355,7 @@ where
             l2: L2Cache::new(10000, 512),    // 512MB L2
             l3: L3Cache::new(cache_dir, 4096)?,  // 4GB L3
             stats: Arc::new(RwLock::new(CacheStats::default())),
-            promotion_threshold: 3,
+            _promotion_threshold: 3,
         })
     }
     

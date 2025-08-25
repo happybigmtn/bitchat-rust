@@ -51,6 +51,12 @@ pub enum ViewMode {
     Settings,
 }
 
+impl Default for SimpleUI {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SimpleUI {
     pub fn new() -> Self {
         Self {

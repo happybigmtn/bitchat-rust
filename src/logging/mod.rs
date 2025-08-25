@@ -8,8 +8,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use serde::{Serialize, Deserialize};
-use crate::error::{Error, Result};
-use crate::protocol::PeerId;
+use crate::error::Result;
 
 /// Log level enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -65,20 +64,20 @@ pub struct ConsoleOutput {
 
 /// File output with rotation
 pub struct FileOutput {
-    path: std::path::PathBuf,
-    current_file: Option<std::fs::File>,
-    max_size: u64,
-    max_files: usize,
-    current_size: u64,
+    _path: std::path::PathBuf,
+    _current_file: Option<std::fs::File>,
+    _max_size: u64,
+    _max_files: usize,
+    _current_size: u64,
 }
 
 /// Network output for centralized logging
 pub struct NetworkOutput {
-    endpoint: String,
-    buffer: Vec<LogEntry>,
-    batch_size: usize,
-    flush_interval: Duration,
-    last_flush: Instant,
+    _endpoint: String,
+    _buffer: Vec<LogEntry>,
+    _batch_size: usize,
+    _flush_interval: Duration,
+    _last_flush: Instant,
 }
 
 /// Metrics collector for observability
@@ -86,7 +85,7 @@ pub struct MetricsCollector {
     counters: Arc<RwLock<HashMap<String, u64>>>,
     gauges: Arc<RwLock<HashMap<String, f64>>>,
     histograms: Arc<RwLock<HashMap<String, Histogram>>>,
-    labels: Arc<RwLock<HashMap<String, HashMap<String, String>>>>,
+    _labels: Arc<RwLock<HashMap<String, HashMap<String, String>>>>,
 }
 
 /// Histogram for latency tracking
@@ -293,6 +292,12 @@ impl LogOutput for ConsoleOutput {
     }
 }
 
+impl Default for MetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MetricsCollector {
     /// Create a new metrics collector
     pub fn new() -> Self {
@@ -300,7 +305,7 @@ impl MetricsCollector {
             counters: Arc::new(RwLock::new(HashMap::new())),
             gauges: Arc::new(RwLock::new(HashMap::new())),
             histograms: Arc::new(RwLock::new(HashMap::new())),
-            labels: Arc::new(RwLock::new(HashMap::new())),
+            _labels: Arc::new(RwLock::new(HashMap::new())),
         }
     }
     
@@ -384,22 +389,20 @@ impl Histogram {
 }
 
 /// Global logger instance
-static mut LOGGER: Option<Arc<ProductionLogger>> = None;
-static LOGGER_INIT: std::sync::Once = std::sync::Once::new();
+use once_cell::sync::OnceCell;
+
+static LOGGER: OnceCell<Arc<ProductionLogger>> = OnceCell::new();
 
 /// Initialize the global logger
 pub fn init_logger(level: LogLevel) -> Arc<ProductionLogger> {
-    unsafe {
-        LOGGER_INIT.call_once(|| {
-            LOGGER = Some(Arc::new(ProductionLogger::new(level)));
-        });
-        LOGGER.as_ref().unwrap().clone()
-    }
+    LOGGER.get_or_init(|| {
+        Arc::new(ProductionLogger::new(level))
+    }).clone()
 }
 
 /// Get the global logger
 pub fn logger() -> Option<Arc<ProductionLogger>> {
-    unsafe { LOGGER.as_ref().map(|l| l.clone()) }
+    LOGGER.get().cloned()
 }
 
 /// Convenience macros for logging

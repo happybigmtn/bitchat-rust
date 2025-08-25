@@ -256,7 +256,7 @@ impl CompactGameState {
             return Err(Error::InvalidData("Insufficient data for compact state".to_string()));
         }
         
-        let mut buf = &data[..];
+        let mut buf = data;
         
         // Fixed header
         let mut game_id = [0u8; 16];
@@ -677,7 +677,7 @@ mod tests {
     #[test]
     fn test_delta_compression() {
         let game_id = [1u8; 16];
-        let mut state1 = CompactGameState {
+        let state1 = CompactGameState {
             game_id,
             flags: 0,
             point_phase: 0, // ComeOut phase

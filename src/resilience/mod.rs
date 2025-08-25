@@ -34,7 +34,7 @@ pub struct ResilienceManager {
     connections: Arc<RwLock<HashMap<PeerId, ConnectionInfo>>>,
     circuit_breakers: Arc<RwLock<HashMap<String, CircuitBreaker>>>,
     retry_policies: Arc<RwLock<HashMap<String, RetryPolicy>>>,
-    health_checker: Arc<HealthChecker>,
+    _health_checker: Arc<HealthChecker>,
     reconnect_scheduler: Arc<ReconnectScheduler>,
 }
 
@@ -84,16 +84,16 @@ pub struct RetryPolicy {
 
 /// Health checker for connections
 pub struct HealthChecker {
-    check_interval: Duration,
-    timeout: Duration,
-    unhealthy_threshold: u32,
-    healthy_threshold: u32,
+    _check_interval: Duration,
+    _timeout: Duration,
+    _unhealthy_threshold: u32,
+    _healthy_threshold: u32,
 }
 
 /// Reconnection scheduler with backoff
 pub struct ReconnectScheduler {
     queue: Arc<Mutex<VecDeque<ReconnectTask>>>,
-    max_concurrent: usize,
+    _max_concurrent: usize,
     base_delay: Duration,
     max_delay: Duration,
 }
@@ -102,9 +102,15 @@ pub struct ReconnectScheduler {
 #[derive(Debug, Clone)]
 struct ReconnectTask {
     peer_id: PeerId,
-    address: TransportAddress,
+    _address: TransportAddress,
     attempt: u32,
     scheduled_at: Instant,
+}
+
+impl Default for ResilienceManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ResilienceManager {
@@ -114,7 +120,7 @@ impl ResilienceManager {
             connections: Arc::new(RwLock::new(HashMap::new())),
             circuit_breakers: Arc::new(RwLock::new(HashMap::new())),
             retry_policies: Arc::new(RwLock::new(HashMap::new())),
-            health_checker: Arc::new(HealthChecker::new()),
+            _health_checker: Arc::new(HealthChecker::new()),
             reconnect_scheduler: Arc::new(ReconnectScheduler::new()),
         }
     }
@@ -173,16 +179,16 @@ impl ResilienceManager {
     pub async fn with_retry<F, Fut, T>(
         &self,
         policy_name: &str,
-        operation: F,
+        mut operation: F,
     ) -> Result<T>
     where
-        F: Fn() -> Fut,
+        F: FnMut() -> Fut,
         Fut: std::future::Future<Output = Result<T>>,
     {
         let policies = self.retry_policies.read().await;
         let policy = policies.get(policy_name)
             .cloned()
-            .unwrap_or_else(|| RetryPolicy::default());
+            .unwrap_or_else(RetryPolicy::default);
         drop(policies);
         
         let mut attempt = 0;
@@ -452,10 +458,10 @@ impl Default for RetryPolicy {
 impl HealthChecker {
     fn new() -> Self {
         Self {
-            check_interval: Duration::from_secs(10),
-            timeout: Duration::from_secs(5),
-            unhealthy_threshold: 3,
-            healthy_threshold: 2,
+            _check_interval: Duration::from_secs(10),
+            _timeout: Duration::from_secs(5),
+            _unhealthy_threshold: 3,
+            _healthy_threshold: 2,
         }
     }
 }
@@ -464,7 +470,7 @@ impl ReconnectScheduler {
     fn new() -> Self {
         Self {
             queue: Arc::new(Mutex::new(VecDeque::new())),
-            max_concurrent: 5,
+            _max_concurrent: 5,
             base_delay: Duration::from_secs(1),
             max_delay: Duration::from_secs(300),
         }
@@ -474,7 +480,7 @@ impl ReconnectScheduler {
         let delay = self.calculate_delay(attempt);
         let task = ReconnectTask {
             peer_id,
-            address,
+            _address: address,
             attempt: attempt + 1,
             scheduled_at: Instant::now() + delay,
         };
@@ -548,17 +554,22 @@ mod tests {
     async fn test_retry_policy() {
         let manager = Arc::new(ResilienceManager::new());
         
-        let mut attempts = 0;
-        let result = manager.with_retry("test", || async {
-            attempts += 1;
-            if attempts < 3 {
-                Err(Error::Network("Temporary failure".to_string()))
-            } else {
-                Ok(42)
+        let attempts = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let attempts_clone = attempts.clone();
+        
+        let result = manager.with_retry("test", move || {
+            let attempts = attempts_clone.clone();
+            async move {
+                let count = attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if count < 2 {
+                    Err(Error::Network("Temporary failure".to_string()))
+                } else {
+                    Ok(42)
+                }
             }
         }).await;
         
         assert_eq!(result.unwrap(), 42);
-        assert_eq!(attempts, 3);
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 }

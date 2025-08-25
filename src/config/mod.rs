@@ -439,25 +439,22 @@ impl Config {
 }
 
 /// Global configuration instance
-static mut CONFIG: Option<Config> = None;
-static CONFIG_INIT: std::sync::Once = std::sync::Once::new();
+use once_cell::sync::Lazy;
+use std::sync::RwLock;
+
+static CONFIG: Lazy<RwLock<Config>> = Lazy::new(|| {
+    RwLock::new(Config::load().expect("Failed to load configuration"))
+});
 
 /// Get the global configuration instance
-pub fn get_config() -> &'static Config {
-    unsafe {
-        CONFIG_INIT.call_once(|| {
-            CONFIG = Some(Config::load().expect("Failed to load configuration"));
-        });
-        CONFIG.as_ref().unwrap()
-    }
+pub fn get_config() -> Config {
+    CONFIG.read().unwrap().clone()
 }
 
 /// Set the global configuration (for testing)
 #[cfg(test)]
 pub fn set_config(config: Config) {
-    unsafe {
-        CONFIG = Some(config);
-    }
+    *CONFIG.write().unwrap() = config;
 }
 
 #[cfg(test)]

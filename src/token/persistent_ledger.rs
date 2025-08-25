@@ -142,6 +142,12 @@ pub struct PersistentLedger {
     pub state_root: Hash256,
 }
 
+impl Default for PersistentLedger {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PersistentLedger {
     /// Create a new ledger
     pub fn new() -> Self {
@@ -258,7 +264,7 @@ impl PersistentLedger {
         
         // Store transaction
         self.transactions.entry(self.block_height)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(tx);
         
         // Update state root

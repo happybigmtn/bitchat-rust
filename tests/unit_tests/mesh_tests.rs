@@ -1,9 +1,8 @@
-use bitcraps::mesh::{MeshService, MeshPeer};
-use bitcraps::protocol::PeerId;
+use bitcraps::mesh::MeshPeer;
 
 #[tokio::test]
 async fn test_mesh_peer_structure() {
-    use std::time::{Instant, Duration};
+    use std::time::Instant;
     
     let peer = MeshPeer {
         peer_id: [1u8; 32],

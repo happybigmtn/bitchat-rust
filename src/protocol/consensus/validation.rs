@@ -138,18 +138,18 @@ impl Dispute {
             DisputeClaim::InvalidBet { player, bet, .. } => {
                 hasher.update(b"invalid_bet");
                 hasher.update(player);
-                hasher.update(&bet.amount.0.to_le_bytes());
+                hasher.update(bet.amount.0.to_le_bytes());
             },
             DisputeClaim::InvalidRoll { round_id, claimed_roll, .. } => {
                 hasher.update(b"invalid_roll");
-                hasher.update(&round_id.to_le_bytes());
-                hasher.update(&[claimed_roll.die1, claimed_roll.die2]);
+                hasher.update(round_id.to_le_bytes());
+                hasher.update([claimed_roll.die1, claimed_roll.die2]);
             },
             DisputeClaim::InvalidPayout { player, expected, actual } => {
                 hasher.update(b"invalid_payout");
                 hasher.update(player);
-                hasher.update(&expected.0.to_le_bytes());
-                hasher.update(&actual.0.to_le_bytes());
+                hasher.update(expected.0.to_le_bytes());
+                hasher.update(actual.0.to_le_bytes());
             },
             DisputeClaim::DoubleSpending { player, .. } => {
                 hasher.update(b"double_spending");
@@ -192,7 +192,7 @@ impl Dispute {
             },
             DisputeClaim::InvalidPayout { expected, actual, .. } => {
                 // Check if payout amounts are reasonable
-                expected.0 != actual.0 && expected.0 > 0 && actual.0 >= 0
+                expected.0 != actual.0 && expected.0 > 0
             },
             DisputeClaim::DoubleSpending { conflicting_bets, .. } => {
                 // Check if there are actually conflicting bets

@@ -479,10 +479,10 @@ impl KademliaNode {
                     if let Ok(contacts) = response {
                         for contact in contacts {
                             let distance = contact.id.distance(&target);
-                            if !closest.contains_key(&distance) {
+                            if let std::collections::btree_map::Entry::Vacant(e) = closest.entry(distance) {
                                 improved = true;
                                 // Arc cloning is cheap - only reference counting
-                                closest.insert(distance, contact.clone());
+                                e.insert(contact.clone());
                                 
                                 // Add to routing table - zero-copy
                                 self.routing_table.add_contact(contact.clone()).await;
@@ -665,7 +665,7 @@ impl KademliaNode {
     }
     
     // Network operations
-    async fn send_find_node(&self, contact: Contact, target: NodeId) -> Result<Vec<SharedContact>, Box<dyn std::error::Error>> {
+    async fn _send_find_node(&self, contact: Contact, target: NodeId) -> Result<Vec<SharedContact>, Box<dyn std::error::Error>> {
         let message = KademliaMessage::FindNode {
             target,
             requester: self.create_self_contact(),
@@ -690,7 +690,7 @@ impl KademliaNode {
         }
     }
     
-    async fn send_store(&self, contact: Contact, key: Vec<u8>, value: Vec<u8>) -> Result<bool, Box<dyn std::error::Error>> {
+    async fn _send_store(&self, contact: Contact, key: Vec<u8>, value: Vec<u8>) -> Result<bool, Box<dyn std::error::Error>> {
         let message = KademliaMessage::Store {
             key,
             value,
@@ -717,7 +717,7 @@ impl KademliaNode {
         }
     }
     
-    async fn send_find_value(&self, contact: Contact, key: Vec<u8>) -> Result<FindValueResult, Box<dyn std::error::Error>> {
+    async fn _send_find_value(&self, contact: Contact, key: Vec<u8>) -> Result<FindValueResult, Box<dyn std::error::Error>> {
         let message = KademliaMessage::FindValue {
             key,
             requester: self.create_self_contact(),

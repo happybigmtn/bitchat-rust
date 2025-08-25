@@ -1,0 +1,74 @@
+namespace bitcraps {
+    [Throws=BitCrapsError]
+    BitCrapsNode create_node(BitCrapsConfig config);
+    
+    sequence<string> get_available_bluetooth_adapters();
+};
+
+[Error]
+interface BitCrapsError {
+    InitializationError(string reason);
+    BluetoothError(string reason);
+    NetworkError(string reason);
+    GameError(string reason);
+    CryptoError(string reason);
+    InvalidInput(string reason);
+    Timeout();
+    NotFound(string item);
+};
+
+interface BitCrapsNode {
+    NodeStatus get_status();
+    sequence<PeerInfo> get_connected_peers();
+    NetworkStats get_network_stats();
+};
+
+dictionary BitCrapsConfig {
+    string bluetooth_name;
+    boolean enable_battery_optimization;
+    u32 max_peers;
+    u32 discovery_timeout_seconds;
+};
+
+dictionary NodeStatus {
+    string peer_id;
+    NodeState state;
+    u32 connected_peers;
+    u32 active_games;
+    u64 total_balance;
+    f32? battery_level;
+    boolean bluetooth_enabled;
+};
+
+dictionary PeerInfo {
+    string peer_id;
+    string name;
+    u32 reputation;
+    u32 games_played;
+    ConnectionQuality connection_quality;
+};
+
+dictionary NetworkStats {
+    u64 messages_sent;
+    u64 messages_received;
+    u64 bytes_sent;
+    u64 bytes_received;
+    u32 average_latency_ms;
+    f32 packet_loss_percent;
+};
+
+enum NodeState {
+    "Initializing",
+    "Ready",
+    "Discovering",
+    "InGame",
+    "Syncing",
+    "Error",
+};
+
+enum ConnectionQuality {
+    "Excellent",
+    "Good",
+    "Fair",
+    "Poor",
+};

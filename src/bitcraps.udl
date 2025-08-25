@@ -1,0 +1,212 @@
+namespace bitcraps {
+    [Throws=BitCrapsError]
+    BitCrapsNode create_node(BitCrapsConfig config);
+    
+    [Throws=BitCrapsError]
+    sequence<string> get_available_bluetooth_adapters();
+};
+
+[Error]
+interface BitCrapsError {
+    InitializationError(string reason);
+    BluetoothError(string reason);
+    NetworkError(string reason);
+    GameError(string reason);
+    CryptoError(string reason);
+    InvalidInput(string reason);
+    Timeout();
+    NotFound(string item);
+};
+
+interface BitCrapsNode {
+    [Throws=BitCrapsError, Async]
+    void start_discovery();
+    
+    [Throws=BitCrapsError, Async]
+    void stop_discovery();
+    
+    [Throws=BitCrapsError, Async]
+    GameHandle create_game(GameConfig config);
+    
+    [Throws=BitCrapsError, Async]
+    GameHandle join_game(string game_id);
+    
+    [Throws=BitCrapsError, Async]
+    void leave_game();
+    
+    // Event polling for mobile UI updates
+    [Async]
+    GameEvent? poll_event();
+    
+    [Async]
+    sequence<GameEvent> drain_events();
+    
+    // Node information and status
+    NodeStatus get_status();
+    sequence<PeerInfo> get_connected_peers();
+    NetworkStats get_network_stats();
+    
+    // Battery optimization methods
+    [Throws=BitCrapsError]
+    void set_power_mode(PowerMode mode);
+    
+    [Throws=BitCrapsError]
+    void set_scan_interval(u32 milliseconds);
+    
+    // Platform-specific optimizations
+    [Throws=BitCrapsError]
+    void configure_for_platform(PlatformConfig config);
+};
+
+interface GameHandle {
+    string get_game_id();
+    GameState get_state();
+    
+    [Throws=BitCrapsError, Async]
+    void place_bet(BetType bet_type, u64 amount);
+    
+    [Throws=BitCrapsError, Async]
+    void roll_dice();
+    
+    [Async]
+    DiceRoll? get_last_roll();
+    
+    sequence<GameEvent> get_game_history();
+};
+
+dictionary BitCrapsConfig {
+    string bluetooth_name;
+    boolean enable_battery_optimization;
+    u32 max_peers;
+    u32 discovery_timeout_seconds;
+};
+
+dictionary GameConfig {
+    string? game_name;
+    u64 min_bet;
+    u64 max_bet;
+    u32 max_players;
+    u32 timeout_seconds;
+};
+
+dictionary PlatformConfig {
+    PlatformType platform;
+    boolean background_scanning;
+    u32 scan_window_ms;
+    u32 scan_interval_ms;
+    boolean low_power_mode;
+    sequence<string> service_uuids;
+};
+
+dictionary PeerInfo {
+    string peer_id;
+    string? display_name;
+    u32 signal_strength;
+    u64 last_seen;
+    boolean is_connected;
+};
+
+dictionary NetworkStats {
+    u32 peers_discovered;
+    u32 active_connections;
+    u64 bytes_sent;
+    u64 bytes_received;
+    u32 packets_dropped;
+    f64 average_latency_ms;
+};
+
+dictionary NodeStatus {
+    NodeState state;
+    boolean bluetooth_enabled;
+    boolean discovery_active;
+    string? current_game_id;
+    u32 active_connections;
+    PowerMode current_power_mode;
+};
+
+dictionary DiceRoll {
+    u8 die1;
+    u8 die2;
+    u64 roll_time;
+    string roller_peer_id;
+};
+
+[Enum]
+interface GameEvent {
+    PeerDiscovered(PeerInfo peer);
+    PeerConnected(string peer_id);
+    PeerDisconnected(string peer_id);
+    GameCreated(string game_id);
+    GameJoined(string game_id, string peer_id);
+    GameLeft(string game_id, string peer_id);
+    GameStarted(string game_id);
+    BetPlaced(string peer_id, BetType bet_type, u64 amount);
+    DiceRolled(DiceRoll roll);
+    GameEnded(string game_id, string? winner_id, u64 payout);
+    ErrorOccurred(BitCrapsError error);
+    BatteryOptimizationDetected(string reason);
+    NetworkStateChanged(NetworkState new_state);
+};
+
+[Enum]
+interface BetType {
+    Pass();
+    DontPass();
+    Field();
+    Any7();
+    AnyCraps();
+    Hardway(u8 number);
+    PlaceBet(u8 number);
+};
+
+[Enum]
+interface GameState {
+    Waiting();
+    ComeOut();
+    Point(u8 point);
+    Resolved();
+    Error(string reason);
+};
+
+[Enum]
+interface NodeState {
+    Initializing();
+    Ready();
+    Discovering();
+    Connected();
+    InGame();
+    Error(string reason);
+};
+
+[Enum]
+interface PowerMode {
+    HighPerformance();
+    Balanced();
+    BatterySaver();
+    UltraLowPower();
+};
+
+[Enum]
+interface PlatformType {
+    Android();
+    iOS();
+    Desktop();
+    Web();
+};
+
+[Enum]
+interface NetworkState {
+    Offline();
+    Scanning();
+    Connected();
+    Optimized();
+};
+
+[Enum]
+interface LogLevel {
+    Error();
+    Warn();
+    Info();
+    Debug();
+    Trace();
+};

@@ -66,6 +66,12 @@ pub struct DiffStats {
     pub avg_compression_ratio: f32,
 }
 
+impl Default for BinaryDiffEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BinaryDiffEngine {
     /// Create new binary diff engine
     pub fn new() -> Self {
@@ -105,7 +111,7 @@ impl BinaryDiffEngine {
             target_checksum: target_hash,
             original_size: target.len() as u32,
             diff_size: 0, // Would calculate actual diff size
-            compression_ratio: if target.len() > 0 {
+            compression_ratio: if !target.is_empty() {
                 operations.iter().map(|op| match op {
                     DiffOperation::Copy { length, .. } => 8 + *length as usize, // Operation size + data
                     DiffOperation::Insert { data } => 4 + data.len(), // Operation size + data

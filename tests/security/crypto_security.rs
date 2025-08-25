@@ -1,3 +1,5 @@
+use bitcraps::crypto::Encryption;
+
 #[tokio::test]
 async fn test_key_reuse_vulnerability() {
     let keypair = Encryption::generate_keypair();

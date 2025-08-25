@@ -11,7 +11,7 @@ use crate::error::Result;
 const MIN_MTU: usize = 23;  // BLE minimum
 const MAX_MTU: usize = 512;  // Conservative maximum for compatibility
 const DEFAULT_MTU: usize = 247;  // BLE 4.2 default
-const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
+const _PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 const MTU_CACHE_TTL: Duration = Duration::from_secs(3600);  // 1 hour
 
 /// MTU metrics for monitoring
@@ -27,11 +27,11 @@ pub struct MtuMetrics {
 /// MTU probe result
 #[derive(Debug, Clone)]
 struct MtuProbe {
-    peer_id: PeerId,
-    tested_size: usize,
-    success: bool,
-    latency_ms: u64,
-    timestamp: Instant,
+    _peer_id: PeerId,
+    _tested_size: usize,
+    _success: bool,
+    _latency_ms: u64,
+    _timestamp: Instant,
 }
 
 /// Cached MTU information
@@ -39,7 +39,7 @@ struct MtuProbe {
 struct CachedMtu {
     mtu_size: usize,
     discovered_at: Instant,
-    probe_count: u32,
+    _probe_count: u32,
     last_verified: Instant,
 }
 
@@ -51,6 +51,12 @@ pub struct AdaptiveMTU {
     metrics: Arc<RwLock<MtuMetrics>>,
     /// Probe history for analysis
     probe_history: Arc<RwLock<Vec<MtuProbe>>>,
+}
+
+impl Default for AdaptiveMTU {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AdaptiveMTU {
@@ -100,11 +106,11 @@ impl AdaptiveMTU {
             
             // Record probe result
             let probe = MtuProbe {
-                peer_id: peer,
-                tested_size: test_size,
-                success,
-                latency_ms,
-                timestamp: Instant::now(),
+                _peer_id: peer,
+                _tested_size: test_size,
+                _success: success,
+                _latency_ms: latency_ms,
+                _timestamp: Instant::now(),
             };
             
             self.record_probe(probe.clone()).await;
@@ -126,7 +132,7 @@ impl AdaptiveMTU {
         let cached = CachedMtu {
             mtu_size: final_mtu,
             discovered_at: Instant::now(),
-            probe_count: probe_count as u32,
+            _probe_count: probe_count as u32,
             last_verified: Instant::now(),
         };
         
@@ -161,7 +167,7 @@ impl AdaptiveMTU {
         }
         
         // Fragment into MTU-sized chunks
-        let num_fragments = (packet_size + effective_mtu - 1) / effective_mtu;
+        let num_fragments = packet_size.div_ceil(effective_mtu);
         let mut fragments = Vec::with_capacity(num_fragments);
         
         for i in 0..num_fragments {
@@ -303,7 +309,7 @@ mod tests {
         let cached = CachedMtu {
             mtu_size: 100,
             discovered_at: Instant::now(),
-            probe_count: 1,
+            _probe_count: 1,
             last_verified: Instant::now(),
         };
         

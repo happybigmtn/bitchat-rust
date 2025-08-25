@@ -84,7 +84,7 @@ impl DhtDiscovery {
                     for peer_id in example_peers {
                         let mut peers = discovered_peers.write().await;
                         
-                        if !peers.contains_key(&peer_id) {
+                        if let std::collections::hash_map::Entry::Vacant(e) = peers.entry(peer_id) {
                             // Calculate hop distance
                             let hop_distance = Self::calculate_hop_distance(&local_id, &peer_id);
                             
@@ -96,7 +96,7 @@ impl DhtDiscovery {
                                 hop_distance,
                             };
                             
-                            peers.insert(peer_id, dht_peer);
+                            e.insert(dht_peer);
                             
                             // Add to crawl queue
                             crawl_queue.write().await.push_back(peer_id);

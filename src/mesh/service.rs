@@ -358,7 +358,7 @@ impl MeshService {
         
         // Process packet based on type
         match packet.packet_type {
-            0x20 | 0x21 | 0x22 | 0x23 => { // Game packets
+            0x20..=0x23 => { // Game packets
                 self.handle_game_packet(peer_id, packet).await?;
             }
             0x10 => { // Message packet
@@ -452,14 +452,14 @@ impl MeshService {
         use sha2::{Sha256, Digest};
         
         let mut hasher = Sha256::new();
-        hasher.update(&[packet.version, packet.packet_type, packet.flags, packet.ttl]);
-        hasher.update(&packet.total_length.to_be_bytes());
-        hasher.update(&packet.sequence.to_be_bytes());
+        hasher.update([packet.version, packet.packet_type, packet.flags, packet.ttl]);
+        hasher.update(packet.total_length.to_be_bytes());
+        hasher.update(packet.sequence.to_be_bytes());
         
         // Add TLV data to hash
         for tlv in &packet.tlv_data {
-            hasher.update(&[tlv.field_type]);
-            hasher.update(&tlv.length.to_be_bytes());
+            hasher.update([tlv.field_type]);
+            hasher.update(tlv.length.to_be_bytes());
             hasher.update(&tlv.value);
         }
         

@@ -20,6 +20,12 @@ pub struct MessagePool {
     peak_usage: (usize, usize, usize), // (small, medium, large)
 }
 
+impl Default for MessagePool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MessagePool {
     pub fn new() -> Self {
         Self {
@@ -187,6 +193,12 @@ pub struct VoteTracker {
     no_votes: usize,
 }
 
+impl Default for VoteTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VoteTracker {
     pub fn new() -> Self {
         Self {
@@ -328,8 +340,7 @@ impl MmapStorage {
         // Verify file size was set correctly
         let metadata = file.metadata()?;
         if metadata.len() != capacity as u64 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            return Err(std::io::Error::other(
                 "Failed to set file size correctly"
             ));
         }
@@ -407,8 +418,7 @@ impl MmapStorage {
         
         let mmap = match self.mmap.as_mut() {
             Some(mmap) => mmap,
-            None => return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            None => return Err(std::io::Error::other(
                 "Memory map not initialized"
             )),
         };
@@ -416,8 +426,7 @@ impl MmapStorage {
         
         // Bounds check before each write
         if offset + 4 > self.capacity {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            return Err(std::io::Error::other(
                 "Buffer overflow prevented in key length write"
             ));
         }
@@ -429,8 +438,7 @@ impl MmapStorage {
         
         // Bounds check for key
         if offset + key.len() > self.capacity {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            return Err(std::io::Error::other(
                 "Buffer overflow prevented in key write"
             ));
         }
@@ -441,8 +449,7 @@ impl MmapStorage {
         
         // Bounds check for compression flag
         if offset + 1 > self.capacity {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            return Err(std::io::Error::other(
                 "Buffer overflow prevented in flag write"
             ));
         }
@@ -453,8 +460,7 @@ impl MmapStorage {
         
         // Bounds check for data length
         if offset + 4 > self.capacity {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            return Err(std::io::Error::other(
                 "Buffer overflow prevented in data length write"
             ));
         }
@@ -466,8 +472,7 @@ impl MmapStorage {
         
         // Final bounds check for data
         if offset + final_data.len() > self.capacity {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            return Err(std::io::Error::other(
                 "Buffer overflow prevented in data write"
             ));
         }
@@ -487,8 +492,7 @@ impl MmapStorage {
         
         let mmap = match self.mmap.as_ref() {
             Some(mmap) => mmap,
-            None => return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            None => return Err(std::io::Error::other(
                 "Memory map not initialized"
             )),
         };
@@ -752,7 +756,7 @@ impl ZeroCopyMessage {
             return vec![self.payload.clone()];
         }
         
-        let mut chunks = Vec::with_capacity((self.payload.len() + chunk_size - 1) / chunk_size);
+        let mut chunks = Vec::with_capacity(self.payload.len().div_ceil(chunk_size));
         let mut offset = 0;
         
         while offset < self.payload.len() {

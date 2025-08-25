@@ -38,12 +38,11 @@ async fn test_bet_proposal() {
     ).unwrap();
     
     let bet = Bet::new(
-        [1u8; 16],
-        game_id,
-        player1,
+        player1,     // player (PeerId)
+        game_id,     // game_id (GameId)
         BetType::Pass,
         CrapTokens::new(100),
-    ).unwrap();
+    );
     
     let bet_operation = GameOperation::PlaceBet {
         player: player1,

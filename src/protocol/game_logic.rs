@@ -108,8 +108,8 @@ impl CrapsGame {
         // Add bet to player's bets
         self.player_bets
             .entry(player)
-            .or_insert_with(HashMap::new)
-            .insert(bet.bet_type.clone(), bet);
+            .or_default()
+            .insert(bet.bet_type, bet);
         Ok(())
     }
     

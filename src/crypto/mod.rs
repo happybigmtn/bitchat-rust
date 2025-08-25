@@ -9,6 +9,8 @@
 //! - SIMD-accelerated batch operations
 
 pub mod simd_acceleration;
+pub mod random;
+pub mod encryption;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier};
@@ -21,6 +23,8 @@ use subtle::ConstantTimeEq;
 
 use crate::protocol::{PeerId, GameId};
 use crate::error::Result;
+
+pub use encryption::{Encryption, EncryptionKeypair};
 
 /// Ed25519 keypair for signing and identity
 #[derive(Debug, Clone)]
@@ -41,7 +45,37 @@ pub struct BitchatIdentity {
 /// Gaming cryptography utilities
 pub struct GameCrypto;
 
+impl Default for GameCrypto {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GameCrypto {
+    /// Create a new GameCrypto instance
+    pub fn new() -> Self {
+        Self
+    }
+    
+    /// Verify a signature
+    pub fn verify_signature(&self, signer: &PeerId, message: &[u8], signature: &[u8]) -> bool {
+        // Convert PeerId to VerifyingKey
+        let verifying_key = match VerifyingKey::from_bytes(signer) {
+            Ok(key) => key,
+            Err(_) => return false,
+        };
+        
+        // Convert signature bytes to Signature
+        let sig_bytes: [u8; 64] = match signature.try_into() {
+            Ok(bytes) => bytes,
+            Err(_) => return false,
+        };
+        let sig = Signature::from_bytes(&sig_bytes);
+        
+        // Verify the signature
+        verifying_key.verify(message, &sig).is_ok()
+    }
+    
     /// Compute SHA256 hash
     pub fn hash(data: &[u8]) -> [u8; 32] {
         let mut hasher = Sha256::new();
@@ -223,7 +257,7 @@ impl ProofOfWork {
         let mut hasher = Sha256::new();
         hasher.update(b"BITCRAPS_IDENTITY_POW");
         hasher.update(public_key);
-        hasher.update(&nonce.to_be_bytes());
+        hasher.update(nonce.to_be_bytes());
         
         let result = hasher.finalize();
         let mut hash = [0u8; 32];
@@ -308,14 +342,14 @@ impl GameCrypto {
         // Hash the combined result for final randomness
         let mut hasher = Sha256::new();
         hasher.update(b"BITCRAPS_DICE_ROLL_V2");
-        hasher.update(&combined);
+        hasher.update(combined);
         
         // Use fallback timestamp if system time is unavailable
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_nanos();
-        hasher.update(&timestamp.to_be_bytes());
+        hasher.update(timestamp.to_be_bytes());
         
         let hash = hasher.finalize();
         
@@ -338,7 +372,7 @@ impl GameCrypto {
             // If we hit a biased value, hash again to get new randomness
             let mut hasher = Sha256::new();
             hasher.update(b"BITCRAPS_REROLL");
-            hasher.update(&value.to_le_bytes());
+            hasher.update(value.to_le_bytes());
             let new_hash = hasher.finalize();
             value = u64::from_le_bytes(new_hash[0..8].try_into().unwrap_or([0u8; 8]));
         }
@@ -357,7 +391,7 @@ impl GameCrypto {
         sorted_participants.sort();
         
         for participant in sorted_participants {
-            hasher.update(&participant);
+            hasher.update(participant);
         }
         
         let result = hasher.finalize();
@@ -372,9 +406,9 @@ impl GameCrypto {
         hasher.update(b"BITCRAPS_BET_HASH");
         hasher.update(game_id);
         hasher.update(player);
-        hasher.update(&amount.to_be_bytes());
-        hasher.update(&[bet_type]);
-        hasher.update(&timestamp.to_be_bytes());
+        hasher.update(amount.to_be_bytes());
+        hasher.update([bet_type]);
+        hasher.update(timestamp.to_be_bytes());
         
         let result = hasher.finalize();
         let mut hash = [0u8; 32];
@@ -451,7 +485,7 @@ impl KeyDerivation {
             let mut hasher = Sha256::new();
             hasher.update(master_key);
             hasher.update(info);
-            hasher.update(&[counter]);
+            hasher.update([counter]);
             
             let hash = hasher.finalize();
             output.extend_from_slice(&hash);
@@ -505,8 +539,8 @@ impl SecureRng {
             .as_nanos();
         
         let mut hasher = Sha256::new();
-        hasher.update(&state);
-        hasher.update(&timestamp.to_be_bytes());
+        hasher.update(state);
+        hasher.update(timestamp.to_be_bytes());
         hasher.update(b"BITCRAPS_SECURE_RNG_V2");
         let final_state = hasher.finalize();
         state.copy_from_slice(&final_state);
@@ -524,8 +558,8 @@ impl SecureRng {
         while output.len() < length {
             // Update state with counter
             let mut hasher = Sha256::new();
-            hasher.update(&self.state);
-            hasher.update(&self.counter.to_be_bytes());
+            hasher.update(self.state);
+            hasher.update(self.counter.to_be_bytes());
             
             let hash = hasher.finalize();
             output.extend_from_slice(&hash);
@@ -595,13 +629,13 @@ impl MerkleTree {
             
             for chunk in current_level.chunks(2) {
                 let mut hasher = Sha256::new();
-                hasher.update(&chunk[0]);
+                hasher.update(chunk[0]);
                 
                 if chunk.len() > 1 {
-                    hasher.update(&chunk[1]);
+                    hasher.update(chunk[1]);
                 } else {
                     // Odd number of nodes, duplicate the last one
-                    hasher.update(&chunk[0]);
+                    hasher.update(chunk[0]);
                 }
                 
                 let result = hasher.finalize();
@@ -645,8 +679,8 @@ impl MerkleTree {
             let mut next_level = Vec::new();
             for chunk in current_level.chunks(2) {
                 let mut hasher = Sha256::new();
-                hasher.update(&chunk[0]);
-                hasher.update(&chunk.get(1).unwrap_or(&chunk[0]));
+                hasher.update(chunk[0]);
+                hasher.update(chunk.get(1).unwrap_or(&chunk[0]));
                 
                 let result = hasher.finalize();
                 let mut hash = [0u8; 32];
@@ -675,12 +709,12 @@ impl MerkleTree {
             // Use consistent left-to-right order like compute_root
             if index % 2 == 0 {
                 // Current node is on the left, sibling on the right
-                hasher.update(&current_hash);
+                hasher.update(current_hash);
                 hasher.update(sibling);
             } else {
                 // Current node is on the right, sibling on the left
                 hasher.update(sibling);
-                hasher.update(&current_hash);
+                hasher.update(current_hash);
             }
             
             let result = hasher.finalize();
@@ -704,7 +738,7 @@ impl MerkleTree {
 pub fn hash_dice(die1: u8, die2: u8) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(b"BITCRAPS_DICE_HASH");
-    hasher.update(&[die1, die2]);
+    hasher.update([die1, die2]);
     
     let result = hasher.finalize();
     let mut hash = [0u8; 32];

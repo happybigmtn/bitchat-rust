@@ -81,6 +81,12 @@ pub struct ReputationRecord {
     pub ban_expiry: Option<u64>,
 }
 
+impl Default for ReputationRecord {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ReputationRecord {
     /// Create new reputation record
     pub fn new() -> Self {

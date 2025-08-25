@@ -459,7 +459,7 @@ impl BetResolver for CrapsGame {
                     // Establish Come point - move bet to come_points tracking
                     self.come_points
                         .entry(*player)
-                        .or_insert_with(HashMap::new)
+                        .or_default()
                         .insert(total, bet.amount);
                 },
                 _ => {}
@@ -529,7 +529,7 @@ impl BetResolver for CrapsGame {
                     // Establish Don't Come point
                     self.dont_come_points
                         .entry(*player)
-                        .or_insert_with(HashMap::new)
+                        .or_default()
                         .insert(total, bet.amount);
                 },
                 _ => {}

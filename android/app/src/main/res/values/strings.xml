@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BitCraps</string>
+    
+    <!-- Service notifications -->
+    <string name="notification_channel_name">BitCraps Service</string>
+    <string name="notification_channel_description">BitCraps mesh networking service</string>
+    <string name="notification_title">BitCraps Mesh Network</string>
+    <string name="notification_text">Running in background</string>
+    <string name="notification_action_stop">Stop</string>
+    
+    <!-- Permissions -->
+    <string name="permission_bluetooth_title">Bluetooth Required</string>
+    <string name="permission_bluetooth_message">BitCraps needs Bluetooth access to connect with other players</string>
+    <string name="permission_location_title">Location Required</string>
+    <string name="permission_location_message">Location permission is required for Bluetooth scanning on this Android version</string>
+    <string name="permission_notification_title">Notifications</string>
+    <string name="permission_notification_message">Allow notifications to keep you informed about the service status</string>
+    
+    <!-- Service status messages -->
+    <string name="service_starting">Starting BitCraps service…</string>
+    <string name="service_stopping">Stopping BitCraps service…</string>
+    <string name="service_running">Service running</string>
+    <string name="service_stopped">Service stopped</string>
+    <string name="service_error">Service error: %s</string>
+    
+    <!-- Bluetooth status -->
+    <string name="bluetooth_enabled">Bluetooth enabled</string>
+    <string name="bluetooth_disabled">Bluetooth disabled</string>
+    <string name="bluetooth_not_supported">Bluetooth not supported</string>
+    <string name="bluetooth_advertising_not_supported">Bluetooth advertising not supported</string>
+    
+    <!-- Android 14+ specific -->
+    <string name="android_14_foreground_service_info">This app uses a foreground service to maintain Bluetooth connections in the background for peer-to-peer gaming.</string>
+    <string name="android_14_connected_device_permission_info">BitCraps requires the CONNECTED_DEVICE permission to maintain Bluetooth connections while the app is in the background.</string>
+    
+    <!-- Error messages -->
+    <string name="error_service_start_failed">Failed to start service</string>
+    <string name="error_service_stop_failed">Failed to stop service</string>
+    <string name="error_bluetooth_required">Bluetooth is required for BitCraps</string>
+    <string name="error_permissions_required">Required permissions not granted</string>
+    <string name="error_native_library_load_failed">Failed to load native library</string>
+</resources>

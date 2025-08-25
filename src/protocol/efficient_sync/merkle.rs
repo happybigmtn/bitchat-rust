@@ -70,6 +70,12 @@ pub struct MerkleProof {
     pub leaf_index: usize,
 }
 
+impl Default for StateMerkleTree {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StateMerkleTree {
     /// Create new merkle tree for state synchronization
     pub fn new() -> Self {
@@ -190,7 +196,7 @@ impl StateMerkleTree {
     /// Create parent node from children
     fn create_parent_node(&self, left: &MerkleNode, right: Option<&MerkleNode>, depth: u8) -> MerkleNode {
         let mut hasher = Sha256::new();
-        hasher.update(&left.hash);
+        hasher.update(left.hash);
         
         let mut game_ids = left.game_ids.clone();
         let mut total_size = left.metadata.total_size;
@@ -198,7 +204,7 @@ impl StateMerkleTree {
         let mut latest_update = left.metadata.latest_update;
         
         if let Some(right_child) = right {
-            hasher.update(&right_child.hash);
+            hasher.update(right_child.hash);
             game_ids.extend(right_child.game_ids.iter());
             total_size += right_child.metadata.total_size;
             game_count += right_child.metadata.game_count;
@@ -307,12 +313,12 @@ impl MerkleProof {
             
             if directions & 1 == 0 {
                 // Current node is left child
-                hasher.update(&current_hash);
+                hasher.update(current_hash);
                 hasher.update(sibling_hash);
             } else {
                 // Current node is right child
                 hasher.update(sibling_hash);
-                hasher.update(&current_hash);
+                hasher.update(current_hash);
             }
             
             current_hash = hasher.finalize().into();

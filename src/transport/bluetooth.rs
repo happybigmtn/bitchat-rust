@@ -26,7 +26,7 @@ const BITCRAPS_TX_CHAR_UUID: Uuid = Uuid::from_u128(0x12345678_1234_5678_1234_56
 /// Default BLE MTU size for packet fragmentation (will be dynamically discovered)
 const DEFAULT_BLE_MTU: usize = 247;  // BLE 4.2 default, will be optimized per connection
 /// Maximum BLE MTU size we'll attempt
-const MAX_BLE_MTU: usize = 512;
+const _MAX_BLE_MTU: usize = 512;
 /// Fragment header size (sequence + flags)
 const FRAGMENT_HEADER_SIZE: usize = 4;
 /// BLE MTU size constant
@@ -367,9 +367,7 @@ impl BluetoothTransport {
                                             log::debug!("Device properties: {:?}", props);
                                             
                                             // Check if this device advertises our service
-                                            let advertises_bitcraps = props.services
-                                                .iter()
-                                                .any(|service| *service == BITCRAPS_SERVICE_UUID);
+                                            let advertises_bitcraps = props.services.contains(&BITCRAPS_SERVICE_UUID);
                                             
                                             if advertises_bitcraps {
                                                 let device_id = format!("{:?}", id);
@@ -524,7 +522,7 @@ impl BluetoothTransport {
             self.global_memory_pool.return_buffer(buffer).await;
         } else {
             // Multiple fragments - zero-copy slicing
-            let total_fragments = (data.len() + max_fragment_size - 1) / max_fragment_size;
+            let total_fragments = data.len().div_ceil(max_fragment_size);
             let base_sequence = connection.fragmentation.next_sequence;
             connection.fragmentation.next_sequence = connection.fragmentation.next_sequence.wrapping_add(total_fragments as u16);
             
@@ -970,7 +968,7 @@ impl FragmentationManager {
         let msg_id = sequence; // Simplified: use sequence as message ID
         let buffer = self.reassembly_buffers
             .entry(peer_id)
-            .or_insert_with(HashMap::new)
+            .or_default()
             .entry(msg_id)
             .or_insert_with(|| FragmentBuffer {
                 fragments: HashMap::new(),

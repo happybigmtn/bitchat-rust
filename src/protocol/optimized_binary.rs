@@ -87,6 +87,12 @@ pub struct PatternEncoder {
     amount_patterns: HashMap<u64, u8>,
 }
 
+impl Default for BitField {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BitField {
     /// Create new bit field
     pub fn new() -> Self {
@@ -151,7 +157,7 @@ impl BitField {
     
     /// Get byte length (rounded up)
     pub fn byte_len(&self) -> usize {
-        (self.bit_pos + 7) / 8
+        self.bit_pos.div_ceil(8)
     }
 }
 
@@ -228,6 +234,12 @@ impl VarInt {
             val >>= 7;
         }
         size
+    }
+}
+
+impl Default for StringInterner {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -496,6 +508,12 @@ impl UltraCompactGameState {
     }
 }
 
+impl Default for PatternEncoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PatternEncoder {
     /// Create new pattern encoder
     pub fn new() -> Self {
@@ -679,12 +697,11 @@ mod tests {
         let mut interner = StringInterner::new();
         
         let bet = Bet::new(
-            [1u8; 16],
-            [2u8; 16],
-            [3u8; 32],
+            [3u8; 32],  // player (PeerId)
+            [1u8; 16],  // game_id (GameId)
             BetType::Pass,
             CrapTokens::new_unchecked(5000000),
-        ).unwrap();
+        );
         
         let compact = UltraCompactBet::from_bet(&bet, game_start, &mut interner);
         let serialized = compact.serialize();
@@ -708,12 +725,11 @@ mod tests {
     fn test_memory_efficiency() {
         // Test that our ultra-compact structures use significantly less memory
         let regular_bet = Bet::new(
-            [1u8; 16],
-            [2u8; 16], 
-            [3u8; 32],
+            [3u8; 32],  // player (PeerId)
+            [1u8; 16],  // game_id (GameId)
             BetType::Pass,
             CrapTokens::new_unchecked(1000000),
-        ).unwrap();
+        );
         
         let mut interner = StringInterner::new();
         let compact_bet = UltraCompactBet::from_bet(&regular_bet, 0, &mut interner);

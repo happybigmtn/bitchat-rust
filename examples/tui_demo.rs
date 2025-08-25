@@ -1,7 +1,7 @@
 // Demo of the BitCraps TUI interface
 // Run with: cargo run --example tui_demo
 
-use bitcraps::ui::tui::{run_tui, TuiApp};
+use bitcraps::ui::tui::run_tui;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

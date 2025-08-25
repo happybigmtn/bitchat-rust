@@ -16,6 +16,9 @@ pub mod message_queue;
 pub mod game_session;
 pub mod anti_cheat;
 pub mod kademlia_dht;
+pub mod gateway;
+pub mod advanced_routing;
+pub mod resilience;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -112,6 +115,18 @@ impl MeshService {
     /// Set the proof of relay system for mining rewards
     pub fn set_proof_of_relay(&mut self, proof_of_relay: Arc<ProofOfRelay>) {
         self.proof_of_relay = Some(proof_of_relay);
+    }
+    
+    /// Set heartbeat interval for mobile battery optimization
+    pub fn set_heartbeat_interval(&self, _interval: Duration) {
+        // TODO: Implement heartbeat interval configuration
+        // This would update internal timers for peer keepalive messages
+    }
+    
+    /// Set peer timeout for mobile connections
+    pub fn set_peer_timeout(&self, _timeout: Duration) {
+        // TODO: Implement peer timeout configuration
+        // This would update how long we wait before considering a peer disconnected
     }
     
     /// Start the mesh service
@@ -266,7 +281,6 @@ impl MeshService {
                     from,
                     packet,
                 });
-                return;
             }
         }
         
@@ -487,14 +501,14 @@ impl MeshService {
         use sha2::{Sha256, Digest};
         
         let mut hasher = Sha256::new();
-        hasher.update(&[packet.version, packet.packet_type, packet.flags, packet.ttl]);
-        hasher.update(&packet.total_length.to_be_bytes());
-        hasher.update(&packet.sequence.to_be_bytes());
+        hasher.update([packet.version, packet.packet_type, packet.flags, packet.ttl]);
+        hasher.update(packet.total_length.to_be_bytes());
+        hasher.update(packet.sequence.to_be_bytes());
         
         // Add TLV data to hash
         for tlv in &packet.tlv_data {
-            hasher.update(&[tlv.field_type]);
-            hasher.update(&tlv.length.to_be_bytes());
+            hasher.update([tlv.field_type]);
+            hasher.update(tlv.length.to_be_bytes());
             hasher.update(&tlv.value);
         }
         

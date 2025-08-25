@@ -30,8 +30,8 @@ impl ProofOfWork {
         
         for _ in 0..max_attempts {
             hasher.update(data);
-            hasher.update(&nonce.to_le_bytes());
-            hasher.update(&timestamp.to_le_bytes());
+            hasher.update(nonce.to_le_bytes());
+            hasher.update(timestamp.to_le_bytes());
             
             let hash: [u8; 32] = hasher.finalize_reset().into();
             
@@ -65,8 +65,8 @@ impl ProofOfWork {
         // Verify hash
         let mut hasher = Sha256::new();
         hasher.update(data);
-        hasher.update(&self.nonce.to_le_bytes());
-        hasher.update(&self.timestamp.to_le_bytes());
+        hasher.update(self.nonce.to_le_bytes());
+        hasher.update(self.timestamp.to_le_bytes());
         
         let computed_hash: [u8; 32] = hasher.finalize().into();
         
@@ -134,9 +134,9 @@ impl ProofOfWorkIdentity {
         let mut hasher = Sha256::new();
         
         loop {
-            hasher.update(&peer_id);
-            hasher.update(&nonce.to_le_bytes());
-            hasher.update(&timestamp.to_le_bytes());
+            hasher.update(peer_id);
+            hasher.update(nonce.to_le_bytes());
+            hasher.update(timestamp.to_le_bytes());
             
             let hash: [u8; 32] = hasher.finalize_reset().into();
             
@@ -177,9 +177,9 @@ impl ProofOfWorkIdentity {
         
         // Verify hash
         let mut hasher = Sha256::new();
-        hasher.update(&self.peer_id);
-        hasher.update(&self.nonce.to_le_bytes());
-        hasher.update(&self.timestamp.to_le_bytes());
+        hasher.update(self.peer_id);
+        hasher.update(self.nonce.to_le_bytes());
+        hasher.update(self.timestamp.to_le_bytes());
         
         let computed_hash: [u8; 32] = hasher.finalize().into();
         
@@ -314,8 +314,8 @@ impl IdentityCache {
         }
         
         // Cache the identity
-        let peer_id = identity.peer_id.clone();
-        self.verified.insert(peer_id.clone(), identity);
+        let peer_id = identity.peer_id;
+        self.verified.insert(peer_id, identity);
         self.reputation.insert(peer_id, 0);
         
         true
@@ -323,7 +323,7 @@ impl IdentityCache {
     
     /// Update reputation for a peer
     pub fn update_reputation(&mut self, peer_id: &PeerId, delta: i32) {
-        let rep = self.reputation.entry(peer_id.clone()).or_insert(0);
+        let rep = self.reputation.entry(*peer_id).or_insert(0);
         *rep = (*rep + delta).max(-100).min(100);
     }
     
@@ -338,7 +338,7 @@ impl IdentityCache {
         let to_remove: Vec<PeerId> = self.reputation
             .iter()
             .filter(|(_, &rep)| rep < -50)
-            .map(|(id, _)| id.clone())
+            .map(|(id, _)| *id)
             .collect();
         
         for id in to_remove {
