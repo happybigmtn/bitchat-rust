@@ -8,12 +8,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
-use serde_bytes;
 
-use crate::protocol::{PeerId, GameId, Hash256, CrapTokens};
-use crate::protocol::consensus::engine::{GameConsensusState, ConsensusEngine};
-use crate::protocol::p2p_messages::{ConsensusMessage, ConsensusPayload, StateSummary, CompressedGameState};
-use crate::protocol::craps::{GamePhase, CrapsGame};
+use crate::protocol::{PeerId, GameId, Hash256};
+use crate::protocol::consensus::engine::GameConsensusState;
+use crate::protocol::p2p_messages::{ConsensusMessage, ConsensusPayload, CompressedGameState};
+use crate::protocol::craps::CrapsGame;
 use crate::error::{Error, Result};
 
 /// State synchronization configuration

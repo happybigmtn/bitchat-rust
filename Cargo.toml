@@ -115,9 +115,15 @@ ndk-context = "0.1"
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
 # Note: In a real implementation, you would add FFI bindings here:
 # cocoa = "0.24"
-# objc = "0.2"
+# objc = "0.2"  
 # core-foundation = "0.9"
 # For now, we're using placeholder implementations
+
+# Windows system monitoring
+[target.'cfg(target_os = "windows")'.dependencies]
+# Windows Performance Data Helper (PDH) for system metrics
+# winapi = { version = "0.3", features = ["pdh", "sysinfoapi", "winbase"] }
+# windows-sys = { version = "0.52", features = ["Win32_System_Performance", "Win32_System_SystemInformation"] }
 
 
 [dev-dependencies]

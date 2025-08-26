@@ -9,8 +9,8 @@
 //! 
 //! Target: <5% battery drain per hour under normal operation
 
-use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::time::{Duration, SystemTime};
 use std::collections::{HashMap, VecDeque};
 use tokio::sync::{RwLock, Mutex, broadcast};
 use serde::{Deserialize, Serialize};

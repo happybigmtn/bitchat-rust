@@ -998,9 +998,10 @@ impl BiometricAuth for MockBiometricAuth {
 
 /// Generate secure random entropy
 fn generate_secure_entropy(size: usize) -> Result<Vec<u8>> {
-    use rand::RngCore;
+    use rand::{RngCore, rngs::OsRng};
     let mut entropy = vec![0u8; size];
-    rand::thread_rng().fill_bytes(&mut entropy);
+    let mut secure_rng = OsRng;
+    secure_rng.fill_bytes(&mut entropy);
     Ok(entropy)
 }
 

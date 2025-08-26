@@ -9,7 +9,7 @@
 //! 
 //! Target: <20% average CPU usage with <500ms consensus latency
 
-use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}};
+use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}};
 use std::time::{Duration, SystemTime};
 use std::collections::{HashMap, VecDeque, BinaryHeap};
 use std::cmp::Reverse;

@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock, Mutex};
 use tokio::time::interval;
 
-use crate::protocol::{PeerId, GameId, BitchatPacket, PACKET_TYPE_CONSENSUS_VOTE};
-use crate::protocol::p2p_messages::{ConsensusMessage, ConsensusPayload, MessagePriority};
+use crate::protocol::{GameId, BitchatPacket, PACKET_TYPE_CONSENSUS_VOTE};
+use crate::protocol::p2p_messages::{ConsensusMessage, MessagePriority};
 use crate::protocol::network_consensus_bridge::NetworkConsensusBridge;
 use crate::mesh::MeshService;
 use crate::crypto::BitchatIdentity;

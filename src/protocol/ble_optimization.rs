@@ -4,15 +4,13 @@
 //! constraints, including power management, adaptive protocols, and intelligent
 //! connection management.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
 
-use crate::protocol::{PeerId, BitchatPacket};
+use crate::protocol::PeerId;
 use crate::protocol::p2p_messages::{ConsensusMessage, MessagePriority};
-use crate::protocol::ble_dispatch::BleMessageDispatcher;
 use crate::error::{Error, Result};
 
 /// BLE optimization configuration

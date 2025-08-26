@@ -304,9 +304,9 @@ impl GameHandle {
     pub async fn roll_dice(&self) -> Result<(), BitCrapsError> {
         // TODO: Implement proper turn management
         
-        // Simulate dice roll
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
+        // Simulate dice roll using cryptographically secure RNG
+        use rand::{Rng, rngs::OsRng};
+        let mut rng = OsRng;
         let die1 = rng.gen_range(1..=6);
         let die2 = rng.gen_range(1..=6);
         

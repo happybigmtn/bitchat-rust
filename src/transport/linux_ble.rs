@@ -5,10 +5,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::sync::{mpsc, RwLock, Mutex};
 use uuid::Uuid;
-use serde::{Serialize, Deserialize};
 
 use crate::protocol::PeerId;
 use crate::error::{Error, Result};

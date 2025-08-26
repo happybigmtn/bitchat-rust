@@ -4,21 +4,18 @@
 //! automatic recovery mechanisms to maintain consensus integrity during
 //! network instability.
 
-use std::collections::{HashMap, HashSet, BTreeMap};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
-use tokio::sync::{RwLock, Mutex};
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 use tokio::time::interval;
-use serde::{Deserialize, Serialize};
 
-use crate::protocol::{PeerId, GameId, Hash256};
-use crate::protocol::consensus::engine::{GameConsensusState, ConsensusEngine};
+use crate::protocol::{PeerId, GameId};
 use crate::protocol::p2p_messages::{
-    ConsensusMessage, ConsensusPayload, NetworkView, StateSummary, 
-    ParticipantInfo, CheatType
+    NetworkView, StateSummary, CheatType
 };
-use crate::protocol::state_sync::{StateSynchronizer, StateCheckpoint};
-use crate::error::{Error, Result};
+use crate::protocol::state_sync::StateSynchronizer;
+use crate::error::Result;
 
 /// Partition recovery configuration
 #[derive(Debug, Clone)]

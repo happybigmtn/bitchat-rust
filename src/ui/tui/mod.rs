@@ -263,9 +263,9 @@ impl TuiApp {
             ViewMode::Casino | ViewMode::ActiveGame => {
                 match c {
                     'r' => {
-                        // Roll dice
-                        use rand::Rng;
-                        let mut rng = rand::thread_rng();
+                        // Roll dice using cryptographically secure RNG
+                        use rand::{Rng, rngs::OsRng};
+                        let mut rng = OsRng;
                         if let Ok(roll) = DiceRoll::new(rng.gen_range(1..=6), rng.gen_range(1..=6)) {
                             self.start_dice_animation(roll);
                         }

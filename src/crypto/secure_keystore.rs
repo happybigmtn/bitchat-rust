@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier};
 use rand::rngs::OsRng;
 use serde::{Serialize, Deserialize};
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::ZeroizeOnDrop;
 
 use crate::protocol::{PeerId, Signature as ProtocolSignature};
 use crate::error::Result;

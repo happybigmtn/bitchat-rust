@@ -49,6 +49,37 @@ impl MetricsCollector {
         self.start_time.elapsed().as_secs()
     }
     
+    /// Update resource metrics from real system monitoring
+    pub fn update_from_system_monitor(&self) {
+        if let Ok(system_metrics) = crate::monitoring::system::global_system_monitor().collect_metrics() {
+            self.resources.update_from_system_metrics(&system_metrics);
+            
+            // Log system monitoring status
+            log::debug!("Updated metrics from system monitor: CPU {}%, Memory {} MB, Battery: {:?}%", 
+                        system_metrics.cpu_usage_percent,
+                        system_metrics.used_memory_bytes / 1024 / 1024,
+                        system_metrics.battery_level);
+        } else {
+            log::warn!("Failed to collect system metrics, using fallback values");
+        }
+    }
+    
+    /// Start periodic system monitoring updates
+    pub fn start_system_monitoring() -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut interval_timer = tokio::time::interval(std::time::Duration::from_secs(5));
+            loop {
+                interval_timer.tick().await;
+                METRICS.update_from_system_monitor();
+            }
+        })
+    }
+    
+    /// Check if we have real system monitoring (vs simulated)
+    pub fn is_real_system_monitoring(&self) -> bool {
+        crate::monitoring::system::global_system_monitor().is_real_monitoring()
+    }
+    
     /// Export metrics in Prometheus format
     pub fn export_prometheus(&self) -> String {
         let mut output = String::new();
@@ -125,6 +156,42 @@ impl MetricsCollector {
              # TYPE bitcraps_cpu_usage_percent gauge\n\
              bitcraps_cpu_usage_percent {}\n",
             self.resources.cpu_usage_percent.load(Ordering::Relaxed)
+        ));
+        
+        // Battery metrics (if available)
+        if let Some(battery_level) = self.resources.get_battery_level() {
+            output.push_str(&format!(
+                "# HELP bitcraps_battery_level Battery level percentage\n\
+                 # TYPE bitcraps_battery_level gauge\n\
+                 bitcraps_battery_level {}\n",
+                battery_level
+            ));
+        }
+        
+        if let Some(battery_charging) = self.resources.is_battery_charging() {
+            output.push_str(&format!(
+                "# HELP bitcraps_battery_charging Battery charging status (1=charging, 0=discharging)\n\
+                 # TYPE bitcraps_battery_charging gauge\n\
+                 bitcraps_battery_charging {}\n",
+                if battery_charging { 1 } else { 0 }
+            ));
+        }
+        
+        // Temperature metrics (if available)
+        if let Some(temperature) = self.resources.get_temperature() {
+            output.push_str(&format!(
+                "# HELP bitcraps_temperature_celsius Device temperature in Celsius\n\
+                 # TYPE bitcraps_temperature_celsius gauge\n\
+                 bitcraps_temperature_celsius {}\n",
+                temperature
+            ));
+        }
+        
+        output.push_str(&format!(
+            "# HELP bitcraps_thermal_throttling Thermal throttling active (1=yes, 0=no)\n\
+             # TYPE bitcraps_thermal_throttling gauge\n\
+             bitcraps_thermal_throttling {}\n",
+            if self.resources.is_thermal_throttling() { 1 } else { 0 }
         ));
         
         // Error metrics
@@ -337,6 +404,14 @@ pub struct ResourceMetrics {
     pub disk_usage_bytes: AtomicU64,
     pub thread_count: AtomicUsize,
     pub open_file_descriptors: AtomicUsize,
+    /// Battery level (0-100) if available
+    pub battery_level: Arc<RwLock<Option<f32>>>,
+    /// Battery charging status
+    pub battery_charging: Arc<RwLock<Option<bool>>>,
+    /// Temperature in Celsius if available
+    pub temperature_celsius: Arc<RwLock<Option<f32>>>,
+    /// Whether thermal throttling is active
+    pub thermal_throttling: Arc<RwLock<bool>>,
 }
 
 impl ResourceMetrics {
@@ -347,6 +422,10 @@ impl ResourceMetrics {
             disk_usage_bytes: AtomicU64::new(0),
             thread_count: AtomicUsize::new(0),
             open_file_descriptors: AtomicUsize::new(0),
+            battery_level: Arc::new(RwLock::new(None)),
+            battery_charging: Arc::new(RwLock::new(None)),
+            temperature_celsius: Arc::new(RwLock::new(None)),
+            thermal_throttling: Arc::new(RwLock::new(false)),
         }
     }
     
@@ -356,6 +435,42 @@ impl ResourceMetrics {
     
     pub fn update_cpu(&self, percent: usize) {
         self.cpu_usage_percent.store(percent.min(100), Ordering::Relaxed);
+    }
+    
+    /// Update resource metrics from real system monitoring
+    pub fn update_from_system_metrics(&self, system_metrics: &crate::monitoring::system::SystemMetrics) {
+        // Update basic metrics
+        self.update_memory(system_metrics.used_memory_bytes);
+        self.update_cpu(system_metrics.cpu_usage_percent as usize);
+        self.thread_count.store(system_metrics.thread_count as usize, Ordering::Relaxed);
+        
+        // Update battery metrics
+        *self.battery_level.write() = system_metrics.battery_level;
+        *self.battery_charging.write() = system_metrics.battery_charging;
+        
+        // Update thermal metrics
+        *self.temperature_celsius.write() = system_metrics.temperature_celsius;
+        *self.thermal_throttling.write() = system_metrics.thermal_throttling;
+    }
+    
+    /// Get current battery level if available
+    pub fn get_battery_level(&self) -> Option<f32> {
+        *self.battery_level.read()
+    }
+    
+    /// Get current battery charging status if available
+    pub fn is_battery_charging(&self) -> Option<bool> {
+        *self.battery_charging.read()
+    }
+    
+    /// Get current temperature if available
+    pub fn get_temperature(&self) -> Option<f32> {
+        *self.temperature_celsius.read()
+    }
+    
+    /// Check if thermal throttling is active
+    pub fn is_thermal_throttling(&self) -> bool {
+        *self.thermal_throttling.read()
     }
 }
 

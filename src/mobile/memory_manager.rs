@@ -8,12 +8,11 @@
 //! - Per-component memory budgeting
 //! - Memory leak detection and prevention
 
-use std::sync::{Arc, atomic::{AtomicUsize, AtomicU64, AtomicBool, Ordering}};
+use std::sync::{Arc, atomic::{AtomicUsize, AtomicBool, Ordering}};
 use std::time::{Duration, SystemTime};
 use std::collections::{HashMap, VecDeque};
-use std::alloc::{GlobalAlloc, Layout};
 use tokio::sync::{RwLock, Mutex};
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use serde::{Deserialize, Serialize};
 
 use super::performance::PowerState;

@@ -10,12 +10,12 @@ use tokio::sync::{mpsc, RwLock, Mutex};
 use tokio::time::interval;
 
 use crate::protocol::{PeerId, GameId, BitchatPacket, PACKET_TYPE_CONSENSUS_VOTE};
-use crate::protocol::consensus::engine::{ConsensusEngine, GameProposal, GameOperation, GameConsensusState};
+use crate::protocol::consensus::engine::{ConsensusEngine, GameOperation, GameConsensusState};
 use crate::protocol::consensus::ProposalId;
-use crate::protocol::consensus_coordinator::{ConsensusCoordinator, ConsensusNetworkConfig};
+use crate::protocol::consensus_coordinator::ConsensusCoordinator;
 use crate::protocol::p2p_messages::{
-    ConsensusMessage, ConsensusPayload, RoundId, NetworkView, ParticipantInfo, 
-    CompressedGameState, StateSummary, CheatType
+    ConsensusMessage, ConsensusPayload, RoundId, 
+    CompressedGameState
 };
 use crate::mesh::MeshService;
 use crate::crypto::BitchatIdentity;

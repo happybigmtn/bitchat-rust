@@ -9,8 +9,8 @@
 //! - Battery health preservation algorithms
 
 use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::collections::{HashMap, VecDeque};
+use std::time::{Duration, SystemTime};
+use std::collections::VecDeque;
 use tokio::sync::{RwLock, broadcast};
 use serde::{Deserialize, Serialize};
 

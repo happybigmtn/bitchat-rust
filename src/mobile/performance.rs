@@ -12,8 +12,7 @@
 //! - CPU throttling and thermal management
 
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::collections::HashMap;
+use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
 

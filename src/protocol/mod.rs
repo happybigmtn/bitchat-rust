@@ -215,8 +215,8 @@ impl Bet {
             
         // Generate a unique bet ID
         let mut id = [0u8; 16];
-        use rand::RngCore;
-        let mut rng = rand::thread_rng();
+        use rand::{RngCore, rngs::OsRng};
+        let mut rng = OsRng;
         rng.fill_bytes(&mut id);
             
         Self {
@@ -558,8 +558,8 @@ impl std::fmt::Display for CrapTokens {
 /// Helper function to create a new GameId using cryptographic randomness
 pub fn new_game_id() -> GameId {
     let mut game_id = [0u8; 16];
-    use rand::RngCore;
-    let mut rng = rand::thread_rng();
+    use rand::{RngCore, rngs::OsRng};
+    let mut rng = OsRng;
     rng.fill_bytes(&mut game_id);
     game_id
 }

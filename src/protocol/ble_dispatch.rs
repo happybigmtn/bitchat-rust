@@ -4,14 +4,14 @@
 //! Bluetooth Low Energy constraints with compression, fragmentation, and
 //! intelligent bandwidth management.
 
-use std::collections::{HashMap, VecDeque, BTreeMap};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{RwLock, Mutex};
+use tokio::sync::RwLock;
 use tokio::time::interval;
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::{PeerId, BitchatPacket};
+use crate::protocol::PeerId;
 use crate::protocol::p2p_messages::{ConsensusMessage, MessagePriority};
 use crate::error::{Error, Result};
 
@@ -410,8 +410,9 @@ impl BleMessageDispatcher {
         let total_fragments = (message_bytes.len() + payload_size - 1) / payload_size;
         
         let mut message_id = [0u8; 16];
-        use rand::RngCore;
-        rand::thread_rng().fill_bytes(&mut message_id);
+        use rand::{RngCore, rngs::OsRng};
+        let mut secure_rng = OsRng;
+        secure_rng.fill_bytes(&mut message_id);
         
         let mut fragments = Vec::new();
         

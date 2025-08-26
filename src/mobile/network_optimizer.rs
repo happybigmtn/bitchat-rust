@@ -15,7 +15,7 @@ use std::time::{Duration, SystemTime};
 use std::collections::{HashMap, VecDeque, BinaryHeap};
 use std::cmp::Reverse;
 use tokio::sync::{RwLock, Mutex, Semaphore};
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 use super::performance::PowerState;

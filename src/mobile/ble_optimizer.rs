@@ -8,7 +8,7 @@
 //! 
 //! Target: Reduce continuous scanning battery drain while maintaining connectivity
 
-use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}};
+use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}};
 use std::time::{Duration, SystemTime};
 use std::collections::{HashMap, VecDeque};
 use tokio::sync::{RwLock, Mutex};

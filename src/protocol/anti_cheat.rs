@@ -13,9 +13,9 @@ use serde::{Deserialize, Serialize};
 use crate::protocol::{PeerId, GameId, Hash256, Signature, CrapTokens};
 use crate::protocol::consensus::engine::{GameProposal, GameOperation};
 use crate::protocol::consensus::ProposalId;
-use crate::protocol::p2p_messages::{CheatType, ConsensusMessage, ConsensusPayload};
+use crate::protocol::p2p_messages::{CheatType, ConsensusMessage};
 use crate::protocol::craps::{Bet, DiceRoll, BetType};
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 /// Anti-cheat configuration
 #[derive(Debug, Clone)]

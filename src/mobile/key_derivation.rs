@@ -389,11 +389,12 @@ impl KeyDerivationManager {
         self.generate_hardware_key(key_id) // In real impl, would retrieve existing key
     }
     
-    /// Generate software-based random key
+    /// Generate software-based random key using cryptographically secure RNG
     fn generate_software_key(&self, length: usize) -> Result<Vec<u8>> {
-        use rand::RngCore;
+        use rand::{RngCore, rngs::OsRng};
         let mut key = vec![0u8; length];
-        rand::thread_rng().fill_bytes(&mut key);
+        let mut secure_rng = OsRng;
+        secure_rng.fill_bytes(&mut key);
         Ok(key)
     }
 }

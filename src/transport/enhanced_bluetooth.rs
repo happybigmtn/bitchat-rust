@@ -6,11 +6,10 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock, Mutex};
 use async_trait::async_trait;
 
-use crate::protocol::{PeerId, BitchatPacket};
+use crate::protocol::PeerId;
 use crate::transport::{
     Transport, TransportAddress, TransportEvent, BluetoothTransport,
     BlePeripheral, BlePeripheralFactory, AdvertisingConfig, PeripheralEvent, PeripheralStats
@@ -173,7 +172,7 @@ impl EnhancedBluetoothTransport {
         log::info!("Starting BLE scanning");
         
         {
-            let mut central = self.central_transport.write().await;
+            let central = self.central_transport.write().await;
             central.scan_for_peers().await
                 .map_err(|e| Error::Network(format!("Failed to start scanning: {}", e)))?;
         }

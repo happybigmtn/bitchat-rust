@@ -40,7 +40,7 @@ impl NodeId {
     
     /// Generate a new NodeId with required proof-of-work
     pub fn generate_secure(difficulty: u32) -> Self {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rngs::OsRng;
         loop {
             let mut id_bytes = [0u8; 32];
             rng.fill_bytes(&mut id_bytes);

@@ -249,8 +249,8 @@ impl BitchatSession {
     /// Generate session ID using cryptographic randomness
     fn generate_session_id() -> SessionId {
         let mut session_id = [0u8; 16];
-        use rand::RngCore;
-        let mut rng = rand::thread_rng();
+        use rand::{RngCore, rngs::OsRng};
+        let mut rng = OsRng;
         rng.fill_bytes(&mut session_id);
         session_id
     }

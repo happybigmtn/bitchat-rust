@@ -138,9 +138,10 @@ impl SecureKeystore {
     
     /// Initialize master key from password
     pub async fn init_master_key(&self, password: &str) -> Result<()> {
-        // Generate salt
+        // Generate salt using cryptographically secure RNG
         let mut salt = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut salt);
+        let mut secure_rng = OsRng;
+        secure_rng.fill_bytes(&mut salt);
         
         // Derive master key using Argon2
         let argon2 = Argon2::default();
@@ -187,7 +188,8 @@ impl SecureKeystore {
             }
             KeyType::Encryption => {
                 let mut key = vec![0u8; 32];
-                rand::thread_rng().fill_bytes(&mut key);
+                let mut secure_rng = OsRng;
+                secure_rng.fill_bytes(&mut key);
                 (key, "X25519".to_string())
             }
             KeyType::Session => {

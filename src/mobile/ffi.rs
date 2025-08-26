@@ -6,7 +6,7 @@ use crate::error::Error;
 use crate::protocol::PeerId;
 use crate::gaming::multi_game_framework::{GameSession, GameSessionConfig, GameSessionState, GameSessionStats};
 use crate::mesh::MeshService;
-use crate::crypto::{BitchatIdentity, BitchatKeypair};
+use crate::crypto::BitchatIdentity;
 use crate::transport::TransportCoordinator;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
@@ -50,8 +50,8 @@ impl Default for BitCrapsConfig {
 
 /// Create a new BitCraps node with the given configuration
 pub fn create_node(config: BitCrapsConfig) -> Result<Arc<BitCrapsNode>> {
-    use crate::transport::bluetooth::BluetoothTransport;
-    use crate::transport::traits::Transport;
+    
+    
     
     // Generate peer ID and identity
     let uuid_bytes = Uuid::new_v4().as_bytes().clone();
@@ -453,8 +453,8 @@ impl GameHandle {
     /// Roll dice in the current game
     pub async fn roll_dice(&self) -> Result<(u8, u8)> {
         // Generate cryptographically secure random dice
-        use rand::{thread_rng, Rng};
-        let mut rng = thread_rng();
+        use rand::{Rng, rngs::OsRng};
+        let mut rng = OsRng;
         let die1 = rng.gen_range(1..=6);
         let die2 = rng.gen_range(1..=6);
         
