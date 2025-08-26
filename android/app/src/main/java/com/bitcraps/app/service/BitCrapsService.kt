@@ -13,6 +13,8 @@ import timber.log.Timber
 import com.bitcraps.app.R
 import com.bitcraps.app.ble.BleManager
 import com.bitcraps.app.ble.BleAdvertiser
+import com.bitcraps.app.ble.BleService
+import com.bitcraps.app.ble.BleJNI
 import kotlinx.coroutines.*
 import java.util.concurrent.atomic.AtomicBoolean
 

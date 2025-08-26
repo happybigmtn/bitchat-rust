@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
+use serde_bytes;
 
 use crate::protocol::{PeerId, GameId, Hash256, CrapTokens};
 use crate::protocol::consensus::engine::{GameConsensusState, ConsensusEngine};
@@ -66,6 +67,7 @@ pub struct StateCheckpoint {
     /// Checkpoint timestamp
     pub timestamp: u64,
     /// Signatures from participants
+    #[serde(with = "signature_map")]
     pub signatures: HashMap<PeerId, [u8; 64]>,
 }
 
@@ -94,6 +96,7 @@ pub struct StateOperation {
     /// The actual operation
     pub operation: crate::protocol::consensus::engine::GameOperation,
     /// Operation signature
+    #[serde(serialize_with = "signature_serialize", deserialize_with = "signature_deserialize")]
     pub signature: [u8; 64],
 }
 
@@ -443,7 +446,7 @@ impl StateSynchronizer {
             sequence_number: sequence,
             timestamp: SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
             game_state: CrapsGame::new(self.game_id, self.local_peer_id),
-            player_balances: HashMap::new(),
+            player_balances: rustc_hash::FxHashMap::default(),
             last_proposer: self.local_peer_id,
             confirmations: 0,
             is_finalized: true,
@@ -491,9 +494,10 @@ impl StateSynchronizer {
         history.retain(|&seq, _| seq > checkpoint.sequence);
         
         // Store checkpoint
-        self.checkpoints.write().await.insert(checkpoint.sequence, checkpoint);
+        let checkpoint_sequence = checkpoint.sequence;
+        self.checkpoints.write().await.insert(checkpoint_sequence, checkpoint);
         
-        log::info!("Applied checkpoint at sequence {}", checkpoint.sequence);
+        log::info!("Applied checkpoint at sequence {}", checkpoint_sequence);
         Ok(())
     }
     
@@ -593,4 +597,61 @@ pub struct SyncStats {
     pub checkpoints_stored: usize,
     pub history_size: usize,
     pub partitions_detected: usize,
+}
+
+// Serde helpers for signature serialization
+mod signature_map {
+    use std::collections::HashMap;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use crate::protocol::PeerId;
+
+    pub fn serialize<S>(value: &HashMap<PeerId, [u8; 64]>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let hex_map: HashMap<PeerId, String> = value
+            .iter()
+            .map(|(k, v)| (k.clone(), hex::encode(v)))
+            .collect();
+        hex_map.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<HashMap<PeerId, [u8; 64]>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let hex_map: HashMap<PeerId, String> = HashMap::deserialize(deserializer)?;
+        let mut result = HashMap::new();
+        for (k, v) in hex_map {
+            let bytes = hex::decode(&v).map_err(serde::de::Error::custom)?;
+            if bytes.len() != 64 {
+                return Err(serde::de::Error::custom("Invalid signature length"));
+            }
+            let mut array = [0u8; 64];
+            array.copy_from_slice(&bytes);
+            result.insert(k, array);
+        }
+        Ok(result)
+    }
+}
+
+fn signature_serialize<S>(value: &[u8; 64], serializer: S) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    hex::encode(value).serialize(serializer)
+}
+
+fn signature_deserialize<'de, D>(deserializer: D) -> std::result::Result<[u8; 64], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let hex_string: String = String::deserialize(deserializer)?;
+    let bytes = hex::decode(&hex_string).map_err(serde::de::Error::custom)?;
+    if bytes.len() != 64 {
+        return Err(serde::de::Error::custom("Invalid signature length"));
+    }
+    let mut array = [0u8; 64];
+    array.copy_from_slice(&bytes);
+    Ok(array)
 }

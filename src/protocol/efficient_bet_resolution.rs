@@ -716,7 +716,7 @@ impl EfficientBetResolver {
     /// Hash special state for caching
     fn hash_special_state(&self, state: &CompactGameState) -> u64 {
         let mut hash = 0u64;
-        hash |= ((state.get_fire_points() as u64));
+        hash |= state.get_fire_points() as u64;
         hash |= (state.get_bonus_numbers() as u64) << 8;
         hash |= (state.get_hot_streak() as u64) << 24;
         hash

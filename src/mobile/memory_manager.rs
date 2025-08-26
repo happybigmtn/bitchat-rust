@@ -8,8 +8,8 @@
 //! - Per-component memory budgeting
 //! - Memory leak detection and prevention
 
-use std::sync::{Arc, atomic::{AtomicUsize, AtomicU64, Ordering}};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, atomic::{AtomicUsize, AtomicU64, AtomicBool, Ordering}};
+use std::time::{Duration, SystemTime};
 use std::collections::{HashMap, VecDeque};
 use std::alloc::{GlobalAlloc, Layout};
 use tokio::sync::{RwLock, Mutex};
@@ -186,7 +186,7 @@ struct MemoryPool {
     /// Pool statistics
     stats: Arc<RwLock<PoolStats>>,
     /// Pool creation timestamp
-    created_at: Instant,
+    created_at: SystemTime,
 }
 
 /// Pool statistics
@@ -224,7 +224,7 @@ pub struct ComponentUsage {
     /// Number of over-budget incidents
     pub over_budget_count: u64,
     /// Last update timestamp
-    pub last_update: Instant,
+    pub last_update: SystemTime,
 }
 
 /// Memory manager statistics
@@ -264,7 +264,7 @@ struct AllocationRequest {
     /// Requested size in bytes
     size: usize,
     /// Request timestamp
-    timestamp: Instant,
+    timestamp: SystemTime,
     /// Request priority
     priority: AllocationPriority,
 }
@@ -310,13 +310,13 @@ pub struct MobileMemoryManager {
     gc_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     
     /// Allocation history for leak detection
-    allocation_history: Arc<RwLock<VecDeque<(Instant, usize, String)>>>,
+    allocation_history: Arc<RwLock<VecDeque<(SystemTime, usize, String)>>>,
     
     /// GC trigger flag
     gc_requested: Arc<AtomicBool>,
     
     /// Last GC run timestamp
-    last_gc_run: Arc<RwLock<Instant>>,
+    last_gc_run: Arc<RwLock<SystemTime>>,
 }
 
 impl MobileMemoryManager {
@@ -337,7 +337,7 @@ impl MobileMemoryManager {
             gc_task: Arc::new(Mutex::new(None)),
             allocation_history: Arc::new(RwLock::new(VecDeque::with_capacity(10000))),
             gc_requested: Arc::new(AtomicBool::new(false)),
-            last_gc_run: Arc::new(RwLock::new(Instant::now())),
+            last_gc_run: Arc::new(RwLock::new(SystemTime::now())),
         };
         
         // Initialize memory pools
@@ -357,7 +357,7 @@ impl MobileMemoryManager {
                     budget_bytes: (budgets.consensus_mb * 1024.0 * 1024.0) as u64,
                     allocation_count: 0,
                     over_budget_count: 0,
-                    last_update: Instant::now(),
+                    last_update: SystemTime::now(),
                 });
                 
                 usage.insert("networking".to_string(), ComponentUsage {
@@ -367,7 +367,7 @@ impl MobileMemoryManager {
                     budget_bytes: (budgets.networking_mb * 1024.0 * 1024.0) as u64,
                     allocation_count: 0,
                     over_budget_count: 0,
-                    last_update: Instant::now(),
+                    last_update: SystemTime::now(),
                 });
                 
                 usage.insert("ui".to_string(), ComponentUsage {
@@ -377,7 +377,7 @@ impl MobileMemoryManager {
                     budget_bytes: (budgets.ui_mb * 1024.0 * 1024.0) as u64,
                     allocation_count: 0,
                     over_budget_count: 0,
-                    last_update: Instant::now(),
+                    last_update: SystemTime::now(),
                 });
                 
                 usage.insert("gaming".to_string(), ComponentUsage {
@@ -387,7 +387,7 @@ impl MobileMemoryManager {
                     budget_bytes: (budgets.gaming_mb * 1024.0 * 1024.0) as u64,
                     allocation_count: 0,
                     over_budget_count: 0,
-                    last_update: Instant::now(),
+                    last_update: SystemTime::now(),
                 });
                 
                 // Initialize other components...
@@ -559,7 +559,7 @@ impl MobileMemoryManager {
             return None;
         }
         
-        let start_time = Instant::now();
+        let start_time = SystemTime::now();
         
         // Select appropriate pool
         let pool_name = if size <= 256 {
@@ -663,8 +663,8 @@ impl MobileMemoryManager {
     }
     
     /// Record allocation
-    async fn record_allocation(&self, component: &str, size: usize, start_time: Instant) {
-        let allocation_time = start_time.elapsed().as_nanos() as u64;
+    async fn record_allocation(&self, component: &str, size: usize, start_time: SystemTime) {
+        let allocation_time = SystemTime::now().duration_since(start_time).unwrap_or(Duration::ZERO).as_nanos() as u64;
         
         // Update total usage
         self.current_usage.fetch_add(size, Ordering::Relaxed);
@@ -676,7 +676,7 @@ impl MobileMemoryManager {
                 usage.current_bytes += size as u64;
                 usage.peak_bytes = usage.peak_bytes.max(usage.current_bytes);
                 usage.allocation_count += 1;
-                usage.last_update = Instant::now();
+                usage.last_update = SystemTime::now();
                 
                 // Check budget
                 if usage.current_bytes > usage.budget_bytes {
@@ -706,7 +706,7 @@ impl MobileMemoryManager {
         // Record in allocation history
         {
             let mut history = self.allocation_history.write().await;
-            history.push_back((Instant::now(), size, component.to_string()));
+            history.push_back((SystemTime::now(), size, component.to_string()));
             
             // Keep only recent history
             if history.len() > 10000 {
@@ -731,7 +731,7 @@ impl MobileMemoryManager {
             let mut usage_map = self.component_usage.write().await;
             if let Some(usage) = usage_map.get_mut(component) {
                 usage.current_bytes = usage.current_bytes.saturating_sub(size as u64);
-                usage.last_update = Instant::now();
+                usage.last_update = SystemTime::now();
             }
         }
         
@@ -807,7 +807,7 @@ impl MobileMemoryManager {
                     let force_interval = config.read().await.gc_settings.force_gc_interval_secs;
                     if force_interval > 0 {
                         let last_gc = *last_gc_run.read().await;
-                        last_gc.elapsed().as_secs() >= force_interval
+                        last_gc.duration_since(SystemTime::now()).unwrap_or(Duration::ZERO).as_secs() >= force_interval
                     } else {
                         false
                     }
@@ -830,7 +830,7 @@ impl MobileMemoryManager {
                     }
                     
                     // Update last GC time
-                    *last_gc_run.write().await = Instant::now();
+                    *last_gc_run.write().await = SystemTime::now();
                     
                     log::debug!("Garbage collection completed");
                 }
@@ -842,13 +842,13 @@ impl MobileMemoryManager {
     
     /// Detect memory leaks
     async fn detect_leaks(
-        allocation_history: &Arc<RwLock<VecDeque<(Instant, usize, String)>>>,
+        allocation_history: &Arc<RwLock<VecDeque<(SystemTime, usize, String)>>>,
         config: &Arc<RwLock<MemoryManagerConfig>>,
     ) {
         let window_duration = Duration::from_secs(
             config.read().await.monitoring.leak_detection_window_secs
         );
-        let cutoff_time = Instant::now() - window_duration;
+        let cutoff_time = SystemTime::now() - window_duration;
         
         let history = allocation_history.read().await;
         let recent_allocations: Vec<_> = history.iter()
@@ -891,13 +891,13 @@ impl MemoryPool {
             total_allocated: AtomicUsize::new(0),
             total_returned: AtomicUsize::new(0),
             stats: Arc::new(RwLock::new(PoolStats::default())),
-            created_at: Instant::now(),
+            created_at: SystemTime::now(),
         }
     }
     
     /// Allocate buffer from pool
     async fn allocate(&self) -> Option<BytesMut> {
-        let start_time = Instant::now();
+        let start_time = SystemTime::now();
         
         // Try to get from pool
         let mut available = self.available.lock().await;
@@ -918,7 +918,7 @@ impl MemoryPool {
                 stats.allocation_hits += 1;
                 stats.current_usage = available.len();
                 
-                let allocation_time = start_time.elapsed().as_nanos() as u64;
+                let allocation_time = SystemTime::now().duration_since(start_time).unwrap_or(Duration::ZERO).as_nanos() as u64;
                 stats.avg_allocation_time_ns = if stats.allocation_requests > 1 {
                     (stats.avg_allocation_time_ns * (stats.allocation_requests - 1) + allocation_time) / stats.allocation_requests
                 } else {
@@ -939,7 +939,7 @@ impl MemoryPool {
                 stats.peak_usage = stats.peak_usage.max(self.current_size.load(Ordering::Relaxed));
                 stats.total_memory_bytes += self.buffer_size as u64;
                 
-                let allocation_time = start_time.elapsed().as_nanos() as u64;
+                let allocation_time = SystemTime::now().duration_since(start_time).unwrap_or(Duration::ZERO).as_nanos() as u64;
                 stats.avg_allocation_time_ns = if stats.allocation_requests > 1 {
                     (stats.avg_allocation_time_ns * (stats.allocation_requests - 1) + allocation_time) / stats.allocation_requests
                 } else {

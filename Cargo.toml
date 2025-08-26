@@ -42,6 +42,10 @@ once_cell = "1.20"
 # UniFFI for cross-platform bindings
 uniffi = { version = "0.28", features = ["build"], optional = true }
 
+# Android JNI bindings
+jni = { version = "0.21", optional = true }
+android_logger = { version = "0.14", optional = true }
+
 # Database and storage
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 tokio-rusqlite = "0.6"
@@ -64,6 +68,8 @@ rayon = "1.10"
 
 # Compression
 flate2 = "1.0"
+zstd = "0.13"
+brotli = "7.0"
 
 # UI dependencies
 ratatui = "0.29.0"
@@ -97,6 +103,22 @@ android_logger = "0.14"
 ndk = "0.8"
 ndk-context = "0.1"
 
+# Linux D-Bus integration for BlueZ
+[target.'cfg(target_os = "linux")'.dependencies]
+# Note: In a real implementation, you would add D-Bus libraries here:
+# zbus = { version = "4.0", features = ["tokio"] }
+# or
+# dbus = "0.9"
+# For now, we're using placeholder implementations
+
+# iOS/macOS Core Bluetooth FFI (when available)
+[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
+# Note: In a real implementation, you would add FFI bindings here:
+# cocoa = "0.24"
+# objc = "0.2"
+# core-foundation = "0.9"
+# For now, we're using placeholder implementations
+
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -111,7 +133,6 @@ harness = false
 [[bench]]
 name = "comprehensive_benchmarks"
 harness = false
-required-features = ["never"] # Disabled until fixed
 
 [[bench]]
 name = "working_benchmarks"
@@ -142,6 +163,7 @@ default = []
 benchmarks = []
 physical_device_tests = []
 uniffi = ["dep:uniffi"]
+android = ["dep:jni", "dep:android_logger"]
 
 [profile.dev]
 opt-level = 0

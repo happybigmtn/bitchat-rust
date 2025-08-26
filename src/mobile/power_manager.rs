@@ -10,7 +10,7 @@
 //! Target: <5% battery drain per hour under normal operation
 
 use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::collections::{HashMap, VecDeque};
 use tokio::sync::{RwLock, Mutex, broadcast};
 use serde::{Deserialize, Serialize};
@@ -179,7 +179,7 @@ pub struct BatteryInfo {
     /// Voltage (volts)
     pub voltage: f64,
     /// Last update timestamp
-    pub timestamp: Instant,
+    pub timestamp: SystemTime,
 }
 
 /// System thermal information
@@ -198,7 +198,7 @@ pub struct ThermalInfo {
     /// Is thermal throttling active
     pub is_throttling: bool,
     /// Last update timestamp
-    pub timestamp: Instant,
+    pub timestamp: SystemTime,
 }
 
 /// Power consumption by component
@@ -219,7 +219,7 @@ pub struct PowerConsumption {
     /// Total power consumption (watts)
     pub total_watts: f64,
     /// Timestamp of measurement
-    pub timestamp: Instant,
+    pub timestamp: SystemTime,
 }
 
 /// Power prediction data
@@ -247,7 +247,7 @@ pub struct PowerStateEvent {
     /// Reason for transition
     pub reason: String,
     /// Timestamp of transition
-    pub timestamp: Instant,
+    pub timestamp: SystemTime,
     /// Component limits for new state
     pub new_limits: ComponentPowerLimits,
 }
@@ -287,7 +287,7 @@ pub struct PowerManager {
     consumption_history: Arc<RwLock<VecDeque<PowerConsumption>>>,
     
     /// Battery level history for predictions
-    battery_history: Arc<RwLock<VecDeque<(Instant, f64)>>>,
+    battery_history: Arc<RwLock<VecDeque<(SystemTime, f64)>>>,
     
     /// Power management statistics
     stats: Arc<RwLock<PowerStats>>,
@@ -303,7 +303,7 @@ pub struct PowerManager {
     prediction_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     
     /// Power state transition history
-    state_history: Arc<RwLock<VecDeque<(Instant, PowerState)>>>,
+    state_history: Arc<RwLock<VecDeque<(SystemTime, PowerState)>>>,
     
     /// Last prediction
     last_prediction: Arc<RwLock<Option<PowerPrediction>>>,
@@ -349,7 +349,7 @@ impl PowerManager {
         
         // Record initial state
         let current_state = *self.power_state.read().await;
-        self.state_history.write().await.push_back((Instant::now(), current_state));
+        self.state_history.write().await.push_back((SystemTime::now(), current_state));
         
         log::info!("Power management system started successfully");
         Ok(())
@@ -392,7 +392,7 @@ impl PowerManager {
             *self.power_state.write().await = new_state;
             
             // Record transition
-            self.state_history.write().await.push_back((Instant::now(), new_state));
+            self.state_history.write().await.push_back((SystemTime::now(), new_state));
             if self.state_history.read().await.len() > 100 {
                 self.state_history.write().await.pop_front();
             }
@@ -406,7 +406,7 @@ impl PowerManager {
                 old_state,
                 new_state,
                 reason: reason.to_string(),
-                timestamp: Instant::now(),
+                timestamp: SystemTime::now(),
                 new_limits,
             };
             
@@ -502,7 +502,7 @@ impl PowerManager {
             temperature_celsius: 30.0,
             health_percent: 95.0,
             voltage: 3.7,
-            timestamp: Instant::now(),
+            timestamp: SystemTime::now(),
         };
         
         // Record battery level for history
@@ -525,7 +525,7 @@ impl PowerManager {
             thermal_state: ThermalState::Normal,
             thermal_pressure: 0.0,
             is_throttling: false,
-            timestamp: Instant::now(),
+            timestamp: SystemTime::now(),
         };
         
         *self.thermal_info.write().await = Some(thermal);
@@ -607,7 +607,7 @@ impl PowerManager {
                         if let Some(ref mut battery) = *battery_guard {
                             // Simulate battery drain (would be real readings in practice)
                             battery.level_percent = (battery.level_percent - 0.1).max(0.0);
-                            battery.timestamp = Instant::now();
+                            battery.timestamp = SystemTime::now();
                         }
                         drop(battery_guard);
                         
@@ -623,13 +623,13 @@ impl PowerManager {
                             log::info!("Auto power state transition: {:?} -> {:?}", current_state, new_state);
                             
                             *power_state.write().await = new_state;
-                            state_history.write().await.push_back((Instant::now(), new_state));
+                            state_history.write().await.push_back((SystemTime::now(), new_state));
                             
                             let event = PowerStateEvent {
                                 old_state: current_state,
                                 new_state,
                                 reason: "Automatic based on battery/thermal conditions".to_string(),
-                                timestamp: Instant::now(),
+                                timestamp: SystemTime::now(),
                                 new_limits: config.read().await.component_limits.clone(),
                             };
                             
@@ -647,7 +647,7 @@ impl PowerManager {
                             // Simulate temperature fluctuations
                             thermal.cpu_temperature += (rand::random::<f64>() - 0.5) * 2.0;
                             thermal.cpu_temperature = thermal.cpu_temperature.clamp(25.0, 55.0);
-                            thermal.timestamp = Instant::now();
+                            thermal.timestamp = SystemTime::now();
                             
                             // Update thermal state based on temperature
                             thermal.thermal_state = if thermal.cpu_temperature >= 50.0 {
@@ -759,7 +759,7 @@ impl PowerManager {
     
     /// Generate power consumption prediction
     async fn generate_prediction_static(
-        battery_history: &Arc<RwLock<VecDeque<(Instant, f64)>>>,
+        battery_history: &Arc<RwLock<VecDeque<(SystemTime, f64)>>>,
         _consumption_history: &Arc<RwLock<VecDeque<PowerConsumption>>>,
     ) -> PowerPrediction {
         let history = battery_history.read().await;
@@ -782,7 +782,7 @@ impl PowerManager {
             let first = recent_points.last().unwrap();
             let last = recent_points.first().unwrap();
             
-            let time_diff = last.0.duration_since(first.0).as_secs_f64() / 3600.0; // hours
+            let time_diff = last.0.duration_since(first.0).unwrap_or_default().as_secs_f64() / 3600.0; // hours
             let level_diff = last.1 - first.1; // percentage
             
             if time_diff > 0.0 && level_diff < 0.0 {
@@ -849,7 +849,7 @@ impl Default for BatteryInfo {
             temperature_celsius: 25.0,
             health_percent: 100.0,
             voltage: 3.7,
-            timestamp: Instant::now(),
+            timestamp: SystemTime::now(),
         }
     }
 }

@@ -10,7 +10,7 @@
 //! Target: <20% average CPU usage with <500ms consensus latency
 
 use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}};
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 use std::collections::{HashMap, VecDeque, BinaryHeap};
 use std::cmp::Reverse;
 use tokio::sync::{RwLock, Mutex, Semaphore};
@@ -173,9 +173,9 @@ pub struct CpuTask {
     /// Estimated execution time (milliseconds)
     pub estimated_duration_ms: u64,
     /// Task creation time
-    pub created_at: Instant,
+    pub created_at: SystemTime,
     /// Task deadline (optional)
-    pub deadline: Option<Instant>,
+    pub deadline: Option<SystemTime>,
     /// CPU weight (relative importance)
     pub cpu_weight: f64,
     /// Task type for optimization
@@ -236,9 +236,9 @@ pub struct ConsensusBatch {
     /// Consensus items in batch
     pub items: Vec<ConsensusItem>,
     /// Batch creation time
-    pub created_at: Instant,
+    pub created_at: SystemTime,
     /// Batch deadline
-    pub deadline: Instant,
+    pub deadline: SystemTime,
     /// Batch priority (highest priority of items)
     pub priority: TaskPriority,
 }
@@ -255,7 +255,7 @@ pub struct ConsensusItem {
     /// Processing complexity estimate
     pub complexity: ConsensusComplexity,
     /// Creation timestamp
-    pub created_at: Instant,
+    pub created_at: SystemTime,
 }
 
 /// Consensus operation complexity
@@ -286,10 +286,10 @@ pub struct CpuOptimizer {
     throttle_level: Arc<RwLock<ThrottleLevel>>,
     
     /// CPU usage history
-    usage_history: Arc<RwLock<VecDeque<(Instant, f64)>>>,
+    usage_history: Arc<RwLock<VecDeque<(SystemTime, f64)>>>,
     
     /// Temperature history
-    temperature_history: Arc<RwLock<VecDeque<(Instant, f64)>>>,
+    temperature_history: Arc<RwLock<VecDeque<(SystemTime, f64)>>>,
     
     /// Task queue (priority queue)
     task_queue: Arc<Mutex<BinaryHeap<Reverse<TaskQueueItem>>>>,
@@ -540,7 +540,7 @@ impl CpuOptimizer {
         if let Some(batch) = batches.back_mut() {
             let config = self.config.read().await;
             let can_add_to_batch = batch.items.len() < config.consensus_optimization.batch_processing.max_batch_size
-                && batch.created_at.elapsed() < Duration::from_millis(config.consensus_optimization.batch_processing.batch_timeout_ms)
+                && batch.created_at.duration_since(SystemTime::now()).unwrap_or(Duration::ZERO) < Duration::from_millis(config.consensus_optimization.batch_processing.batch_timeout_ms)
                 && batch.priority >= item.priority; // Only add if priority is compatible
             
             if can_add_to_batch {
@@ -559,8 +559,8 @@ impl CpuOptimizer {
         let new_batch = ConsensusBatch {
             id: batch_id,
             items: vec![item.clone()],
-            created_at: Instant::now(),
-            deadline: Instant::now() + Duration::from_millis(config.consensus_optimization.max_latency_ms),
+            created_at: SystemTime::now(),
+            deadline: SystemTime::now() + Duration::from_millis(config.consensus_optimization.max_latency_ms),
             priority: item.priority,
         };
         
@@ -587,7 +587,7 @@ impl CpuOptimizer {
         
         // Adjust for deadline urgency
         let deadline_adjustment = if let Some(deadline) = task.deadline {
-            let time_to_deadline = deadline.saturating_duration_since(Instant::now());
+            let time_to_deadline = deadline.duration_since(SystemTime::now()).unwrap_or_default();
             if time_to_deadline < Duration::from_millis(100) {
                 0 // Highest urgency
             } else if time_to_deadline < Duration::from_millis(500) {
@@ -684,7 +684,7 @@ impl CpuOptimizer {
                         // Update history
                         {
                             let mut history = usage_history.write().await;
-                            history.push_back((Instant::now(), current_usage));
+                            history.push_back((SystemTime::now(), current_usage));
                             
                             let window_size = config.read().await.monitoring.history_window_size;
                             if history.len() > window_size {
@@ -724,7 +724,7 @@ impl CpuOptimizer {
                         // Update temperature history
                         {
                             let mut history = temperature_history.write().await;
-                            history.push_back((Instant::now(), current_temp));
+                            history.push_back((SystemTime::now(), current_temp));
                             
                             let window_size = config.read().await.monitoring.history_window_size;
                             if history.len() > window_size {
@@ -762,7 +762,7 @@ impl CpuOptimizer {
                 
                 if let Some(task) = next_task {
                     // Acquire semaphore permit
-                    if let Ok(permit) = task_semaphore.acquire().await {
+                    if let Ok(permit) = task_semaphore.clone().acquire_owned().await {
                         let task_id = task.id;
                         
                         // Add to active tasks
@@ -777,12 +777,12 @@ impl CpuOptimizer {
                         let total_time_clone = total_time.clone();
                         
                         tokio::spawn(async move {
-                            let start_time = Instant::now();
+                            let start_time = SystemTime::now();
                             
                             // Execute task (simulated)
                             Self::execute_task(&task).await;
                             
-                            let execution_time = start_time.elapsed();
+                            let execution_time = SystemTime::now().duration_since(start_time).unwrap_or(Duration::ZERO);
                             
                             // Remove from active tasks
                             active_tasks_clone.write().await.remove(&task_id);
@@ -832,8 +832,8 @@ impl CpuOptimizer {
                         let min_batch_size = config.consensus_optimization.batch_processing.min_batch_size;
                         
                         let should_process = batch.items.len() >= min_batch_size
-                            || batch.created_at.elapsed() >= batch_timeout
-                            || batch.deadline <= Instant::now();
+                            || batch.created_at.duration_since(SystemTime::now()).unwrap_or(Duration::ZERO) >= batch_timeout
+                            || batch.deadline <= SystemTime::now();
                         
                         if should_process {
                             batches.pop_front()
@@ -846,7 +846,7 @@ impl CpuOptimizer {
                 };
                 
                 if let Some(batch) = ready_batch {
-                    let start_time = Instant::now();
+                    let start_time = SystemTime::now();
                     
                     log::debug!("Processing consensus batch {} with {} items",
                                batch.id, batch.items.len());
@@ -854,7 +854,7 @@ impl CpuOptimizer {
                     // Process batch (simulated)
                     Self::process_consensus_batch(&batch).await;
                     
-                    let processing_time = start_time.elapsed();
+                    let processing_time = SystemTime::now().duration_since(start_time).unwrap_or(Duration::ZERO);
                     
                     // Update consensus latency metric
                     metrics.write().await.consensus_latency_ms = processing_time.as_millis() as u64;

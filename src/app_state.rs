@@ -18,6 +18,8 @@ use bitcraps::{
 };
 
 use bitcraps::protocol::craps::CrapsGame;
+use bitcraps::mesh::{ConsensusMessageHandler, ConsensusMessageConfig, MeshConsensusIntegration};
+use bitcraps::gaming::{ConsensusGameManager, ConsensusGameConfig};
 
 /// Simple struct for game info display
 #[derive(Debug, Clone)]
@@ -45,6 +47,10 @@ pub struct BitCrapsApp {
     pub proof_of_relay: Arc<ProofOfRelay>,
     pub config: AppConfig,
     pub active_games: Arc<tokio::sync::RwLock<rustc_hash::FxHashMap<GameId, CrapsGame>>>,
+    
+    // P2P Consensus Components
+    pub consensus_message_handler: Arc<ConsensusMessageHandler>,
+    pub consensus_game_manager: Arc<ConsensusGameManager>,
 }
 
 impl BitCrapsApp {
@@ -105,8 +111,39 @@ impl BitCrapsApp {
         mesh_service.set_proof_of_relay(proof_of_relay.clone());
         let mesh_service = Arc::new(mesh_service);
         
-        // Step 9: Start mesh service
+        // Step 9: Initialize P2P consensus components
+        println!("🤝 Setting up P2P consensus system...");
+        
+        // Create consensus message handler
+        let consensus_config = ConsensusMessageConfig::default();
+        let consensus_message_handler = Arc::new(
+            ConsensusMessageHandler::new(
+                mesh_service.clone(),
+                identity.clone(),
+                consensus_config,
+            )
+        );
+        
+        // Create consensus game manager
+        let game_config = ConsensusGameConfig::default();
+        let consensus_game_manager = Arc::new(
+            ConsensusGameManager::new(
+                identity.clone(),
+                mesh_service.clone(),
+                consensus_message_handler.clone(),
+                game_config,
+            )
+        );
+        
+        // Integrate consensus handler with mesh service
+        MeshConsensusIntegration::integrate(
+            mesh_service.clone(),
+            consensus_message_handler.clone(),
+        ).await?;
+        
+        // Step 10: Start all services
         mesh_service.start().await?;
+        consensus_game_manager.start().await?;
         
         println!("🚀 BitCraps node ready!");
         println!("📱 Peer ID: {:?}", identity.peer_id);
@@ -126,6 +163,8 @@ impl BitCrapsApp {
             proof_of_relay,
             config,
             active_games: Arc::new(tokio::sync::RwLock::new(rustc_hash::FxHashMap::default())),
+            consensus_message_handler,
+            consensus_game_manager,
         })
     }
     
@@ -202,6 +241,51 @@ impl BitCrapsApp {
     pub async fn _remove_game(&self, game_id: &GameId) -> Option<CrapsGame> {
         let mut games = self.active_games.write().await;
         games.remove(game_id)
+    }
+    
+    // ============= P2P Consensus Game Methods =============
+    
+    /// Create a new consensus-based multiplayer game
+    pub async fn create_consensus_game(&self, participants: Vec<PeerId>) -> Result<GameId> {
+        self.consensus_game_manager.create_game(participants).await
+    }
+    
+    /// Join an existing consensus game
+    pub async fn join_consensus_game(&self, game_id: GameId) -> Result<()> {
+        self.consensus_game_manager.join_game(game_id).await
+    }
+    
+    /// Place a bet in a consensus game
+    pub async fn place_consensus_bet(
+        &self,
+        game_id: GameId,
+        bet_type: bitcraps::protocol::BetType,
+        amount: CrapTokens,
+    ) -> Result<()> {
+        self.consensus_game_manager.place_bet(game_id, bet_type, amount).await
+    }
+    
+    /// Roll dice in a consensus game
+    pub async fn roll_consensus_dice(&self, game_id: GameId) -> Result<bitcraps::protocol::DiceRoll> {
+        self.consensus_game_manager.roll_dice(game_id).await
+    }
+    
+    /// Get consensus game state
+    pub async fn get_consensus_game_state(
+        &self,
+        game_id: &GameId,
+    ) -> Option<bitcraps::gaming::ConsensusGameSession> {
+        self.consensus_game_manager.get_game_state(game_id).await
+    }
+    
+    /// List all active consensus games
+    pub async fn list_consensus_games(&self) -> Vec<(GameId, bitcraps::gaming::ConsensusGameSession)> {
+        self.consensus_game_manager.list_active_games().await
+    }
+    
+    /// Get consensus system statistics
+    pub async fn get_consensus_stats(&self) -> bitcraps::gaming::GameManagerStats {
+        self.consensus_game_manager.get_stats().await
     }
     
     /// Start mining rewards for network participation

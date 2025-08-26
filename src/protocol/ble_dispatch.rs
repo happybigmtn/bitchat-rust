@@ -233,12 +233,14 @@ impl BleMessageDispatcher {
         assembly.received_fragments.insert(fragment.fragment_id, fragment);
         
         // Check if we have all fragments
-        if assembly.received_fragments.len() == assembly.expected_fragments as usize {
+        let complete = assembly.received_fragments.len() == assembly.expected_fragments as usize;
+        if complete {
             // Reassemble message
+            let message_id = assembly.message_id;
             let message = self.reassemble_message(assembly)?;
             
             // Clean up assembly state
-            assembly_map.remove(&assembly.message_id);
+            assembly_map.remove(&message_id);
             
             Ok(Some(message))
         } else {
@@ -320,7 +322,7 @@ impl BleMessageDispatcher {
             // Fragment if necessary
             if message_bytes.len() > config.mtu_size {
                 if pending.fragments.is_none() {
-                    pending.fragments = Some(Self::fragment_message(message_bytes, config.mtu_size));
+                    pending.fragments = Some(Self::fragment_message(message_bytes.clone(), config.mtu_size));
                 }
             }
             

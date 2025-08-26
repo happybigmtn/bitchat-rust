@@ -3,7 +3,7 @@
 use super::*;
 use std::sync::{Arc, Mutex};
 use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
 /// Battery optimization detector and handler
 pub struct BatteryOptimizationHandler {
@@ -23,13 +23,13 @@ struct OptimizationState {
     app_standby_detected: bool,
     background_restricted: bool,
     scan_throttling_detected: bool,
-    last_optimization_warning: Option<Instant>,
+    last_optimization_warning: Option<SystemTime>,
     optimization_warnings_sent: u32,
 }
 
 #[derive(Clone)]
 struct ScanEvent {
-    timestamp: Instant,
+    timestamp: SystemTime,
     expected_interval_ms: u64,
     actual_interval_ms: u64,
     success: bool,
@@ -101,7 +101,7 @@ impl BatteryOptimizationHandler {
     pub fn record_scan_event(&self, expected_interval_ms: u64, actual_interval_ms: u64, success: bool) {
         if let Ok(mut history) = self.scan_history.lock() {
             let event = ScanEvent {
-                timestamp: Instant::now(),
+                timestamp: SystemTime::now(),
                 expected_interval_ms,
                 actual_interval_ms,
                 success,
@@ -110,7 +110,7 @@ impl BatteryOptimizationHandler {
             history.push_back(event);
 
             // Keep only recent events (last 5 minutes)
-            let cutoff = Instant::now() - Duration::from_secs(300);
+            let cutoff = SystemTime::now() - Duration::from_secs(300);
             while let Some(front) = history.front() {
                 if front.timestamp < cutoff {
                     history.pop_front();
@@ -257,7 +257,7 @@ impl BatteryOptimizationHandler {
             // Check for irregular patterns (sign of doze mode or app standby)
             let intervals: Vec<_> = recent_events
                 .windows(2)
-                .map(|pair| pair[0].timestamp.duration_since(pair[1].timestamp).as_millis() as u64)
+                .map(|pair| pair[0].timestamp.duration_since(pair[1].timestamp).unwrap_or_default().as_millis() as u64)
                 .collect();
 
             if intervals.len() > 3 {
@@ -385,9 +385,9 @@ impl BatteryOptimizationHandler {
             state.is_charging = is_charging;
             
             // Reset detection flags periodically to re-evaluate
-            let now = Instant::now();
+            let now = SystemTime::now();
             if let Some(last_warning) = state.last_optimization_warning {
-                if now.duration_since(last_warning) > Duration::from_secs(300) {
+                if now.duration_since(last_warning).unwrap_or_default() > Duration::from_secs(300) {
                     // Reset flags every 5 minutes to re-evaluate
                     state.doze_mode_detected = false;
                     state.app_standby_detected = false;

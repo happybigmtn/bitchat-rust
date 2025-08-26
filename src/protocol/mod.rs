@@ -43,6 +43,7 @@ pub mod versioning;
 // P2P Networking Protocol modules
 pub mod p2p_messages;
 pub mod consensus_coordinator;
+pub mod network_consensus_bridge;
 pub mod state_sync;
 pub mod ble_dispatch;
 pub mod partition_recovery;
@@ -74,6 +75,17 @@ impl DiceRoll {
         Ok(Self { die1, die2, timestamp })
     }
     
+    pub fn generate() -> Self {
+        use fastrand;
+        let die1 = fastrand::u8(1..=6);
+        let die2 = fastrand::u8(1..=6);
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        Self { die1, die2, timestamp }
+    }
+    
     pub fn total(&self) -> u8 {
         self.die1 + self.die2
     }
@@ -88,6 +100,12 @@ impl DiceRoll {
     
     pub fn is_hard_way(&self) -> bool {
         self.die1 == self.die2 && matches!(self.total(), 4 | 6 | 8 | 10)
+    }
+}
+
+impl std::fmt::Display for DiceRoll {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}+{}={}", self.die1, self.die2, self.total())
     }
 }
 

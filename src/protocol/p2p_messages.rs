@@ -167,7 +167,7 @@ pub struct StateSummary {
 }
 
 /// Types of cheat detection
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum CheatType {
     DoubleVoting,
     InvalidStateTransition,
@@ -175,6 +175,7 @@ pub enum CheatType {
     SignatureForgery,
     BalanceViolation,
     ConsensusViolation,
+    InvalidRoll,
 }
 
 impl ConsensusMessage {

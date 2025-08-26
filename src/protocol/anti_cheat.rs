@@ -352,7 +352,7 @@ impl AntiCheatValidator {
     async fn validate_balance_changes(
         &self,
         peer_id: PeerId,
-        changes: &HashMap<PeerId, CrapTokens>,
+        changes: &rustc_hash::FxHashMap<PeerId, CrapTokens>,
     ) -> Result<Vec<CheatType>> {
         let mut violations = Vec::new();
         

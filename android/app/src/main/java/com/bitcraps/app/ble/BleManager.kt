@@ -283,8 +283,8 @@ class BleManager(private val context: Context) {
             
             Timber.d("BitCraps peer discovered: %s (RSSI: %d)", address, rssi)
             
-            // TODO: Notify Rust layer of discovered peer
-            // This would call into the native BitCraps discovery system
+            // Notify Rust layer of discovered peer via JNI
+            BleJNI.processScanResult(result)
         }
     }
     

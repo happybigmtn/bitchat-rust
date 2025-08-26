@@ -9,7 +9,7 @@
 //! Target: Reduce continuous scanning battery drain while maintaining connectivity
 
 use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}};
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 use std::collections::{HashMap, VecDeque};
 use tokio::sync::{RwLock, Mutex};
 use serde::{Deserialize, Serialize};
@@ -58,7 +58,7 @@ pub struct ScanRequest {
     /// Duration for this scan
     pub duration: Duration,
     /// Timestamp of request
-    pub timestamp: Instant,
+    pub timestamp: SystemTime,
     /// Callback for completion notification
     pub callback: Option<String>,
 }
@@ -127,9 +127,9 @@ struct ScannerState {
     /// Currently scanning
     is_scanning: bool,
     /// Current scan started at
-    scan_start_time: Option<Instant>,
+    scan_start_time: Option<SystemTime>,
     /// Last scan ended at
-    last_scan_end: Option<Instant>,
+    last_scan_end: Option<SystemTime>,
     /// Current scan duration
     current_scan_duration: Duration,
     /// Current idle duration
@@ -159,7 +159,7 @@ struct ActivityHistory {
 #[derive(Debug, Clone)]
 struct ScanResult {
     /// Scan timestamp
-    timestamp: Instant,
+    timestamp: SystemTime,
     /// Scan duration
     duration: Duration,
     /// Devices discovered
@@ -178,7 +178,7 @@ struct ScanResult {
 #[derive(Debug, Clone)]
 struct BatteryImpactMeasurement {
     /// Measurement timestamp
-    timestamp: Instant,
+    timestamp: SystemTime,
     /// Battery level before scanning
     battery_before: f64,
     /// Battery level after scanning
@@ -257,12 +257,13 @@ impl AdaptiveBleScanner {
     ) -> Result<u64, Box<dyn std::error::Error>> {
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
         
+        let default_duration = self.get_default_scan_duration().await;
         let request = ScanRequest {
             id: request_id,
             priority,
             requester: requester.to_string(),
-            duration: duration.unwrap_or_else(|| self.get_default_scan_duration().await),
-            timestamp: Instant::now(),
+            duration: duration.unwrap_or(default_duration),
+            timestamp: SystemTime::now(),
             callback: None,
         };
         
@@ -487,7 +488,7 @@ impl AdaptiveBleScanner {
                         priority: ScanPriority::Critical,
                         requester: "force".to_string(),
                         duration: Duration::from_millis(2000),
-                        timestamp: Instant::now(),
+                        timestamp: SystemTime::now(),
                         callback: None,
                     };
                     
@@ -514,7 +515,7 @@ impl AdaptiveBleScanner {
                                 priority: ScanPriority::Low,
                                 requester: "duty_cycle".to_string(),
                                 duration: scan_duration,
-                                timestamp: Instant::now(),
+                                timestamp: SystemTime::now(),
                                 callback: None,
                             };
                             
@@ -547,7 +548,7 @@ impl AdaptiveBleScanner {
         stats: &Arc<RwLock<BleScanStats>>,
         request: ScanRequest,
     ) -> ScanResult {
-        let scan_start = Instant::now();
+        let scan_start = SystemTime::now();
         
         // Update state
         {
@@ -578,8 +579,8 @@ impl AdaptiveBleScanner {
             0
         };
         
-        let scan_end = Instant::now();
-        let actual_duration = scan_end.duration_since(scan_start);
+        let scan_end = SystemTime::now();
+        let actual_duration = scan_end.duration_since(scan_start).unwrap_or_default();
         
         // Update state and statistics
         {
@@ -635,7 +636,7 @@ impl AdaptiveBleScanner {
         
         // Check if enough idle time has passed
         if let Some(last_end) = state_guard.last_scan_end {
-            let idle_time = last_end.elapsed();
+            let idle_time = last_end.duration_since(SystemTime::now()).unwrap_or(Duration::ZERO);
             let min_idle = match strategy {
                 ScanStrategy::Continuous => Duration::from_millis(100),
                 ScanStrategy::Standard => Duration::from_millis(4000), // 4 seconds
@@ -735,7 +736,7 @@ impl ActivityHistory {
         ];
         
         for window in &windows {
-            let cutoff = Instant::now() - *window;
+            let cutoff = SystemTime::now() - *window;
             let recent_results: Vec<_> = self.recent_scans.iter()
                 .filter(|r| r.timestamp >= cutoff)
                 .collect();

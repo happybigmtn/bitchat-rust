@@ -3,3 +3,7 @@ pub mod protocol_security;
 pub mod vulnerability_tests;
 pub mod byzantine_tests;
 pub mod chaos_engineering;
+pub mod secure_keystore_integration;
+pub mod safe_arithmetic_integration;
+pub mod consensus_crypto_integration;
+pub mod vulnerability_validation_tests;

@@ -9,7 +9,7 @@
 //! - Battery health preservation algorithms
 
 use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::collections::{HashMap, VecDeque};
 use tokio::sync::{RwLock, broadcast};
 use serde::{Deserialize, Serialize};
@@ -264,7 +264,7 @@ pub struct BatteryInfo {
     /// Design capacity (mAh)
     pub design_capacity_mah: u32,
     /// Last update timestamp
-    pub timestamp: Instant,
+    pub timestamp: SystemTime,
 }
 
 /// Charging state details
@@ -310,7 +310,7 @@ pub struct ThermalInfo {
     /// Throttling level (0.0-1.0)
     pub throttling_level: f64,
     /// Last update timestamp
-    pub timestamp: Instant,
+    pub timestamp: SystemTime,
 }
 
 /// Power consumption by component
@@ -335,7 +335,7 @@ pub struct PowerConsumption {
     /// Total power consumption (watts)
     pub total_watts: f64,
     /// Measurement timestamp
-    pub timestamp: Instant,
+    pub timestamp: SystemTime,
 }
 
 /// Battery life prediction
@@ -356,7 +356,7 @@ pub struct BatteryPrediction {
     /// Prediction accuracy (based on historical data)
     pub historical_accuracy: f64,
     /// Prediction timestamp
-    pub timestamp: Instant,
+    pub timestamp: SystemTime,
 }
 
 /// Power consumption trend
@@ -386,7 +386,7 @@ pub struct ThermalPrediction {
     /// Risk assessment
     pub risk_level: ThermalRisk,
     /// Prediction timestamp
-    pub timestamp: Instant,
+    pub timestamp: SystemTime,
 }
 
 /// Thermal risk levels
@@ -409,40 +409,40 @@ pub enum BatteryThermalEvent {
     BatteryLevelChanged {
         old_level: f64,
         new_level: f64,
-        timestamp: Instant,
+        timestamp: SystemTime,
     },
     /// Charging state changed
     ChargingStateChanged {
         old_state: ChargingState,
         new_state: ChargingState,
-        timestamp: Instant,
+        timestamp: SystemTime,
     },
     /// Power state recommendation
     PowerStateRecommendation {
         recommended_state: PowerState,
         reason: String,
         urgency: EventUrgency,
-        timestamp: Instant,
+        timestamp: SystemTime,
     },
     /// Thermal state changed
     ThermalStateChanged {
         old_state: ThermalState,
         new_state: ThermalState,
         temperature: f64,
-        timestamp: Instant,
+        timestamp: SystemTime,
     },
     /// Thermal throttling activated/deactivated
     ThermalThrottlingChanged {
         active: bool,
         level: f64,
         reason: String,
-        timestamp: Instant,
+        timestamp: SystemTime,
     },
     /// Battery health warning
     BatteryHealthWarning {
         health_percent: f64,
         warning_type: HealthWarningType,
-        timestamp: Instant,
+        timestamp: SystemTime,
     },
     /// Power anomaly detected
     PowerAnomalyDetected {
@@ -450,7 +450,7 @@ pub enum BatteryThermalEvent {
         normal_watts: f64,
         current_watts: f64,
         anomaly_factor: f64,
-        timestamp: Instant,
+        timestamp: SystemTime,
     },
 }
 
@@ -495,10 +495,10 @@ pub struct BatteryThermalMonitor {
     thermal_info: Arc<RwLock<Option<ThermalInfo>>>,
     
     /// Battery level history
-    battery_history: Arc<RwLock<VecDeque<(Instant, f64)>>>,
+    battery_history: Arc<RwLock<VecDeque<(SystemTime, f64)>>>,
     
     /// Temperature history
-    temperature_history: Arc<RwLock<VecDeque<(Instant, f64)>>>,
+    temperature_history: Arc<RwLock<VecDeque<(SystemTime, f64)>>>,
     
     /// Power consumption history
     power_history: Arc<RwLock<VecDeque<PowerConsumption>>>,
@@ -661,7 +661,7 @@ impl BatteryThermalMonitor {
     }
     
     /// Force battery reading update
-    pub async fn update_battery_reading(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn update_battery_reading(&self) -> Result<(), Box<dyn std::error::Error + Send>> {
         let new_info = self.read_battery_info().await?;
         let old_info = self.battery_info.read().await.clone();
         
@@ -674,7 +674,7 @@ impl BatteryThermalMonitor {
     }
     
     /// Force thermal reading update
-    pub async fn update_thermal_reading(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn update_thermal_reading(&self) -> Result<(), Box<dyn std::error::Error + Send>> {
         let new_info = self.read_thermal_info().await?;
         let old_info = self.thermal_info.read().await.clone();
         
@@ -859,12 +859,12 @@ impl BatteryThermalMonitor {
     }
     
     /// Read battery information (would interface with platform APIs)
-    async fn read_battery_info(&self) -> Result<BatteryInfo, Box<dyn std::error::Error>> {
+    async fn read_battery_info(&self) -> Result<BatteryInfo, Box<dyn std::error::Error + Send>> {
         Self::read_battery_info_static().await
     }
     
     /// Static version of read_battery_info for use in async contexts
-    async fn read_battery_info_static() -> Result<BatteryInfo, Box<dyn std::error::Error>> {
+    async fn read_battery_info_static() -> Result<BatteryInfo, Box<dyn std::error::Error + Send>> {
         // In a real implementation, this would interface with platform-specific APIs
         // For simulation, generate realistic battery data
         
@@ -890,17 +890,17 @@ impl BatteryThermalMonitor {
             power_consumption_watts: 1.5 + (rand::random::<f64>() * 2.0),
             capacity_mah: 3000,
             design_capacity_mah: 3200,
-            timestamp: Instant::now(),
+            timestamp: SystemTime::now(),
         })
     }
     
     /// Read thermal information (would interface with thermal sensors)
-    async fn read_thermal_info(&self) -> Result<ThermalInfo, Box<dyn std::error::Error>> {
+    async fn read_thermal_info(&self) -> Result<ThermalInfo, Box<dyn std::error::Error + Send>> {
         Self::read_thermal_info_static().await
     }
     
     /// Static version of read_thermal_info for use in async contexts
-    async fn read_thermal_info_static() -> Result<ThermalInfo, Box<dyn std::error::Error>> {
+    async fn read_thermal_info_static() -> Result<ThermalInfo, Box<dyn std::error::Error + Send>> {
         // In a real implementation, this would read from thermal sensors
         // For simulation, generate realistic thermal data
         
@@ -940,7 +940,7 @@ impl BatteryThermalMonitor {
             },
             is_throttling: thermal_pressure > 0.7,
             throttling_level: if thermal_pressure > 0.7 { thermal_pressure } else { 0.0 },
-            timestamp: Instant::now(),
+            timestamp: SystemTime::now(),
         })
     }
     
@@ -956,7 +956,7 @@ impl BatteryThermalMonitor {
             background_watts: 0.3 + (rand::random::<f64>() * 0.2),
             system_watts: 0.4 + (rand::random::<f64>() * 0.3),
             total_watts: 0.0, // Will be calculated
-            timestamp: Instant::now(),
+            timestamp: SystemTime::now(),
         }
     }
     
@@ -1086,7 +1086,7 @@ impl BatteryThermalMonitor {
     
     /// Generate battery life prediction
     async fn generate_battery_prediction_static(
-        battery_history: &Arc<RwLock<VecDeque<(Instant, f64)>>>,
+        battery_history: &Arc<RwLock<VecDeque<(SystemTime, f64)>>>,
         power_history: &Arc<RwLock<VecDeque<PowerConsumption>>>,
         battery_config: &Arc<RwLock<BatteryConfig>>,
     ) -> Option<BatteryPrediction> {
@@ -1108,7 +1108,7 @@ impl BatteryThermalMonitor {
         let first = recent_points.last().unwrap();
         let last = recent_points.first().unwrap();
         
-        let time_diff_hours = last.0.duration_since(first.0).as_secs_f64() / 3600.0;
+        let time_diff_hours = last.0.duration_since(first.0).unwrap_or_default().as_secs_f64() / 3600.0;
         let level_diff = last.1 - first.1;
         
         if time_diff_hours > 0.0 && level_diff != 0.0 {
@@ -1148,7 +1148,7 @@ impl BatteryThermalMonitor {
                     ],
                     power_trend,
                     historical_accuracy: 0.75,
-                    timestamp: Instant::now(),
+                    timestamp: SystemTime::now(),
                 })
             } else {
                 None // Charging or stable
@@ -1160,7 +1160,7 @@ impl BatteryThermalMonitor {
     
     /// Generate thermal prediction
     async fn generate_thermal_prediction_static(
-        temperature_history: &Arc<RwLock<VecDeque<(Instant, f64)>>>,
+        temperature_history: &Arc<RwLock<VecDeque<(SystemTime, f64)>>>,
         thermal_config: &Arc<RwLock<ThermalConfig>>,
     ) -> Option<ThermalPrediction> {
         let history = temperature_history.read().await;
@@ -1180,7 +1180,7 @@ impl BatteryThermalMonitor {
         let first = recent_points.last().unwrap();
         let last = recent_points.first().unwrap();
         
-        let time_diff_secs = last.0.duration_since(first.0).as_secs_f64();
+        let time_diff_secs = last.0.duration_since(first.0).unwrap_or_default().as_secs_f64();
         let temp_diff = last.1 - first.1;
         
         if time_diff_secs > 0.0 {
@@ -1215,7 +1215,7 @@ impl BatteryThermalMonitor {
                 confidence: 0.6,
                 recommended_throttling,
                 risk_level,
-                timestamp: Instant::now(),
+                timestamp: SystemTime::now(),
             })
         } else {
             None
@@ -1239,7 +1239,7 @@ impl Default for BatteryInfo {
             power_consumption_watts: 2.0,
             capacity_mah: 3000,
             design_capacity_mah: 3200,
-            timestamp: Instant::now(),
+            timestamp: SystemTime::now(),
         }
     }
 }

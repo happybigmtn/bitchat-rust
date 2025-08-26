@@ -9,6 +9,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+// Android-specific modules
+#[cfg(target_os = "android")]
+pub mod android;
+
+// iOS-specific modules
+#[cfg(target_os = "ios")]
+pub mod ios;
+
 // Performance optimization modules
 pub mod performance;
 pub mod ble_optimizer;

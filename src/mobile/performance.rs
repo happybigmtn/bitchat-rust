@@ -12,7 +12,7 @@
 //! - CPU throttling and thermal management
 
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
@@ -179,7 +179,7 @@ impl Default for MemoryConfig {
 }
 
 /// Power states for mobile devices
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PowerState {
     /// Full performance mode
     Active,
@@ -230,7 +230,7 @@ pub struct PerformanceMetrics {
 }
 
 /// Thermal management states
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThermalState {
     /// Normal temperature range
     Normal,
@@ -562,7 +562,7 @@ pub struct BleScanState {
     pub scan_count: u64,
     pub successful_connections: u64,
     pub current_duty_cycle: f64,
-    pub next_scan_time: Option<Instant>,
+    pub next_scan_time: Option<SystemTime>,
 }
 
 #[derive(Debug, Clone)]
@@ -619,7 +619,7 @@ pub struct CpuMetrics {
 }
 
 pub struct BatteryMonitor {
-    last_update: Arc<RwLock<Instant>>,
+    last_update: Arc<RwLock<SystemTime>>,
     battery_info: Arc<RwLock<Option<BatteryInfo>>>,
     is_monitoring: Arc<AtomicBool>,
 }
@@ -794,7 +794,7 @@ impl CpuThrottler {
 impl BatteryMonitor {
     pub fn new() -> Self {
         Self {
-            last_update: Arc::new(RwLock::new(Instant::now())),
+            last_update: Arc::new(RwLock::new(SystemTime::now())),
             battery_info: Arc::new(RwLock::new(None)),
             is_monitoring: Arc::new(AtomicBool::new(false)),
         }

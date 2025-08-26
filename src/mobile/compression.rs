@@ -8,8 +8,8 @@
 //! - Streaming compression for large messages
 //! - Battery-aware compression level adjustment
 
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, atomic::{AtomicU64, AtomicBool, Ordering}};
+use std::time::{Duration, SystemTime};
 use std::collections::{HashMap, VecDeque};
 use tokio::sync::{RwLock, Mutex};
 use bytes::{Bytes, BytesMut, Buf, BufMut};
@@ -41,7 +41,7 @@ pub struct CompressionConfig {
 }
 
 /// Compression algorithms
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CompressionAlgorithm {
     /// No compression
     None,
@@ -250,7 +250,7 @@ pub struct DictionaryStats {
     /// Dictionary hit rate
     pub hit_rate: f64,
     /// Last training time
-    pub last_training: Option<Instant>,
+    pub last_training: Option<SystemTime>,
     /// Training samples collected
     pub training_samples: u32,
 }
@@ -297,7 +297,7 @@ struct AlgorithmPerformance {
     /// Sample count
     sample_count: u32,
     /// Last updated
-    last_updated: Instant,
+    last_updated: SystemTime,
 }
 
 /// Compression dictionary entry
@@ -308,7 +308,7 @@ struct DictionaryEntry {
     /// Frequency count
     frequency: u32,
     /// Last used timestamp
-    last_used: Instant,
+    last_used: SystemTime,
     /// Pattern length
     length: usize,
 }
@@ -323,11 +323,11 @@ struct CacheEntry {
     /// Algorithm used
     algorithm: CompressionAlgorithm,
     /// Creation time
-    created_at: Instant,
+    created_at: SystemTime,
     /// Access count
     access_count: u32,
     /// Last access time
-    last_access: Instant,
+    last_access: SystemTime,
 }
 
 /// Main message compressor
@@ -475,9 +475,10 @@ impl MessageCompressor {
     
     /// Update network conditions for adaptive compression
     pub async fn update_network_conditions(&self, conditions: NetworkConditions) {
+        let bandwidth = conditions.bandwidth_bps;
+        let latency = conditions.latency_ms;
         *self.network_conditions.write().await = Some(conditions);
-        log::debug!("Updated network conditions: {} bps, {} ms latency",
-                   conditions.bandwidth_bps, conditions.latency_ms);
+        log::debug!("Updated network conditions: {} bps, {} ms latency", bandwidth, latency);
     }
     
     /// Compress message data
@@ -494,7 +495,7 @@ impl MessageCompressor {
             });
         }
         
-        let start_time = Instant::now();
+        let start_time = SystemTime::now();
         
         // Check size limits
         let config = self.config.read().await;
@@ -505,7 +506,7 @@ impl MessageCompressor {
                 original_size: data.len(),
                 compressed_size: data.len(),
                 ratio: 1.0,
-                compression_time: start_time.elapsed(),
+                compression_time: SystemTime::now().duration_since(start_time).unwrap_or(Duration::ZERO),
                 dictionary_id: None,
             });
         }
@@ -515,13 +516,14 @@ impl MessageCompressor {
             let data_hash = self.calculate_hash(data);
             if let Some(cached) = self.get_from_cache(data_hash).await {
                 self.update_stats_cache_hit().await;
+                let compressed_size = cached.compressed_data.len();
                 return Ok(CompressionResult {
                     data: cached.compressed_data,
                     algorithm: cached.algorithm,
                     original_size: data.len(),
-                    compressed_size: cached.compressed_data.len(),
-                    ratio: cached.compressed_data.len() as f64 / data.len() as f64,
-                    compression_time: start_time.elapsed(),
+                    compressed_size,
+                    ratio: compressed_size as f64 / data.len() as f64,
+                    compression_time: SystemTime::now().duration_since(start_time).unwrap_or(Duration::ZERO),
                     dictionary_id: None,
                 });
             }
@@ -564,7 +566,7 @@ impl MessageCompressor {
     
     /// Decompress message data
     pub async fn decompress(&self, data: &[u8]) -> Result<DecompressionResult, Box<dyn std::error::Error>> {
-        let start_time = Instant::now();
+        let start_time = SystemTime::now();
         
         // Parse compression header to determine algorithm
         let (algorithm, compressed_data, dictionary_id) = self.parse_compressed_data(data)?;
@@ -573,7 +575,7 @@ impl MessageCompressor {
             return Ok(DecompressionResult {
                 data: Bytes::copy_from_slice(compressed_data),
                 algorithm,
-                decompression_time: start_time.elapsed(),
+                decompression_time: SystemTime::now().duration_since(start_time).unwrap_or(Duration::ZERO),
             });
         }
         
@@ -583,7 +585,7 @@ impl MessageCompressor {
         let result = DecompressionResult {
             data: Bytes::copy_from_slice(&decompressed),
             algorithm,
-            decompression_time: start_time.elapsed(),
+            decompression_time: SystemTime::now().duration_since(start_time).unwrap_or(Duration::ZERO),
         };
         
         // Update statistics
@@ -627,7 +629,7 @@ impl MessageCompressor {
                 decompression_speed: 2048.0 * 1024.0, // 2 MB/s default
                 success_rate: 1.0,
                 sample_count: 0,
-                last_updated: Instant::now(),
+                last_updated: SystemTime::now(),
             });
         }
     }
@@ -696,7 +698,7 @@ impl MessageCompressor {
         &self,
         data: &[u8],
         algorithm: CompressionAlgorithm,
-        start_time: Instant,
+        start_time: SystemTime,
     ) -> Result<CompressionResult, Box<dyn std::error::Error>> {
         let compressed_data = match algorithm {
             CompressionAlgorithm::None => {
@@ -725,7 +727,7 @@ impl MessageCompressor {
             original_size: data.len(),
             compressed_size: final_data.len(),
             ratio: final_data.len() as f64 / data.len() as f64,
-            compression_time: start_time.elapsed(),
+            compression_time: SystemTime::now().duration_since(start_time).unwrap_or(Duration::ZERO),
             dictionary_id: None,
         })
     }
@@ -817,7 +819,7 @@ impl MessageCompressor {
     }
     
     /// Parse compressed data header
-    fn parse_compressed_data(&self, data: &[u8]) -> Result<(CompressionAlgorithm, &[u8], Option<u32>), Box<dyn std::error::Error>> {
+    fn parse_compressed_data<'a>(&self, data: &'a [u8]) -> Result<(CompressionAlgorithm, &'a [u8], Option<u32>), Box<dyn std::error::Error>> {
         if data.len() < 8 {
             return Err("Data too small for compression header".into());
         }
@@ -895,7 +897,7 @@ impl MessageCompressor {
         
         if let Some(entry) = cache.get_mut(&hash) {
             entry.access_count += 1;
-            entry.last_access = Instant::now();
+            entry.last_access = SystemTime::now();
             Some(entry.clone())
         } else {
             None
@@ -920,9 +922,9 @@ impl MessageCompressor {
             hash,
             compressed_data: data,
             algorithm,
-            created_at: Instant::now(),
+            created_at: SystemTime::now(),
             access_count: 1,
-            last_access: Instant::now(),
+            last_access: SystemTime::now(),
         });
     }
     
@@ -1004,7 +1006,7 @@ impl MessageCompressor {
             let bytes_per_second = result.original_size as f64 / result.compression_time.as_secs_f64();
             perf.compression_speed = perf.compression_speed * (1.0 - alpha) + bytes_per_second * alpha;
             
-            perf.last_updated = Instant::now();
+            perf.last_updated = SystemTime::now();
         }
     }
     
@@ -1066,7 +1068,7 @@ impl MessageCompressor {
                 dict.insert(id_counter, DictionaryEntry {
                     pattern: Bytes::copy_from_slice(&pattern),
                     frequency: count,
-                    last_used: Instant::now(),
+                    last_used: SystemTime::now(),
                     length: pattern.len(),
                 });
                 id_counter += 1;
@@ -1092,7 +1094,7 @@ impl MessageCompressor {
                 interval.tick().await;
                 
                 let mut cache = compression_cache.write().await;
-                let cutoff_time = Instant::now() - Duration::from_secs(1800); // 30 minutes
+                let cutoff_time = SystemTime::now() - Duration::from_secs(1800); // 30 minutes
                 
                 cache.retain(|_, entry| {
                     entry.last_access > cutoff_time || entry.access_count > 5

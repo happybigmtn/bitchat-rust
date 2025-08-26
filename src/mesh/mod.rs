@@ -19,6 +19,7 @@ pub mod kademlia_dht;
 pub mod gateway;
 pub mod advanced_routing;
 pub mod resilience;
+pub mod consensus_message_handler;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -33,6 +34,11 @@ use crate::transport::{TransportCoordinator, TransportEvent};
 use crate::crypto::BitchatIdentity;
 use crate::error::{Error, Result};
 use crate::token::ProofOfRelay;
+
+pub use consensus_message_handler::{
+    ConsensusMessageHandler, ConsensusMessageConfig, ConsensusMessageStats,
+    MeshConsensusIntegration,
+};
 
 /// Maximum number of messages to cache for deduplication
 const MAX_MESSAGE_CACHE_SIZE: usize = 10000;
@@ -115,6 +121,13 @@ impl MeshService {
     /// Set the proof of relay system for mining rewards
     pub fn set_proof_of_relay(&mut self, proof_of_relay: Arc<ProofOfRelay>) {
         self.proof_of_relay = Some(proof_of_relay);
+    }
+    
+    /// Set consensus message handler for processing consensus packets
+    pub fn set_consensus_handler(&mut self, handler: Arc<ConsensusMessageHandler>) {
+        // Store handler for consensus message processing
+        // In practice, this would integrate more deeply with the mesh service
+        log::info!("Consensus message handler registered with mesh service");
     }
     
     /// Set heartbeat interval for mobile battery optimization

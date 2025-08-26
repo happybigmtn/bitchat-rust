@@ -22,6 +22,7 @@
 //! - Production monitoring and alerting
 
 pub mod multi_game_framework;
+pub mod consensus_game_manager;
 
 pub use multi_game_framework::{
     MultiGameFramework,
@@ -47,4 +48,13 @@ pub use multi_game_framework::{
     CrapsGameEngine,
     BlackjackGameEngine,
     PokerGameEngine,
+};
+
+// Re-export consensus game management
+pub use consensus_game_manager::{
+    ConsensusGameManager,
+    ConsensusGameConfig,
+    ConsensusGameSession,
+    GameEvent,
+    GameManagerStats,
 };

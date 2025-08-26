@@ -126,6 +126,16 @@ pub enum Error {
     
     #[error("Platform error: {0}")]
     Platform(String),
+    
+    // Additional variants needed by various modules
+    #[error("Consensus error: {0}")]
+    Consensus(String),
+    
+    #[error("Validation error: {0}")]
+    Validation(String),
+    
+    #[error("Game logic error: {0}")]
+    GameLogic(String),
 }
 
 impl From<std::ffi::NulError> for Error {

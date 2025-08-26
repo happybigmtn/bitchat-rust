@@ -12,6 +12,17 @@ pub mod kademlia;
 pub mod pow_identity;
 pub mod mtu_discovery;
 pub mod connection_pool;
+pub mod ble_peripheral;
+pub mod enhanced_bluetooth;
+pub mod ble_config;
+
+// Platform-specific BLE peripheral implementations
+#[cfg(target_os = "android")]
+pub mod android_ble;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+pub mod ios_ble;
+#[cfg(target_os = "linux")]
+pub mod linux_ble;
 
 #[cfg(test)]
 mod connection_limits_test;
@@ -29,6 +40,9 @@ use crate::error::{Error, Result};
 
 pub use traits::*;
 pub use bluetooth::*;
+pub use ble_peripheral::*;
+pub use enhanced_bluetooth::*;
+pub use ble_config::*;
 
 /// Transport address types for different connection methods
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -83,6 +97,7 @@ struct ConnectionAttempt {
 #[allow(dead_code)]
 pub struct TransportCoordinator {
     bluetooth: Option<Arc<RwLock<BluetoothTransport>>>,
+    enhanced_bluetooth: Option<Arc<RwLock<EnhancedBluetoothTransport>>>,
     connections: Arc<RwLock<HashMap<PeerId, TransportAddress>>>,
     connection_counts_per_address: Arc<RwLock<HashMap<TransportAddress, usize>>>,
     connection_attempts: Arc<RwLock<Vec<ConnectionAttempt>>>,
@@ -107,6 +122,7 @@ impl TransportCoordinator {
         
         let coordinator = Self {
             bluetooth: None,
+            enhanced_bluetooth: None,
             connections: Arc::new(RwLock::new(HashMap::new())),
             connection_counts_per_address: Arc::new(RwLock::new(HashMap::new())),
             connection_attempts: Arc::new(RwLock::new(Vec::new())),
@@ -248,9 +264,74 @@ impl TransportCoordinator {
         Ok(())
     }
     
+    /// Initialize enhanced Bluetooth transport with both central and peripheral roles
+    pub async fn init_enhanced_bluetooth(&mut self, local_peer_id: PeerId) -> Result<()> {
+        log::info!("Initializing enhanced Bluetooth transport");
+        
+        let mut enhanced_bluetooth = EnhancedBluetoothTransport::new(local_peer_id).await
+            .map_err(|e| Error::Network(format!("Failed to initialize enhanced Bluetooth: {}", e)))?;
+        
+        // Initialize the transport
+        enhanced_bluetooth.initialize().await
+            .map_err(|e| Error::Network(format!("Failed to initialize enhanced Bluetooth components: {}", e)))?;
+        
+        self.enhanced_bluetooth = Some(Arc::new(RwLock::new(enhanced_bluetooth)));
+        
+        log::info!("Enhanced Bluetooth transport initialized successfully");
+        Ok(())
+    }
+    
+    /// Start BLE advertising (requires enhanced Bluetooth transport)
+    pub async fn start_ble_advertising(&self, config: AdvertisingConfig) -> Result<()> {
+        if let Some(enhanced_bt) = &self.enhanced_bluetooth {
+            let mut bt = enhanced_bt.write().await;
+            bt.start_advertising(config).await
+                .map_err(|e| Error::Network(format!("Failed to start BLE advertising: {}", e)))
+        } else {
+            Err(Error::Network("Enhanced Bluetooth transport not initialized".to_string()))
+        }
+    }
+    
+    /// Stop BLE advertising
+    pub async fn stop_ble_advertising(&self) -> Result<()> {
+        if let Some(enhanced_bt) = &self.enhanced_bluetooth {
+            let mut bt = enhanced_bt.write().await;
+            bt.stop_advertising().await
+                .map_err(|e| Error::Network(format!("Failed to stop BLE advertising: {}", e)))
+        } else {
+            Err(Error::Network("Enhanced Bluetooth transport not initialized".to_string()))
+        }
+    }
+    
+    /// Start mesh mode (both advertising and scanning)
+    pub async fn start_mesh_mode(&self, config: AdvertisingConfig) -> Result<()> {
+        if let Some(enhanced_bt) = &self.enhanced_bluetooth {
+            let mut bt = enhanced_bt.write().await;
+            bt.start_mesh_mode(config).await
+                .map_err(|e| Error::Network(format!("Failed to start mesh mode: {}", e)))
+        } else {
+            Err(Error::Network("Enhanced Bluetooth transport not initialized".to_string()))
+        }
+    }
+    
+    /// Get enhanced Bluetooth statistics
+    pub async fn get_enhanced_bluetooth_stats(&self) -> Result<EnhancedBluetoothStats> {
+        if let Some(enhanced_bt) = &self.enhanced_bluetooth {
+            let bt = enhanced_bt.read().await;
+            Ok(bt.get_combined_stats().await)
+        } else {
+            Err(Error::Network("Enhanced Bluetooth transport not initialized".to_string()))
+        }
+    }
+    
     /// Start listening on all available transports
     pub async fn start_listening(&self) -> Result<()> {
-        if let Some(bluetooth) = &self.bluetooth {
+        // Prefer enhanced Bluetooth if available
+        if let Some(enhanced_bluetooth) = &self.enhanced_bluetooth {
+            let mut bt = enhanced_bluetooth.write().await;
+            bt.listen(TransportAddress::Bluetooth("BitCraps".to_string())).await
+                .map_err(|e| Error::Network(format!("Enhanced Bluetooth listen failed: {}", e)))?;
+        } else if let Some(bluetooth) = &self.bluetooth {
             let mut bt = bluetooth.write().await;
             bt.listen(TransportAddress::Bluetooth("BitCraps".to_string())).await
                 .map_err(|e| Error::Network(format!("Bluetooth listen failed: {}", e)))?;

@@ -11,7 +11,7 @@
 //! Target: Maximize effective throughput while maintaining <500ms latency
 
 use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}};
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 use std::collections::{HashMap, VecDeque, BinaryHeap};
 use std::cmp::Reverse;
 use tokio::sync::{RwLock, Mutex, Semaphore};
@@ -162,7 +162,7 @@ impl Default for NetworkOptimizerConfig {
 }
 
 /// Message priority levels
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum MessagePriority {
     /// Background/maintenance messages
     Background = 0,
@@ -190,9 +190,9 @@ pub struct NetworkMessage {
     /// Target peer ID (if specific)
     pub target_peer: Option<Vec<u8>>,
     /// Message creation time
-    pub created_at: Instant,
+    pub created_at: SystemTime,
     /// Message deadline (if any)
-    pub deadline: Option<Instant>,
+    pub deadline: Option<SystemTime>,
     /// Retry count
     pub retry_count: u8,
     /// Expected response
@@ -219,7 +219,7 @@ pub struct ConnectionQuality {
     /// Connection age (seconds)
     pub connection_age_secs: u32,
     /// Last update time
-    pub last_updated: Instant,
+    pub last_updated: SystemTime,
 }
 
 /// Network performance metrics
@@ -261,11 +261,11 @@ pub struct BandwidthAllocation {
     /// Current usage (bytes/second)
     pub current_usage_bps: u32,
     /// Usage history
-    pub usage_history: VecDeque<(Instant, u32)>,
+    pub usage_history: VecDeque<(SystemTime, u32)>,
     /// Over-allocation incidents
     pub over_allocation_count: u32,
     /// Last allocation update
-    pub last_updated: Instant,
+    pub last_updated: SystemTime,
 }
 
 /// Message queue item for priority ordering
@@ -273,7 +273,7 @@ pub struct BandwidthAllocation {
 struct MessageQueueItem {
     message: NetworkMessage,
     effective_priority: u64,
-    queue_time: Instant,
+    queue_time: SystemTime,
 }
 
 impl PartialEq for MessageQueueItem {
@@ -475,7 +475,7 @@ impl NetworkOptimizer {
         let queue_item = MessageQueueItem {
             message: message.clone(),
             effective_priority,
-            queue_time: Instant::now(),
+            queue_time: SystemTime::now(),
         };
         
         // Add to appropriate priority queue
@@ -542,7 +542,7 @@ impl NetworkOptimizer {
                 current_usage_bps: 0,
                 usage_history: VecDeque::with_capacity(100),
                 over_allocation_count: 0,
-                last_updated: Instant::now(),
+                last_updated: SystemTime::now(),
             });
         }
         
@@ -569,7 +569,7 @@ impl NetworkOptimizer {
         
         // Deadline urgency adjustment
         let deadline_adjustment = if let Some(deadline) = message.deadline {
-            let time_to_deadline = deadline.saturating_duration_since(Instant::now());
+            let time_to_deadline = deadline.duration_since(SystemTime::now()).unwrap_or_default();
             if time_to_deadline < Duration::from_millis(50) {
                 0 // Maximum urgency
             } else if time_to_deadline < Duration::from_millis(200) {
@@ -583,7 +583,7 @@ impl NetworkOptimizer {
         
         // Message age adjustment (aging)
         let age_adjustment = if self.config.read().await.message_prioritization.enable_aging {
-            let age = message.created_at.elapsed().as_millis() as u64;
+            let age = message.created_at.duration_since(SystemTime::now()).unwrap_or(Duration::ZERO).as_millis() as u64;
             let aging_factor = self.config.read().await.message_prioritization.aging_factor;
             (age as f32 * aging_factor) as u64
         } else {
@@ -610,7 +610,7 @@ impl NetworkOptimizer {
         for allocation in allocations.values_mut() {
             let original_allocation = allocation.allocated_bps;
             allocation.allocated_bps = (original_allocation as f64 * factor) as u32;
-            allocation.last_updated = Instant::now();
+            allocation.last_updated = SystemTime::now();
         }
         
         log::info!("Adjusted bandwidth allocations by factor {:.2}", factor);
@@ -654,8 +654,8 @@ impl NetworkOptimizer {
                 };
                 
                 if let Some(message_item) = next_message {
-                    // Acquire transmission permit
-                    if let Ok(permit) = transmission_semaphore.acquire().await {
+                    // Acquire transmission permit  
+                    if let Ok(permit) = transmission_semaphore.clone().acquire_owned().await {
                         let message = message_item.message;
                         let message_size = message.data.len();
                         
@@ -756,7 +756,7 @@ impl NetworkOptimizer {
                         allocation.current_usage_bps = (current_bps as f64 * 
                             (allocation.allocated_bps as f64 / 100000.0)) as u32;
                         
-                        allocation.usage_history.push_back((Instant::now(), allocation.current_usage_bps));
+                        allocation.usage_history.push_back((SystemTime::now(), allocation.current_usage_bps));
                         
                         if allocation.usage_history.len() > 100 {
                             allocation.usage_history.pop_front();
@@ -902,7 +902,7 @@ impl NetworkOptimizer {
                 0.3 + (rand::random::<f32>() * 0.4)
             };
             
-            quality.last_updated = Instant::now();
+            quality.last_updated = SystemTime::now();
         }
         
         // Simulate new connections occasionally
@@ -916,7 +916,7 @@ impl NetworkOptimizer {
                 throughput_bps: 30000 + (rand::random::<u32>() % 40000),
                 stability_score: 0.8 + (rand::random::<f32>() * 0.2),
                 connection_age_secs: 0,
-                last_updated: Instant::now(),
+                last_updated: SystemTime::now(),
             };
             
             qualities.insert(peer_id, new_quality);
