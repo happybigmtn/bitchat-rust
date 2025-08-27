@@ -1,0 +1,413 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitcraps-gateway
+  namespace: default
+  labels:
+    app: bitcraps
+    component: gateway
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 8333
+    targetPort: 8333
+    protocol: TCP
+    name: p2p
+  - port: 8334
+    targetPort: 8334
+    protocol: TCP
+    name: rpc
+  - port: 443
+    targetPort: 8443
+    protocol: TCP
+    name: https
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app: bitcraps
+    component: gateway
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: bitcraps-gateway
+  namespace: default
+  labels:
+    app: bitcraps
+    component: gateway
+spec:
+  serviceName: bitcraps-gateway
+  replicas: 3
+  selector:
+    matchLabels:
+      app: bitcraps
+      component: gateway
+  template:
+    metadata:
+      labels:
+        app: bitcraps
+        component: gateway
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: role
+                operator: In
+                values:
+                - gateway
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: component
+                operator: In
+                values:
+                - gateway
+            topologyKey: kubernetes.io/hostname
+      tolerations:
+      - key: "workload"
+        operator: "Equal"
+        value: "gateway"
+        effect: "NoSchedule"
+      containers:
+      - name: bitcraps-gateway
+        image: bitcraps/gateway:latest
+        imagePullPolicy: Always
+        command: ["/usr/local/bin/bitcraps"]
+        args: 
+        - "--mode=gateway"
+        - "--config=/etc/bitcraps/config.toml"
+        - "--enable-internet-bridge"
+        - "--enable-mesh-relay"
+        - "--enable-nat-traversal"
+        ports:
+        - containerPort: 8333
+          name: p2p
+          protocol: TCP
+        - containerPort: 8334
+          name: rpc
+          protocol: TCP
+        - containerPort: 8443
+          name: https
+          protocol: TCP
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        env:
+        - name: RUST_LOG
+          value: "info"
+        - name: BITCRAPS_NODE_TYPE
+          value: "gateway"
+        - name: BITCRAPS_ENABLE_TRACING
+          value: "true"
+        - name: JAEGER_AGENT_HOST
+          value: "jaeger-agent.tracing"
+        - name: JAEGER_AGENT_PORT
+          value: "6831"
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        volumeMounts:
+        - name: config
+          mountPath: /etc/bitcraps
+        - name: data
+          mountPath: /var/lib/bitcraps
+        - name: tls-certs
+          mountPath: /etc/bitcraps/tls
+          readOnly: true
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      - name: nginx-sidecar
+        image: nginx:alpine
+        ports:
+        - containerPort: 443
+          name: https-proxy
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        - name: tls-certs
+          mountPath: /etc/nginx/ssl
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+      volumes:
+      - name: config
+        configMap:
+          name: bitcraps-gateway-config
+      - name: nginx-config
+        configMap:
+          name: nginx-gateway-config
+      - name: tls-certs
+        secret:
+          secretName: bitcraps-tls
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: gp3
+      resources:
+        requests:
+          storage: 100Gi
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bitcraps-gateway-config
+  namespace: default
+data:
+  config.toml: |
+    [app]
+    name = "BitCraps Gateway"
+    environment = "production"
+    log_level = "info"
+    
+    [network]
+    listen_port = 8333
+    rpc_port = 8334
+    max_connections = 10000
+    enable_bluetooth = false
+    enable_tcp = true
+    enable_websocket = true
+    enable_compression = true
+    
+    [gateway]
+    enable_internet_bridge = true
+    enable_mesh_relay = true
+    enable_nat_traversal = true
+    max_relay_bandwidth = 100000000  # 100 MB/s
+    max_relay_connections = 5000
+    relay_buffer_size = 1048576  # 1MB
+    
+    [security]
+    enable_tls = true
+    tls_cert_path = "/etc/bitcraps/tls/tls.crt"
+    tls_key_path = "/etc/bitcraps/tls/tls.key"
+    enable_rate_limiting = true
+    rate_limit_requests = 1000
+    rate_limit_window = 60
+    pow_difficulty = 20
+    
+    [consensus]
+    enable_consensus = false  # Gateways don't participate in consensus
+    relay_only = true
+    
+    [database]
+    path = "/var/lib/bitcraps/gateway.db"
+    max_connections = 50
+    wal_mode = true
+    
+    [monitoring]
+    enable_metrics = true
+    metrics_port = 9090
+    enable_tracing = true
+    
+    [cache]
+    max_size = 1073741824  # 1GB
+    ttl = 3600
+    
+    [performance]
+    worker_threads = 16
+    io_threads = 8
+    max_pending_connections = 10000
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-gateway-config
+  namespace: default
+data:
+  nginx.conf: |
+    user nginx;
+    worker_processes auto;
+    
+    events {
+        worker_connections 10000;
+        use epoll;
+        multi_accept on;
+    }
+    
+    http {
+        upstream bitcraps_gateway {
+            server localhost:8080;
+            keepalive 32;
+        }
+        
+        upstream bitcraps_rpc {
+            server localhost:8334;
+            keepalive 16;
+        }
+        
+        server {
+            listen 443 ssl http2;
+            server_name gateway.bitcraps.io;
+            
+            ssl_certificate /etc/nginx/ssl/tls.crt;
+            ssl_certificate_key /etc/nginx/ssl/tls.key;
+            ssl_protocols TLSv1.2 TLSv1.3;
+            ssl_ciphers HIGH:!aNULL:!MD5;
+            
+            location / {
+                proxy_pass http://bitcraps_gateway;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection "upgrade";
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_buffering off;
+            }
+            
+            location /rpc {
+                proxy_pass http://bitcraps_rpc;
+                proxy_http_version 1.1;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+            }
+            
+            location /health {
+                access_log off;
+                return 200 "healthy\n";
+            }
+        }
+    }
+
+---
+# HorizontalPodAutoscaler for Gateway Nodes
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: bitcraps-gateway-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: bitcraps-gateway
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: bitcraps_active_connections
+      target:
+        type: AverageValue
+        averageValue: "1000"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+
+---
+# NetworkPolicy for Gateway Nodes
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bitcraps-gateway-network-policy
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      component: gateway
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector: {}  # Allow from all pods in namespace
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090  # Metrics
+  - from:
+    - podSelector: {}  # External traffic through LoadBalancer
+    ports:
+    - protocol: TCP
+      port: 8333  # P2P
+    - protocol: TCP
+      port: 8334  # RPC
+    - protocol: TCP
+      port: 443   # HTTPS
+    - protocol: TCP
+      port: 80    # HTTP
+  egress:
+  - to:
+    - podSelector: {}
+  - to:  # Allow internet access for gateway functionality
+    ports:
+    - protocol: TCP
+    - protocol: UDP

@@ -160,7 +160,7 @@ impl BatteryOptimizationHandler {
                         });
                     }
                 },
-                PlatformType::iOS => {
+                PlatformType::Ios => {
                     if state.background_restricted {
                         recommendations.push(OptimizationRecommendation {
                             title: "Background App Refresh Disabled".to_string(),
@@ -291,7 +291,7 @@ impl BatteryOptimizationHandler {
                 let restricted = Self::detect_android_background_restrictions().await;
                 (doze, standby, restricted, false)
             }
-            PlatformType::iOS => {
+            PlatformType::Ios => {
                 let refresh_disabled = Self::detect_ios_background_refresh().await;
                 (false, false, false, refresh_disabled)
             }
@@ -318,7 +318,7 @@ impl BatteryOptimizationHandler {
                         issues.push("App has background restrictions".to_string());
                     }
                 },
-                PlatformType::iOS => {
+                PlatformType::Ios => {
                     // Check for iOS-specific issues
                     if is_ios_background_refresh_disabled && !state.background_restricted {
                         state.background_restricted = true;
@@ -359,7 +359,7 @@ impl BatteryOptimizationHandler {
                         let _ = power_manager.set_scan_interval(5000); // 5 seconds
                     }
                 },
-                PlatformType::iOS => {
+                PlatformType::Ios => {
                     if state.background_restricted {
                         // iOS background scanning is very limited
                         let _ = power_manager.set_scan_interval(10000); // 10 seconds
@@ -426,7 +426,7 @@ impl BatteryOptimizationHandler {
                 // TODO: JNI call to BatteryManager.getIntProperty()
                 None
             },
-            PlatformType::iOS => {
+            PlatformType::Ios => {
                 // TODO: FFI call to UIDevice.batteryLevel
                 None
             },
@@ -441,7 +441,7 @@ impl BatteryOptimizationHandler {
                 // TODO: JNI call to BatteryManager charging status
                 false
             },
-            PlatformType::iOS => {
+            PlatformType::Ios => {
                 // TODO: FFI call to UIDevice.batteryState
                 false
             },
@@ -546,7 +546,7 @@ impl BatteryAwareScanStrategy {
                     (base_window, base_interval)
                 }
             },
-            PlatformType::iOS => {
+            PlatformType::Ios => {
                 // iOS is more restrictive
                 (base_window / 2, base_interval * 2)
             },

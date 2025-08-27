@@ -1,0 +1,109 @@
+{{- if .Values.backup.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "bitcraps.fullname" . }}-backup
+  labels:
+    {{- include "bitcraps.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+spec:
+  schedule: "{{ .Values.backup.schedule }}"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "bitcraps.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: backup
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: {{ include "bitcraps.serviceAccountName" . }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 1000
+          containers:
+            - name: backup
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  echo "Starting backup at $(date)"
+                  
+                  # Create backup directory
+                  BACKUP_DIR="/tmp/backup-$(date +%Y%m%d-%H%M%S)"
+                  mkdir -p "$BACKUP_DIR"
+                  
+                  # Backup database
+                  echo "Backing up database..."
+                  sqlite3 {{ .Values.persistence.mountPath }}/bitcraps.db ".backup $BACKUP_DIR/bitcraps.db"
+                  
+                  # Compress backup
+                  echo "Compressing backup..."
+                  tar -czf "$BACKUP_DIR.tar.gz" -C /tmp "$(basename $BACKUP_DIR)"
+                  
+                  # Upload to destination
+                  echo "Uploading to {{ .Values.backup.destination.type }}..."
+                  {{- if eq .Values.backup.destination.type "s3" }}
+                  aws s3 cp "$BACKUP_DIR.tar.gz" "s3://{{ .Values.backup.destination.bucket }}/bitcraps/$(date +%Y/%m/%d)/backup-$(date +%H%M%S).tar.gz" \
+                    --region {{ .Values.backup.destination.region }}
+                  {{- else if eq .Values.backup.destination.type "gcs" }}
+                  gsutil cp "$BACKUP_DIR.tar.gz" "gs://{{ .Values.backup.destination.bucket }}/bitcraps/$(date +%Y/%m/%d)/backup-$(date +%H%M%S).tar.gz"
+                  {{- else if eq .Values.backup.destination.type "azure" }}
+                  az storage blob upload \
+                    --container-name {{ .Values.backup.destination.bucket }} \
+                    --name "bitcraps/$(date +%Y/%m/%d)/backup-$(date +%H%M%S).tar.gz" \
+                    --file "$BACKUP_DIR.tar.gz"
+                  {{- end }}
+                  
+                  # Cleanup old backups
+                  echo "Cleaning up backups older than {{ .Values.backup.retention }} days..."
+                  {{- if eq .Values.backup.destination.type "s3" }}
+                  aws s3 ls "s3://{{ .Values.backup.destination.bucket }}/bitcraps/" --recursive | \
+                    awk '{print $4}' | \
+                    while read -r key; do
+                      age=$(aws s3api head-object --bucket {{ .Values.backup.destination.bucket }} --key "$key" --query "LastModified" --output text | xargs -I {} date -d {} +%s)
+                      cutoff=$(date -d "{{ .Values.backup.retention }} days ago" +%s)
+                      if [ "$age" -lt "$cutoff" ]; then
+                        aws s3 rm "s3://{{ .Values.backup.destination.bucket }}/$key"
+                      fi
+                    done
+                  {{- end }}
+                  
+                  # Cleanup
+                  rm -rf "$BACKUP_DIR" "$BACKUP_DIR.tar.gz"
+                  echo "Backup completed successfully at $(date)"
+              env:
+                {{- if .Values.backup.destination.credentials.secretName }}
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.backup.destination.credentials.secretName }}
+                      key: aws-access-key-id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.backup.destination.credentials.secretName }}
+                      key: aws-secret-access-key
+                {{- end }}
+              volumeMounts:
+                - name: data
+                  mountPath: {{ .Values.persistence.mountPath }}
+                  readOnly: true
+              resources:
+                requests:
+                  memory: "256Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "1Gi"
+                  cpu: "500m"
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: {{ include "bitcraps.fullname" . }}
+{{- end }}

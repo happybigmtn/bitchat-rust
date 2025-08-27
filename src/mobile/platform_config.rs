@@ -12,7 +12,7 @@ impl PlatformConfigBuilder {
     pub fn new(platform: PlatformType) -> Self {
         let default_config = match platform {
             PlatformType::Android => Self::android_defaults(),
-            PlatformType::iOS => Self::ios_defaults(),
+            PlatformType::Ios => Self::ios_defaults(),
             PlatformType::Desktop => Self::desktop_defaults(),
             PlatformType::Web => Self::web_defaults(),
             PlatformType::Unknown => Self::desktop_defaults(), // Default to desktop settings
@@ -75,7 +75,7 @@ impl PlatformConfigBuilder {
     /// iOS-specific default configuration
     fn ios_defaults() -> PlatformConfig {
         PlatformConfig {
-            platform: PlatformType::iOS,
+            platform: PlatformType::Ios,
             background_scanning: false, // Limited on iOS
             scan_window_ms: 300,        // 0.3 seconds
             scan_interval_ms: 2000,     // 2 seconds (more conservative)
@@ -198,7 +198,7 @@ impl PlatformDetection {
         return PlatformType::Android;
         
         #[cfg(target_os = "ios")]
-        return PlatformType::iOS;
+        return PlatformType::Ios;
         
         #[cfg(target_arch = "wasm32")]
         return PlatformType::Web;
@@ -217,7 +217,7 @@ impl PlatformDetection {
     pub fn supports_background_operation() -> bool {
         match Self::detect_platform() {
             PlatformType::Android => true,
-            PlatformType::iOS => false, // Limited support
+            PlatformType::Ios => false, // Limited support
             PlatformType::Desktop => true,
             PlatformType::Web => false,
             PlatformType::Unknown => false,
@@ -234,7 +234,7 @@ impl PlatformDetection {
                 limitations.push("Requires location permissions for BLE scanning".to_string());
                 limitations.push("May be affected by Doze mode and App Standby".to_string());
             },
-            PlatformType::iOS => {
+            PlatformType::Ios => {
                 limitations.push("Background scanning severely limited".to_string());
                 limitations.push("Local name not available in background".to_string());
                 limitations.push("Service UUID filtering required for background".to_string());
@@ -266,7 +266,7 @@ impl CompatibilityLayer {
     pub fn max_connections() -> u32 {
         match PlatformDetection::detect_platform() {
             PlatformType::Android => 7,  // Most Android devices support 7 concurrent connections
-            PlatformType::iOS => 10,     // iOS typically supports more connections
+            PlatformType::Ios => 10,     // iOS typically supports more connections
             PlatformType::Desktop => 20, // Desktop has fewer limitations
             PlatformType::Web => 1,      // Web Bluetooth is very limited
             PlatformType::Unknown => 1,  // Conservative default
@@ -277,7 +277,7 @@ impl CompatibilityLayer {
     pub fn optimal_mtu_size() -> u16 {
         match PlatformDetection::detect_platform() {
             PlatformType::Android => 244, // Android default MTU
-            PlatformType::iOS => 185,     // iOS conservative MTU
+            PlatformType::Ios => 185,     // iOS conservative MTU
             PlatformType::Desktop => 512, // Desktop can handle larger MTUs
             PlatformType::Web => 20,      // Web Bluetooth has small MTU
             PlatformType::Unknown => 20,  // Conservative default
@@ -296,7 +296,7 @@ impl CompatibilityLayer {
                 permissions.push("android.permission.BLUETOOTH_CONNECT".to_string());
                 permissions.push("android.permission.ACCESS_FINE_LOCATION".to_string());
             },
-            PlatformType::iOS => {
+            PlatformType::Ios => {
                 permissions.push("NSBluetoothAlwaysUsageDescription".to_string());
                 permissions.push("NSBluetoothPeripheralUsageDescription".to_string());
             },
@@ -315,7 +315,7 @@ impl CompatibilityLayer {
                     config.scan_interval_ms = 100; // Minimum interval for Android
                 }
             },
-            PlatformType::iOS => {
+            PlatformType::Ios => {
                 // iOS workarounds
                 if config.background_scanning && config.service_uuids.is_empty() {
                     log::warn!("iOS background scanning requires service UUIDs");

@@ -780,7 +780,9 @@ impl CpuOptimizer {
                             let start_time = SystemTime::now();
                             
                             // Execute task (simulated)
-                            Self::execute_task(&task).await;
+                            if let Err(e) = Self::execute_task(&task).await {
+                                tracing::warn!("Task execution failed: {:?}", e);
+                            }
                             
                             let execution_time = SystemTime::now().duration_since(start_time).unwrap_or(Duration::ZERO);
                             
@@ -852,7 +854,9 @@ impl CpuOptimizer {
                                batch.id, batch.items.len());
                     
                     // Process batch (simulated)
-                    Self::process_consensus_batch(&batch).await;
+                    if let Err(e) = Self::process_consensus_batch(&batch).await {
+                        tracing::warn!("Consensus batch processing failed: {:?}", e);
+                    }
                     
                     let processing_time = SystemTime::now().duration_since(start_time).unwrap_or(Duration::ZERO);
                     

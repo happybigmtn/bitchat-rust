@@ -177,6 +177,11 @@ impl BitchatKeypair {
 }
 
 impl BitchatIdentity {
+    /// Get the public key bytes
+    pub fn public_key(&self) -> &[u8; 32] {
+        &self.peer_id
+    }
+    
     /// Generate identity with proof-of-work
     pub fn generate_with_pow(difficulty: u32) -> Self {
         let keypair = BitchatKeypair::generate();

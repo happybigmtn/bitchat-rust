@@ -271,7 +271,7 @@ pub struct NetworkMetrics {
 }
 
 impl NetworkMetrics {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             messages_sent: AtomicU64::new(0),
             messages_received: AtomicU64::new(0),
@@ -310,7 +310,7 @@ pub struct ConsensusMetrics {
 }
 
 impl ConsensusMetrics {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             proposals_submitted: AtomicU64::new(0),
             proposals_accepted: AtomicU64::new(0),
@@ -348,7 +348,7 @@ pub struct GamingMetrics {
 }
 
 impl GamingMetrics {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             total_games: AtomicU64::new(0),
             active_games: AtomicUsize::new(0),
@@ -379,7 +379,7 @@ pub struct PerformanceMetrics {
 }
 
 impl PerformanceMetrics {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             operation_latencies: Arc::new(RwLock::new(LatencyTracker::new(1000))),
             throughput_ops_per_sec: Arc::new(RwLock::new(0.0)),
@@ -415,7 +415,7 @@ pub struct ResourceMetrics {
 }
 
 impl ResourceMetrics {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             memory_usage_bytes: AtomicU64::new(0),
             cpu_usage_percent: AtomicUsize::new(0),
@@ -485,7 +485,7 @@ pub struct ErrorMetrics {
 }
 
 impl ErrorMetrics {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             total_errors: AtomicU64::new(0),
             network_errors: AtomicU64::new(0),

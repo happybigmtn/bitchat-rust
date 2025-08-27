@@ -109,7 +109,7 @@ struct NodeInfo {
 
 /// Node capabilities
 #[derive(Debug, Clone, Default)]
-struct NodeCapabilities {
+pub struct NodeCapabilities {
     max_bandwidth: f64,
     supports_relay: bool,
     battery_powered: bool,
@@ -161,7 +161,7 @@ struct LinkMeasurement {
 
 /// Routing metrics and statistics
 #[derive(Debug, Clone, Default)]
-struct RoutingMetrics {
+pub struct RoutingMetrics {
     total_routes: usize,
     successful_deliveries: u64,
     failed_deliveries: u64,

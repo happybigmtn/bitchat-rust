@@ -123,7 +123,7 @@ pub struct AdaptiveBleScanner {
 
 /// Internal scanner state
 #[derive(Debug, Clone)]
-struct ScannerState {
+pub struct ScannerState {
     /// Currently scanning
     is_scanning: bool,
     /// Current scan started at

@@ -5,7 +5,6 @@
 use super::{SystemMonitor, SystemMetrics, SystemMonitorError, MetricType, NetworkInterface};
 use std::collections::HashMap;
 use std::fs;
-use std::io::BufRead;
 use std::time::SystemTime;
 
 pub struct LinuxSystemMonitor {

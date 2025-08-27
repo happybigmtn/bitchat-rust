@@ -108,6 +108,10 @@ struct LocalPeer {
     bytes_relayed: u64,
     messages_relayed: u64,
     reputation: f64,
+    address: Option<SocketAddr>,
+    last_activity: Instant,
+    bytes_sent: u64,
+    bytes_received: u64,
 }
 
 /// Internet peer information
@@ -120,6 +124,9 @@ struct InternetPeer {
     rtt: Duration,
     bandwidth_usage: f64,
     protocol_version: ProtocolVersion,
+    last_activity: Instant,
+    bytes_relayed: u64,
+    relay_fee_earned: u64,
 }
 
 /// Gateway information from registry
@@ -170,7 +177,9 @@ struct RelayStatistics {
 #[derive(Debug, Clone)]
 pub enum GatewayEvent {
     LocalPeerConnected { peer_id: PeerId },
+    LocalPeerDisconnected { peer_id: PeerId, reason: String },
     InternetPeerConnected { peer_id: PeerId, address: SocketAddr },
+    InternetPeerDisconnected { peer_id: PeerId, reason: String },
     PeerDisconnected { peer_id: PeerId, reason: String },
     MessageRelayed { from: PeerId, to: PeerId, bytes: usize },
     BandwidthLimitReached { interface: String, limit_mbps: f64 },
@@ -360,26 +369,126 @@ impl GatewayNode {
     
     /// Handle TCP connection
     async fn handle_tcp_connection(
-        _stream: TcpStream,
+        mut stream: TcpStream,
         peer_addr: SocketAddr,
         is_local: bool,
-        _local_peers: Arc<RwLock<HashMap<PeerId, LocalPeer>>>,
-        _internet_peers: Arc<RwLock<HashMap<PeerId, InternetPeer>>>,
-        _identity: Arc<BitchatIdentity>,
+        local_peers: Arc<RwLock<HashMap<PeerId, LocalPeer>>>,
+        internet_peers: Arc<RwLock<HashMap<PeerId, InternetPeer>>>,
+        identity: Arc<BitchatIdentity>,
         event_sender: mpsc::UnboundedSender<GatewayEvent>,
-        _bandwidth_monitor: Arc<BandwidthMonitor>,
+        bandwidth_monitor: Arc<BandwidthMonitor>,
     ) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        
         // Generate temporary peer ID from address
         let peer_id = Self::peer_id_from_addr(peer_addr);
         
-        if is_local {
-            let _ = event_sender.send(GatewayEvent::LocalPeerConnected { peer_id });
-        } else {
-            let _ = event_sender.send(GatewayEvent::InternetPeerConnected { peer_id, address: peer_addr });
+        // Perform handshake
+        let handshake_data = identity.public_key().to_vec();
+        if let Err(e) = stream.write_all(&handshake_data).await {
+            log::error!("Failed to send handshake: {}", e);
+            return;
         }
         
-        // Connection handling logic would go here
-        log::info!("Handling connection from {} (local: {})", peer_addr, is_local);
+        // Read peer handshake
+        let mut peer_handshake = vec![0u8; 32];
+        match stream.read_exact(&mut peer_handshake).await {
+            Ok(_) => {
+                // Store peer information
+                if is_local {
+                    let mut peers = local_peers.write().await;
+                    peers.insert(peer_id, LocalPeer {
+                        peer_id,
+                        address: Some(peer_addr),
+                        connected_at: Instant::now(),
+                        last_activity: Instant::now(),
+                        last_seen: Instant::now(),
+                        bytes_sent: 0,
+                        bytes_received: 0,
+                        bytes_relayed: 0,
+                        messages_relayed: 0,
+                        reputation: 1.0,
+                    });
+                    let _ = event_sender.send(GatewayEvent::LocalPeerConnected { peer_id });
+                } else {
+                    let mut peers = internet_peers.write().await;
+                    peers.insert(peer_id, InternetPeer {
+                        peer_id,
+                        address: peer_addr,
+                        connected_at: Instant::now(),
+                        last_activity: Instant::now(),
+                        last_ping: Instant::now(),
+                        rtt: Duration::from_millis(0),
+                        bandwidth_usage: 0.0,
+                        protocol_version: ProtocolVersion::CURRENT,
+                        bytes_relayed: 0,
+                        relay_fee_earned: 0,
+                    });
+                    let _ = event_sender.send(GatewayEvent::InternetPeerConnected { peer_id, address: peer_addr });
+                }
+                
+                log::info!("Successfully connected to peer {} at {} (local: {})", 
+                         hex::encode(&peer_id[..8]), peer_addr, is_local);
+                
+                // Start message relay loop
+                let mut buffer = vec![0u8; 65536];
+                loop {
+                    match stream.read(&mut buffer).await {
+                        Ok(0) => {
+                            // Connection closed
+                            break;
+                        }
+                        Ok(n) => {
+                            // Update bandwidth monitoring
+                            bandwidth_monitor.update_usage(is_local, n).await;
+                            
+                            // Relay message to appropriate destination
+                            if is_local {
+                                // Local to internet relay
+                                if let Some(peers) = local_peers.write().await.get_mut(&peer_id) {
+                                    peers.bytes_received += n as u64;
+                                    peers.last_activity = Instant::now();
+                                }
+                            } else {
+                                // Internet to local relay
+                                if let Some(peers) = internet_peers.write().await.get_mut(&peer_id) {
+                                    peers.bytes_relayed += n as u64;
+                                    peers.last_activity = Instant::now();
+                                    peers.relay_fee_earned += 1; // Simple fee calculation
+                                }
+                            }
+                            
+                            // Process message (would include actual routing logic)
+                            log::trace!("Relayed {} bytes from peer {}", n, hex::encode(&peer_id[..8]));
+                        }
+                        Err(e) => {
+                            log::error!("Read error from peer {}: {}", hex::encode(&peer_id[..8]), e);
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to read peer handshake: {}", e);
+            }
+        }
+        
+        // Clean up on disconnect
+        if is_local {
+            local_peers.write().await.remove(&peer_id);
+            let _ = event_sender.send(GatewayEvent::LocalPeerDisconnected { 
+                peer_id, 
+                reason: "Connection closed".to_string() 
+            });
+        } else {
+            internet_peers.write().await.remove(&peer_id);
+            let _ = event_sender.send(GatewayEvent::InternetPeerDisconnected { 
+                peer_id, 
+                reason: "Connection closed".to_string() 
+            });
+        }
+        
+        log::info!("Peer {} disconnected", hex::encode(&peer_id[..8]));
     }
     
     /// Generate peer ID from socket address (temporary solution)

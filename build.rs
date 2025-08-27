@@ -4,7 +4,7 @@ fn main() {
     // Generate UniFFI scaffolding
     #[cfg(feature = "uniffi")]
     {
-        uniffi::generate_scaffolding("src/bitcraps_mobile.udl")
+        uniffi::generate_scaffolding("src/bitcraps.udl")
             .expect("Failed to generate UniFFI scaffolding");
     }
     
@@ -15,7 +15,7 @@ fn main() {
     }
     
     // Rebuild if UDL file changes
-    println!("cargo:rerun-if-changed=src/bitcraps_mobile.udl");
+    println!("cargo:rerun-if-changed=src/bitcraps.udl");
     println!("cargo:rerun-if-changed=build.rs");
     
     // Set up output directory for generated bindings

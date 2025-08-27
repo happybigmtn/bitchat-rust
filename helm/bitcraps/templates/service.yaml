@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "bitcraps.fullname" . }}
+  labels:
+    {{- include "bitcraps.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.ports.http.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: {{ .Values.service.ports.p2p.port }}
+      targetPort: p2p
+      protocol: TCP
+      name: p2p
+    - port: {{ .Values.service.ports.gateway.port }}
+      targetPort: gateway
+      protocol: TCP
+      name: gateway
+    - port: {{ .Values.service.ports.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+  selector:
+    {{- include "bitcraps.selectorLabels" . | nindent 4 }}
+---
+# Headless service for peer discovery
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "bitcraps.fullname" . }}-headless
+  labels:
+    {{- include "bitcraps.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  ports:
+    - port: {{ .Values.service.ports.p2p.port }}
+      targetPort: p2p
+      protocol: TCP
+      name: p2p
+  selector:
+    {{- include "bitcraps.selectorLabels" . | nindent 4 }}

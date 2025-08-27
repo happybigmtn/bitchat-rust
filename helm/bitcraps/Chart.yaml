@@ -1,0 +1,35 @@
+apiVersion: v2
+name: bitcraps
+description: A decentralized P2P mesh network for secure gaming and communication
+type: application
+version: 1.0.0
+appVersion: "0.1.0"
+keywords:
+  - p2p
+  - mesh
+  - gaming
+  - rust
+  - blockchain
+maintainers:
+  - name: BitCraps Team
+    email: team@bitcraps.io
+home: https://github.com/bitcraps/bitchat-rust
+sources:
+  - https://github.com/bitcraps/bitchat-rust
+dependencies:
+  - name: postgresql
+    version: "12.1.0"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+  - name: redis
+    version: "17.3.0"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled
+  - name: prometheus
+    version: "19.0.0"
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: monitoring.prometheus.enabled
+  - name: grafana
+    version: "6.44.0"
+    repository: https://grafana.github.io/helm-charts
+    condition: monitoring.grafana.enabled

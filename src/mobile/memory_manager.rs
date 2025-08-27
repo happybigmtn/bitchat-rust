@@ -190,7 +190,7 @@ struct MemoryPool {
 
 /// Pool statistics
 #[derive(Debug, Clone, Default)]
-struct PoolStats {
+pub struct PoolStats {
     /// Total allocation requests
     pub allocation_requests: u64,
     /// Allocation hits (served from pool)

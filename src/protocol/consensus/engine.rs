@@ -406,8 +406,8 @@ impl ConsensusEngine {
         hasher.update(state.sequence_number.to_le_bytes());
         hasher.update(state.timestamp.to_le_bytes());
         
-        // Add game state data
-        hasher.update(format!("{:?}", state.game_state.phase));
+        // Add game state data using deterministic serialization
+        hasher.update(&bincode::serialize(&state.game_state.phase).unwrap_or_default());
         
         // Add balance data
         for (&player, &balance) in &state.player_balances {

@@ -63,8 +63,9 @@ pub use security_integration::*;
 pub use android_keystore::{AndroidKeystore, SecurityLevel};
 pub use ios_keychain::IOSKeychain;
 
-// TODO: Fix UniFFI configuration issues
-// uniffi::include_scaffolding!("bitcraps");
+// UniFFI scaffolding for mobile bindings
+#[cfg(feature = "uniffi")]
+uniffi::include_scaffolding!("bitcraps");
 
 /// Main BitCraps node for mobile platforms
 pub struct BitCrapsNode {

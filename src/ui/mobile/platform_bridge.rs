@@ -215,21 +215,100 @@ impl PlatformRenderer for AndroidRenderer {
 #[cfg(target_os = "android")]
 impl AndroidRenderer {
     fn render_android_login(&self, state: &AppState, theme: &Theme) {
-        // JNI call to render login screen
-        if let Some(env) = self.jni_env {
-            unsafe {
-                // Call Java method via JNI
-                // Example: (*env).CallVoidMethod(...)
+        use jni::objects::{JObject, JValue};
+        use jni::JNIEnv;
+        
+        if let Some(env_ptr) = self.jni_env {
+            if let Some(activity) = self.activity {
+                unsafe {
+                    let env = JNIEnv::from_raw(env_ptr).unwrap();
+                    
+                    // Convert theme to Android values
+                    let theme_name = env.new_string(theme.name()).unwrap();
+                    let primary_color = theme.colors.primary.to_hex();
+                    let color_string = env.new_string(&primary_color).unwrap();
+                    
+                    // Call renderLoginScreen method on the activity
+                    let _ = env.call_method(
+                        JObject::from_raw(activity),
+                        "renderLoginScreen",
+                        "(Ljava/lang/String;Ljava/lang/String;)V",
+                        &[
+                            JValue::Object(theme_name.into()),
+                            JValue::Object(color_string.into()),
+                        ],
+                    );
+                }
             }
         }
     }
     
     fn render_android_home(&self, state: &AppState, theme: &Theme) {
-        // JNI call to render home screen
+        use jni::objects::{JObject, JValue};
+        use jni::JNIEnv;
+        
+        if let Some(env_ptr) = self.jni_env {
+            if let Some(activity) = self.activity {
+                unsafe {
+                    let env = JNIEnv::from_raw(env_ptr).unwrap();
+                    
+                    // Get user data from state
+                    let username = state.user_profile.as_ref()
+                        .map(|p| p.username.as_str())
+                        .unwrap_or("Guest");
+                    let username_jstring = env.new_string(username).unwrap();
+                    
+                    // Get balance
+                    let balance = state.wallet_balance;
+                    
+                    // Call renderHomeScreen method
+                    let _ = env.call_method(
+                        JObject::from_raw(activity),
+                        "renderHomeScreen",
+                        "(Ljava/lang/String;J)V",
+                        &[
+                            JValue::Object(username_jstring.into()),
+                            JValue::Long(balance as i64),
+                        ],
+                    );
+                }
+            }
+        }
     }
     
     fn render_android_game(&self, state: &AppState, theme: &Theme) {
-        // JNI call to render game screen
+        use jni::objects::{JObject, JValue};
+        use jni::JNIEnv;
+        
+        if let Some(env_ptr) = self.jni_env {
+            if let Some(activity) = self.activity {
+                unsafe {
+                    let env = JNIEnv::from_raw(env_ptr).unwrap();
+                    
+                    // Get game state
+                    let game_id = state.active_game.as_ref()
+                        .map(|g| format!("{:?}", g.id))
+                        .unwrap_or_default();
+                    let game_id_jstring = env.new_string(&game_id).unwrap();
+                    
+                    // Get current round
+                    let round = state.active_game.as_ref()
+                        .map(|g| g.current_round)
+                        .unwrap_or(0);
+                    
+                    // Call renderGameScreen method
+                    let _ = env.call_method(
+                        JObject::from_raw(activity),
+                        "renderGameScreen",
+                        "(Ljava/lang/String;I)V",
+                        &[
+                            JValue::Object(game_id_jstring.into()),
+                            JValue::Int(round as i32),
+                        ],
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -312,21 +391,81 @@ impl PlatformRenderer for IosRenderer {
 #[cfg(target_os = "ios")]
 impl IosRenderer {
     fn render_ios_login(&self, state: &AppState, theme: &Theme) {
-        // Objective-C call to render login screen
         if let Some(vc) = self.view_controller {
             unsafe {
-                // Call Objective-C method
-                // Example: objc_msgSend(vc, sel_registerName("renderLogin:"), ...)
+                // Call Objective-C method to render login screen
+                let theme_name = std::ffi::CString::new(theme.name()).unwrap();
+                let primary_color = std::ffi::CString::new(theme.colors.primary.to_hex()).unwrap();
+                
+                extern "C" {
+                    fn ios_render_login_screen(
+                        view_controller: *mut std::ffi::c_void,
+                        theme_name: *const std::ffi::c_char,
+                        primary_color: *const std::ffi::c_char,
+                    );
+                }
+                
+                ios_render_login_screen(
+                    vc,
+                    theme_name.as_ptr(),
+                    primary_color.as_ptr(),
+                );
             }
         }
     }
     
     fn render_ios_home(&self, state: &AppState, theme: &Theme) {
-        // Objective-C call to render home screen
+        if let Some(vc) = self.view_controller {
+            unsafe {
+                let username = state.user_profile.as_ref()
+                    .map(|p| p.username.as_str())
+                    .unwrap_or("Guest");
+                let username_cstr = std::ffi::CString::new(username).unwrap();
+                let balance = state.wallet_balance;
+                
+                extern "C" {
+                    fn ios_render_home_screen(
+                        view_controller: *mut std::ffi::c_void,
+                        username: *const std::ffi::c_char,
+                        balance: u64,
+                    );
+                }
+                
+                ios_render_home_screen(
+                    vc,
+                    username_cstr.as_ptr(),
+                    balance,
+                );
+            }
+        }
     }
     
     fn render_ios_game(&self, state: &AppState, theme: &Theme) {
-        // Objective-C call to render game screen
+        if let Some(vc) = self.view_controller {
+            unsafe {
+                let game_id = state.active_game.as_ref()
+                    .map(|g| format!("{:?}", g.id))
+                    .unwrap_or_default();
+                let game_id_cstr = std::ffi::CString::new(game_id).unwrap();
+                let round = state.active_game.as_ref()
+                    .map(|g| g.current_round)
+                    .unwrap_or(0);
+                
+                extern "C" {
+                    fn ios_render_game_screen(
+                        view_controller: *mut std::ffi::c_void,
+                        game_id: *const std::ffi::c_char,
+                        round: u32,
+                    );
+                }
+                
+                ios_render_game_screen(
+                    vc,
+                    game_id_cstr.as_ptr(),
+                    round,
+                );
+            }
+        }
     }
 }
 

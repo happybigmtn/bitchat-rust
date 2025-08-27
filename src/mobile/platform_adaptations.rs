@@ -7,7 +7,7 @@ use serde::{Serialize, Deserialize};
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum PlatformType {
     Android,
-    iOS,
+    Ios,
     Desktop,
     Web,
     Unknown,
@@ -37,7 +37,7 @@ impl PlatformAdaptationManager {
             None
         };
         
-        let ios_adapter = if matches!(platform_type, PlatformType::iOS) {
+        let ios_adapter = if matches!(platform_type, PlatformType::Ios) {
             Some(IOSAdapter::new())
         } else {
             None
@@ -58,7 +58,7 @@ impl PlatformAdaptationManager {
                     adapter.initialize().await?;
                 }
             },
-            PlatformType::iOS => {
+            PlatformType::Ios => {
                 if let Some(adapter) = &self.ios_adapter {
                     adapter.initialize().await?;
                 }
@@ -79,7 +79,7 @@ impl PlatformAdaptationManager {
                     adapter.handle_lifecycle_change(state).await?;
                 }
             },
-            PlatformType::iOS => {
+            PlatformType::Ios => {
                 if let Some(adapter) = &self.ios_adapter {
                     adapter.handle_lifecycle_change(state).await?;
                 }
@@ -100,7 +100,7 @@ impl PlatformAdaptationManager {
                     Ok(PermissionStatus::Granted)
                 }
             },
-            PlatformType::iOS => {
+            PlatformType::Ios => {
                 if let Some(adapter) = &self.ios_adapter {
                     adapter.request_permissions().await
                 } else {
@@ -119,7 +119,7 @@ impl PlatformAdaptationManager {
                     adapter.configure_battery_optimization().await?;
                 }
             },
-            PlatformType::iOS => {
+            PlatformType::Ios => {
                 if let Some(adapter) = &self.ios_adapter {
                     adapter.configure_battery_optimization().await?;
                 }
@@ -140,7 +140,7 @@ impl PlatformAdaptationManager {
                     BluetoothPlatformConfig::default_android()
                 }
             },
-            PlatformType::iOS => {
+            PlatformType::Ios => {
                 if let Some(adapter) = &self.ios_adapter {
                     adapter.get_bluetooth_config()
                 } else {
@@ -161,7 +161,7 @@ impl PlatformAdaptationManager {
                     false
                 }
             },
-            PlatformType::iOS => {
+            PlatformType::Ios => {
                 if let Some(adapter) = &self.ios_adapter {
                     adapter.is_background_operation_available().await
                 } else {
@@ -532,7 +532,7 @@ impl NotificationManager {
             PlatformType::Android => {
                 self.show_android_notification(notification).await
             },
-            PlatformType::iOS => {
+            PlatformType::Ios => {
                 self.show_ios_notification(notification).await
             },
             _ => {

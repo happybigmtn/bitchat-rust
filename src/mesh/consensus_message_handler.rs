@@ -491,6 +491,7 @@ impl MeshConsensusIntegration {
 mod tests {
     use super::*;
     use crate::crypto::BitchatKeypair;
+    use crate::protocol::p2p_messages::ConsensusPayload;
     use crate::transport::TransportCoordinator;
     
     #[tokio::test]

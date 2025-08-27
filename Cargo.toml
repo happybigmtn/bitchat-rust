@@ -92,6 +92,8 @@ blake3 = "1.5"
 crc32fast = "1.4"
 rand_chacha = "0.3"
 env_logger = "0.11"
+warp = "0.3"
+prometheus = "0.13"
 
 [build-dependencies]
 uniffi = { version = "0.28", features = ["build"], optional = true }

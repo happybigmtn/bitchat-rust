@@ -162,7 +162,7 @@ struct AdaptiveRouting {
 
 /// Route information
 #[derive(Debug, Clone)]
-struct RouteInfo {
+pub struct RouteInfo {
     destination: PeerId,
     path: Vec<PeerId>,
     next_hop: PeerId,
@@ -194,7 +194,7 @@ struct RouteSwitchDecision {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum SwitchReason {
+pub enum SwitchReason {
     PerformanceDegradation,
     NodeFailure,
     BetterRouteFound,

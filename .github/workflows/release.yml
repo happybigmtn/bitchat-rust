@@ -1,0 +1,371 @@
+name: Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v1.0.0)'
+        required: true
+      prerelease:
+        description: 'Is this a pre-release?'
+        required: false
+        default: 'false'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  DOCKER_REGISTRY: ghcr.io
+  DOCKER_IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  # Build and test all platforms
+  build-test:
+    name: Build & Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: bitcraps-linux-amd64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: bitcraps-darwin-amd64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: bitcraps-darwin-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: bitcraps-windows-amd64.exe
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+    
+    - name: Build release binary
+      run: cargo build --release --target ${{ matrix.target }}
+    
+    - name: Run tests
+      run: cargo test --release --target ${{ matrix.target }}
+    
+    - name: Package binary
+      shell: bash
+      run: |
+        if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          cp target/${{ matrix.target }}/release/bitcraps.exe ${{ matrix.artifact }}
+        else
+          cp target/${{ matrix.target }}/release/bitcraps ${{ matrix.artifact }}
+        fi
+        tar -czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ matrix.artifact }}
+        path: ${{ matrix.artifact }}.tar.gz
+
+  # Build Android APK
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: |
+          aarch64-linux-android
+          armv7-linux-androideabi
+          x86_64-linux-android
+          i686-linux-android
+    
+    - name: Install cargo-ndk
+      run: cargo install cargo-ndk
+    
+    - name: Build Rust libraries for Android
+      run: |
+        cd android
+        ./build-rust.sh
+    
+    - name: Build APK
+      run: |
+        cd android
+        ./gradlew assembleRelease
+    
+    - name: Sign APK
+      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+      env:
+        KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      run: |
+        echo "$KEYSTORE_BASE64" | base64 -d > keystore.jks
+        jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
+          -keystore keystore.jks \
+          -storepass "$KEYSTORE_PASSWORD" \
+          -keypass "$KEY_PASSWORD" \
+          android/app/build/outputs/apk/release/app-release-unsigned.apk \
+          "$KEY_ALIAS"
+        
+        ${ANDROID_HOME}/build-tools/34.0.0/zipalign -v 4 \
+          android/app/build/outputs/apk/release/app-release-unsigned.apk \
+          bitcraps-android.apk
+        
+        rm keystore.jks
+    
+    - name: Upload APK
+      uses: actions/upload-artifact@v3
+      with:
+        name: bitcraps-android
+        path: bitcraps-android.apk
+
+  # Build iOS IPA
+  build-ios:
+    name: Build iOS IPA
+    runs-on: macos-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: |
+          aarch64-apple-ios
+          x86_64-apple-ios
+    
+    - name: Install cargo-lipo
+      run: cargo install cargo-lipo
+    
+    - name: Build Rust libraries for iOS
+      run: |
+        cargo lipo --release --targets aarch64-apple-ios,x86_64-apple-ios
+    
+    - name: Install CocoaPods
+      run: |
+        cd ios
+        pod install
+    
+    - name: Build iOS app
+      env:
+        DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
+        PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+      run: |
+        cd ios
+        xcodebuild archive \
+          -workspace BitCraps.xcworkspace \
+          -scheme BitCraps \
+          -configuration Release \
+          -archivePath build/BitCraps.xcarchive \
+          CODE_SIGN_IDENTITY="iPhone Distribution" \
+          DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
+          PROVISIONING_PROFILE="$PROVISIONING_PROFILE"
+    
+    - name: Export IPA
+      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+      run: |
+        cd ios
+        xcodebuild -exportArchive \
+          -archivePath build/BitCraps.xcarchive \
+          -exportPath build \
+          -exportOptionsPlist ExportOptions.plist
+        
+        mv build/BitCraps.ipa ../bitcraps-ios.ipa
+    
+    - name: Upload IPA
+      uses: actions/upload-artifact@v3
+      with:
+        name: bitcraps-ios
+        path: bitcraps-ios.ipa
+
+  # Build Docker images
+  build-docker:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.DOCKER_REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.DOCKER_IMAGE }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha
+    
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  # Deploy to Kubernetes
+  deploy:
+    name: Deploy to Production
+    needs: [build-test, build-android, build-ios, build-docker]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    environment: production
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+    
+    - name: Install Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: 'latest'
+    
+    - name: Configure kubectl
+      env:
+        KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+      run: |
+        mkdir -p $HOME/.kube
+        echo "$KUBE_CONFIG" | base64 -d > $HOME/.kube/config
+    
+    - name: Deploy with Helm
+      run: |
+        helm upgrade --install bitcraps ./helm/bitcraps \
+          --namespace production \
+          --create-namespace \
+          --set image.tag=${{ github.ref_name }} \
+          --set image.repository=${{ env.DOCKER_IMAGE }} \
+          --wait
+
+  # Create GitHub Release
+  release:
+    name: Create Release
+    needs: [build-test, build-android, build-ios]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+      with:
+        path: artifacts
+    
+    - name: Generate changelog
+      id: changelog
+      run: |
+        echo "## What's Changed" > CHANGELOG.md
+        git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:"* %s by @%an" >> CHANGELOG.md
+        echo "" >> CHANGELOG.md
+        echo "## Downloads" >> CHANGELOG.md
+        echo "" >> CHANGELOG.md
+        echo "### Desktop" >> CHANGELOG.md
+        echo "- Linux (x64): bitcraps-linux-amd64.tar.gz" >> CHANGELOG.md
+        echo "- macOS (x64): bitcraps-darwin-amd64.tar.gz" >> CHANGELOG.md
+        echo "- macOS (ARM): bitcraps-darwin-arm64.tar.gz" >> CHANGELOG.md
+        echo "- Windows (x64): bitcraps-windows-amd64.tar.gz" >> CHANGELOG.md
+        echo "" >> CHANGELOG.md
+        echo "### Mobile" >> CHANGELOG.md
+        echo "- Android: bitcraps-android.apk" >> CHANGELOG.md
+        echo "- iOS: bitcraps-ios.ipa (TestFlight)" >> CHANGELOG.md
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        body_path: CHANGELOG.md
+        files: |
+          artifacts/*/*
+        draft: false
+        prerelease: ${{ github.event.inputs.prerelease == 'true' }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Notify deployment
+  notify:
+    name: Notify Deployment
+    needs: [deploy, release]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Send Slack notification
+      if: env.SLACK_WEBHOOK != ''
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      run: |
+        STATUS="${{ needs.deploy.result == 'success' && '✅ Success' || '❌ Failed' }}"
+        curl -X POST $SLACK_WEBHOOK \
+          -H 'Content-Type: application/json' \
+          -d "{
+            \"text\": \"BitCraps Release ${{ github.ref_name }} - $STATUS\",
+            \"blocks\": [
+              {
+                \"type\": \"header\",
+                \"text\": {
+                  \"type\": \"plain_text\",
+                  \"text\": \"BitCraps Release ${{ github.ref_name }}\"
+                }
+              },
+              {
+                \"type\": \"section\",
+                \"text\": {
+                  \"type\": \"mrkdwn\",
+                  \"text\": \"*Status:* $STATUS\n*Version:* ${{ github.ref_name }}\n*Deployed by:* ${{ github.actor }}\"
+                }
+              },
+              {
+                \"type\": \"actions\",
+                \"elements\": [
+                  {
+                    \"type\": \"button\",
+                    \"text\": {
+                      \"type\": \"plain_text\",
+                      \"text\": \"View Release\"
+                    },
+                    \"url\": \"https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}\"
+                  }
+                ]
+              }
+            ]
+          }"

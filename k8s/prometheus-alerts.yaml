@@ -1,0 +1,240 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-alerts
+  namespace: monitoring
+data:
+  alerts.yml: |
+    groups:
+    - name: bitcraps.rules
+      interval: 30s
+      rules:
+      
+      # High Severity Alerts
+      - alert: BitCrapsNodeDown
+        expr: up{job="bitcraps"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: node
+        annotations:
+          summary: "BitCraps node {{ $labels.instance }} is down"
+          description: "BitCraps node {{ $labels.instance }} has been down for more than 5 minutes."
+          
+      - alert: ConsensusFailure
+        expr: rate(bitcraps_consensus_failures_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+          component: consensus
+        annotations:
+          summary: "High consensus failure rate detected"
+          description: "Consensus failure rate is {{ $value }} per second, which exceeds threshold."
+          
+      - alert: SecurityViolation
+        expr: bitcraps_security_violations_total > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: security
+        annotations:
+          summary: "Security violation detected"
+          description: "{{ $value }} security violations detected on {{ $labels.instance }}."
+          
+      - alert: ByzantineNodeDetected
+        expr: bitcraps_byzantine_nodes_detected > 0
+        for: 30s
+        labels:
+          severity: critical
+          component: consensus
+        annotations:
+          summary: "Byzantine node detected in network"
+          description: "Byzantine behavior detected from {{ $value }} nodes."
+          
+      # Medium Severity Alerts
+      - alert: HighMemoryUsage
+        expr: (container_memory_usage_bytes{pod=~"bitcraps.*"} / container_spec_memory_limit_bytes{pod=~"bitcraps.*"}) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          component: resources
+        annotations:
+          summary: "High memory usage on {{ $labels.pod }}"
+          description: "Memory usage is above 90% (current: {{ $value | humanizePercentage }})."
+          
+      - alert: HighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total{pod=~"bitcraps.*"}[5m]) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          component: resources
+        annotations:
+          summary: "High CPU usage on {{ $labels.pod }}"
+          description: "CPU usage is above 80% (current: {{ $value | humanizePercentage }})."
+          
+      - alert: ConsensusLatencyHigh
+        expr: histogram_quantile(0.99, rate(bitcraps_consensus_latency_bucket[5m])) > 1000
+        for: 5m
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: "High consensus latency detected"
+          description: "P99 consensus latency is {{ $value }}ms, exceeding 1000ms threshold."
+          
+      - alert: NetworkPartition
+        expr: bitcraps_network_partitions_detected > 0
+        for: 2m
+        labels:
+          severity: warning
+          component: network
+        annotations:
+          summary: "Network partition detected"
+          description: "Network partition affecting {{ $value }} nodes."
+          
+      - alert: LowPeerCount
+        expr: bitcraps_connected_peers < 3
+        for: 10m
+        labels:
+          severity: warning
+          component: network
+        annotations:
+          summary: "Low peer count on {{ $labels.instance }}"
+          description: "Only {{ $value }} peers connected (minimum recommended: 3)."
+          
+      - alert: DatabaseConnectionPoolExhausted
+        expr: bitcraps_db_pool_available_connections == 0
+        for: 2m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Database connection pool exhausted"
+          description: "No available database connections on {{ $labels.instance }}."
+          
+      # Low Severity Alerts
+      - alert: HighTransactionRate
+        expr: rate(bitcraps_transactions_total[5m]) > 1000
+        for: 5m
+        labels:
+          severity: info
+          component: performance
+        annotations:
+          summary: "High transaction rate detected"
+          description: "Transaction rate is {{ $value }} per second."
+          
+      - alert: CacheHitRateLow
+        expr: bitcraps_cache_hit_rate < 0.8
+        for: 15m
+        labels:
+          severity: info
+          component: performance
+        annotations:
+          summary: "Low cache hit rate"
+          description: "Cache hit rate is {{ $value | humanizePercentage }}, below 80% threshold."
+          
+      - alert: DiskSpaceRunningLow
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.2
+        for: 10m
+        labels:
+          severity: warning
+          component: resources
+        annotations:
+          summary: "Disk space running low on {{ $labels.instance }}"
+          description: "Only {{ $value | humanizePercentage }} disk space remaining."
+          
+      # Gaming-specific Alerts
+      - alert: UnusualBettingPattern
+        expr: stddev_over_time(bitcraps_betting_volume_usd[1h]) > (3 * avg_over_time(bitcraps_betting_volume_usd[24h]))
+        for: 5m
+        labels:
+          severity: warning
+          component: gaming
+        annotations:
+          summary: "Unusual betting pattern detected"
+          description: "Betting volume standard deviation is 3x higher than 24h average."
+          
+      - alert: HouseEdgeDeviation
+        expr: abs(bitcraps_actual_house_edge - 0.0136) > 0.005
+        for: 30m
+        labels:
+          severity: warning
+          component: gaming
+        annotations:
+          summary: "House edge deviating from expected"
+          description: "Actual house edge is {{ $value }}, expected 1.36%."
+          
+      - alert: GameSessionStuck
+        expr: bitcraps_game_session_duration_seconds > 3600
+        for: 5m
+        labels:
+          severity: warning
+          component: gaming
+        annotations:
+          summary: "Game session stuck"
+          description: "Game session {{ $labels.session_id }} has been running for over 1 hour."
+          
+      # Mobile Platform Alerts
+      - alert: BluetoothAdvertisingFailure
+        expr: bitcraps_ble_advertising_failures_total > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: mobile
+        annotations:
+          summary: "Bluetooth advertising failures on {{ $labels.platform }}"
+          description: "{{ $value }} BLE advertising failures in the last 5 minutes."
+          
+      - alert: HighBatteryDrain
+        expr: bitcraps_battery_drain_percent_per_hour > 10
+        for: 15m
+        labels:
+          severity: warning
+          component: mobile
+        annotations:
+          summary: "High battery drain detected"
+          description: "Battery drain rate is {{ $value }}% per hour on {{ $labels.platform }}."
+          
+      - alert: ThermalThrottling
+        expr: bitcraps_thermal_throttling_active == 1
+        for: 5m
+        labels:
+          severity: warning
+          component: mobile
+        annotations:
+          summary: "Device thermal throttling active"
+          description: "Thermal throttling active on {{ $labels.device_id }}, performance degraded."
+
+    - name: bitcraps.sla
+      interval: 60s
+      rules:
+      
+      - alert: SLAViolation_Availability
+        expr: (1 - (sum(rate(bitcraps_requests_failed_total[1h])) / sum(rate(bitcraps_requests_total[1h])))) < 0.999
+        for: 5m
+        labels:
+          severity: critical
+          sla: availability
+        annotations:
+          summary: "SLA violation: Availability below 99.9%"
+          description: "Current availability: {{ $value | humanizePercentage }}."
+          
+      - alert: SLAViolation_Latency
+        expr: histogram_quantile(0.95, rate(bitcraps_request_duration_seconds_bucket[5m])) > 1
+        for: 10m
+        labels:
+          severity: warning
+          sla: latency
+        annotations:
+          summary: "SLA violation: P95 latency above 1 second"
+          description: "P95 latency is {{ $value }}s."
+          
+      - alert: SLAViolation_ErrorRate
+        expr: rate(bitcraps_errors_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          sla: error_rate
+        annotations:
+          summary: "SLA violation: Error rate above 1%"
+          description: "Error rate is {{ $value | humanizePercentage }}."

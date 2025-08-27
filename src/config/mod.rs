@@ -6,12 +6,16 @@
 //! - Hot reloading support
 //! - Secure secret management
 
+pub mod performance;
+
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use crate::error::{Error, Result};
 use std::fs;
 use std::env;
+
+pub use performance::{PerformanceProfile, PerformanceConfig, PerformanceTuner};
 
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,6 +28,7 @@ pub struct Config {
     pub monitoring: MonitoringConfig,
     pub game: GameConfig,
     pub treasury: TreasuryConfig,
+    pub performance: PerformanceProfile,
 }
 
 /// Application-level configuration
@@ -393,6 +398,7 @@ impl Config {
                 max_exposure: 500_000_000,
                 rebalance_interval: Duration::from_secs(3600),
             },
+            performance: PerformanceProfile::Balanced,
         }
     }
     

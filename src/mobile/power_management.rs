@@ -84,7 +84,7 @@ impl PowerManager {
         // Apply platform-specific optimizations
         match config.platform {
             PlatformType::Android => self.configure_android_optimizations(config)?,
-            PlatformType::iOS => self.configure_ios_optimizations(config)?,
+            PlatformType::Ios => self.configure_ios_optimizations(config)?,
             _ => {
                 log::warn!("Platform {:?} does not have specific power optimizations", config.platform);
             }

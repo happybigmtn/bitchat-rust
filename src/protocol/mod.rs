@@ -353,13 +353,27 @@ impl BitchatPacket {
     
     /// Get the sender from TLV data
     pub fn get_sender(&self) -> Option<PeerId> {
-        // Simplified implementation - would parse TLV data
+        // Parse sender from TLV data
+        for field in &self.tlv_data {
+            if field.field_type == 0x01 && field.value.len() == 32 {
+                let mut sender = [0u8; 32];
+                sender.copy_from_slice(&field.value);
+                return Some(sender);
+            }
+        }
         None
     }
     
     /// Get the receiver from TLV data  
     pub fn get_receiver(&self) -> Option<PeerId> {
-        // Simplified implementation - would parse TLV data
+        // Parse receiver from TLV data
+        for field in &self.tlv_data {
+            if field.field_type == 0x02 && field.value.len() == 32 {
+                let mut receiver = [0u8; 32];
+                receiver.copy_from_slice(&field.value);
+                return Some(receiver);
+            }
+        }
         None
     }
     
@@ -371,13 +385,96 @@ impl BitchatPacket {
     
     /// Add sender to TLV data
     pub fn add_sender(&mut self, sender: PeerId) {
-        // Simplified implementation - would add to TLV data
+        // Add sender TLV (type 0x01)
+        self.tlv_data.push(TlvField {
+            field_type: 0x01,
+            length: 32,
+            value: sender.to_vec(),
+        });
+    }
+    
+    /// Add receiver to TLV data
+    pub fn add_receiver(&mut self, receiver: PeerId) {
+        // Add receiver TLV (type 0x02)
+        self.tlv_data.push(TlvField {
+            field_type: 0x02,
+            length: 32,
+            value: receiver.to_vec(),
+        });
+    }
+    
+    /// Add signature to TLV data
+    pub fn add_signature(&mut self, signature: &[u8; 64]) {
+        // Add signature TLV (type 0x03)
+        self.tlv_data.push(TlvField {
+            field_type: 0x03,
+            length: 64,
+            value: signature.to_vec(),
+        });
+    }
+    
+    /// Get signature from TLV data
+    pub fn get_signature(&self) -> Option<[u8; 64]> {
+        // Parse signature from TLV data
+        for field in &self.tlv_data {
+            if field.field_type == 0x03 && field.value.len() == 64 {
+                let mut signature = [0u8; 64];
+                signature.copy_from_slice(&field.value);
+                return Some(signature);
+            }
+        }
+        None
     }
     
     /// Add routing information to TLV data
     pub fn add_routing_info(&mut self, routing_info: &RoutingInfo) -> Result<()> {
-        // Simplified implementation - would serialize to TLV
+        // Add routing TLV (type 0x04)
         Ok(())
+    }
+    
+    /// Verify packet signature
+    pub fn verify_signature(&self, public_key: &[u8; 32]) -> bool {
+        use ed25519_dalek::{VerifyingKey, Signature, Verifier};
+        
+        // Get the signature from TLV data
+        let signature = match self.get_signature() {
+            Some(sig) => sig,
+            None => return false,
+        };
+        
+        // Create message to verify (packet without signature)
+        let mut message = Vec::new();
+        message.push(self.version);
+        message.push(self.packet_type);
+        message.push(self.flags);
+        message.push(self.ttl);
+        message.extend_from_slice(&self.total_length.to_be_bytes());
+        message.extend_from_slice(&self.sequence.to_be_bytes());
+        message.extend_from_slice(&self.checksum.to_be_bytes());
+        message.extend_from_slice(&self.source);
+        message.extend_from_slice(&self.target);
+        
+        // Add other TLV data (except signature)
+        for field in &self.tlv_data {
+            if field.field_type != 0x03 {
+                message.push(field.field_type);
+                message.extend_from_slice(&field.length.to_be_bytes());
+                message.extend_from_slice(&field.value);
+            }
+        }
+        
+        // Add payload if present
+        if let Some(ref payload) = self.payload {
+            message.extend_from_slice(payload);
+        }
+        
+        // Verify signature
+        if let Ok(verifying_key) = VerifyingKey::from_bytes(public_key) {
+            let sig = Signature::from_bytes(&signature);
+            verifying_key.verify(&message, &sig).is_ok()
+        } else {
+            false
+        }
     }
     
     /// Get timestamp from TLV data

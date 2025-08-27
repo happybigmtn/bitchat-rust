@@ -16,9 +16,7 @@ use uuid::Uuid;
 // Type alias for FFI results
 type Result<T> = std::result::Result<T, BitCrapsError>;
 
-// Include the UniFFI scaffolding
-#[cfg(feature = "uniffi")]
-uniffi::include_scaffolding!("bitcraps_mobile");
+// UniFFI scaffolding is included in mobile/mod.rs
 
 /// Mobile-friendly wrapper around BitCraps functionality
 pub struct BitCrapsNode {
