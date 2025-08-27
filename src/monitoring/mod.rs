@@ -4,6 +4,7 @@ pub mod dashboard;
 pub mod alerting;
 pub mod system;
 pub mod http_server;
+pub mod real_metrics;
 
 pub use dashboard::{NetworkDashboard, NetworkMetrics, HealthCheck};
 pub use alerting::{

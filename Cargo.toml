@@ -48,6 +48,10 @@ android_logger = { version = "0.14", optional = true }
 
 # Database and storage
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+
+# System monitoring
+sysinfo = "0.29"
+procfs = { version = "0.16", optional = true }
 tokio-rusqlite = "0.6"
 
 # Efficient data structures
