@@ -3,11 +3,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock, oneshot};
-use tokio::net::UdpSocket;
+use tokio::net::{UdpSocket, TcpListener};
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
 use crate::protocol::PeerId;
 use crate::transport::pow_identity::ProofOfWork;
+use crate::transport::nat_traversal::{NetworkHandler, NatType, TransportMode};
 
 /// Kademlia node ID - 256-bit identifier with cryptographic validation
 /// 
@@ -338,12 +339,7 @@ struct StoredValue {
     ttl: Duration,
 }
 
-/// Network handler for UDP/TCP communication
-#[allow(dead_code)]
-struct NetworkHandler {
-    udp_socket: Arc<UdpSocket>,
-    local_address: SocketAddr,
-}
+// NetworkHandler is now imported from nat_traversal module
 
 /// Kademlia protocol messages
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -356,6 +352,10 @@ pub enum KademliaMessage {
     FindValueResponse { result: FindValueResult },
     Ping { requester: Contact },
     Pong { responder: Contact },
+    // NAT traversal messages
+    NatPing { requester: Contact, relay_addr: Option<SocketAddr> },
+    NatPong { responder: Contact, public_addr: SocketAddr },
+    HolePunch { initiator: Contact, target_addr: SocketAddr },
 }
 
 /// Result of a find value operation
@@ -395,10 +395,13 @@ impl KademliaNode {
         let udp_socket = UdpSocket::bind(listen_address).await?;
         let local_address = udp_socket.local_addr()?;
         
-        let network_handler = Arc::new(NetworkHandler {
-            udp_socket: Arc::new(udp_socket),
-            local_address,
-        });
+        // Try to bind TCP listener for reliable transport
+        let tcp_listener = match TcpListener::bind(local_address).await {
+            Ok(listener) => Some(listener),
+            Err(_) => None, // TCP fallback not available
+        };
+        
+        let network_handler = Arc::new(NetworkHandler::new(udp_socket, tcp_listener, local_address));
         
         let (event_sender, _) = mpsc::unbounded_channel();
         
@@ -418,10 +421,47 @@ impl KademliaNode {
     
     /// Start the Kademlia node and begin listening for messages
     pub async fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
+        // Perform NAT traversal setup
+        self.network_handler.setup_nat_traversal().await?;
+        
         self.start_message_handler().await?;
         self.start_maintenance_tasks().await?;
-        println!("Kademlia node started on {}", self.local_address);
+        
+        let public_addr = self.network_handler.public_address.read().await;
+        println!("Kademlia node started on {} (public: {:?})", 
+                self.local_address, *public_addr);
         Ok(())
+    }
+    
+    /// Send message with reliable transport and retransmission
+    pub async fn send_reliable(&self, dest: SocketAddr, message: KademliaMessage) -> Result<KademliaResponse, Box<dyn std::error::Error>> {
+        let payload = bincode::serialize(&message)?;
+        let message_id = self.network_handler.send_reliable(dest, payload).await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        
+        // Create response channel and wait for response
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut pending = self.pending_queries.write().await;
+            pending.insert(message_id, tx);
+        }
+        
+        // Wait for response with timeout
+        let timeout = Duration::from_secs(10); // Longer timeout for reliable transport
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(response)) => {
+                self.network_handler.acknowledge_message(message_id).await;
+                Ok(response)
+            }
+            Ok(Err(_)) => {
+                self.pending_queries.write().await.remove(&message_id);
+                Err("Response channel closed".into())
+            }
+            Err(_) => {
+                self.pending_queries.write().await.remove(&message_id);
+                Err("Request timed out".into())
+            }
+        }
     }
     
     /// Perform iterative node lookup
@@ -750,8 +790,24 @@ impl KademliaNode {
         }
     }
     
-    /// Send a message and wait for response
+    /// Send a message and wait for response (with reliable transport fallback)
     async fn send_message(
+        &self,
+        address: SocketAddr,
+        message: KademliaMessage,
+    ) -> Result<KademliaResponse, Box<dyn std::error::Error>> {
+        // Try reliable transport first for better NAT traversal and retransmission
+        match self.send_reliable(address, message.clone()).await {
+            Ok(response) => Ok(response),
+            Err(_) => {
+                // Fallback to original UDP-only method
+                self.send_message_udp_only(address, message).await
+            }
+        }
+    }
+    
+    /// Original UDP-only message sending (kept as fallback)
+    async fn send_message_udp_only(
         &self,
         address: SocketAddr,
         message: KademliaMessage,

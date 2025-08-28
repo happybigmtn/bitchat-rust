@@ -18,6 +18,8 @@
 //! - `CompressionEngine`: Data compression and decompression
 
 pub mod persistent_storage;
+pub mod encryption;
+pub mod postgresql_backend;
 
 pub use persistent_storage::{
     PersistentStorageManager,
@@ -28,6 +30,21 @@ pub use persistent_storage::{
     CacheStatistics,
     MaintenanceReport,
     CompressionLevel,
+};
+
+pub use encryption::{
+    EncryptionEngine,
+    KeyManager,
+    FileKeyManager,
+    EncryptedData,
+    KeyDerivationParams,
+    calculate_integrity_hash,
+};
+
+pub use postgresql_backend::{
+    PostgresBackend,
+    PostgresConfig,
+    PoolStatistics,
 };
 
 // Re-export commonly used types

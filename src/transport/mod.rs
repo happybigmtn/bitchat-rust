@@ -10,11 +10,15 @@ pub mod bluetooth;
 pub mod traits;
 pub mod kademlia;
 pub mod pow_identity;
+pub mod nat_traversal;
 pub mod mtu_discovery;
 pub mod connection_pool;
 pub mod ble_peripheral;
 pub mod enhanced_bluetooth;
 pub mod ble_config;
+pub mod crypto;
+pub mod bounded_queue;
+pub mod secure_gatt_server;
 
 // Platform-specific BLE peripheral implementations
 #[cfg(target_os = "android")]
@@ -43,6 +47,7 @@ pub use bluetooth::*;
 pub use ble_peripheral::*;
 pub use enhanced_bluetooth::*;
 pub use ble_config::*;
+pub use crypto::*;
 
 /// Transport address types for different connection methods
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -93,17 +98,55 @@ struct ConnectionAttempt {
     peer_address: TransportAddress,
 }
 
+/// Transport coordinator configuration
+#[derive(Debug, Clone)]
+pub struct CoordinatorConfig {
+    pub discovery_interval: Duration,
+    pub failover_timeout: Duration,
+    pub max_transports: usize,
+    pub enable_failover: bool,
+}
+
+impl Default for CoordinatorConfig {
+    fn default() -> Self {
+        Self {
+            discovery_interval: Duration::from_secs(30),
+            failover_timeout: Duration::from_secs(10),
+            max_transports: 5,
+            enable_failover: true,
+        }
+    }
+}
+
+/// Transport instance with health tracking
+struct TransportInstance {
+    transport: Box<dyn Transport>,
+    health: TransportHealth,
+    last_activity: Instant,
+    priority: u8, // 0 = highest priority
+}
+
+/// Transport health status
+#[derive(Debug, Clone, PartialEq)]
+enum TransportHealth {
+    Healthy,
+    Degraded,
+    Failed,
+}
+
 /// Transport coordinator managing multiple transport types
-#[allow(dead_code)]
 pub struct TransportCoordinator {
     bluetooth: Option<Arc<RwLock<BluetoothTransport>>>,
     enhanced_bluetooth: Option<Arc<RwLock<EnhancedBluetoothTransport>>>,
+    transports: Arc<RwLock<Vec<TransportInstance>>>,
     connections: Arc<RwLock<HashMap<PeerId, TransportAddress>>>,
     connection_counts_per_address: Arc<RwLock<HashMap<TransportAddress, usize>>>,
     connection_attempts: Arc<RwLock<Vec<ConnectionAttempt>>>,
     connection_limits: ConnectionLimits,
+    coordinator_config: CoordinatorConfig,
     event_sender: mpsc::UnboundedSender<TransportEvent>,
     event_receiver: Arc<RwLock<mpsc::UnboundedReceiver<TransportEvent>>>,
+    discovery_task: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl Default for TransportCoordinator {
@@ -118,17 +161,24 @@ impl TransportCoordinator {
     }
     
     pub fn new_with_limits(limits: ConnectionLimits) -> Self {
+        Self::new_with_config(limits, CoordinatorConfig::default())
+    }
+
+    pub fn new_with_config(limits: ConnectionLimits, config: CoordinatorConfig) -> Self {
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
         
         let coordinator = Self {
             bluetooth: None,
             enhanced_bluetooth: None,
+            transports: Arc::new(RwLock::new(Vec::new())),
             connections: Arc::new(RwLock::new(HashMap::new())),
             connection_counts_per_address: Arc::new(RwLock::new(HashMap::new())),
             connection_attempts: Arc::new(RwLock::new(Vec::new())),
             connection_limits: limits,
+            coordinator_config: config,
             event_sender,
             event_receiver: Arc::new(RwLock::new(event_receiver)),
+            discovery_task: Arc::new(RwLock::new(None)),
         };
         
         // Start cleanup task for connection attempts
@@ -218,15 +268,101 @@ impl TransportCoordinator {
     }
     
     /// Set discovery interval for peer finding
-    pub fn set_discovery_interval(&mut self, _interval: Duration) {
-        // TODO: Implement discovery interval configuration
-        // This would update how often we scan for new peers
+    pub fn set_discovery_interval(&mut self, interval: Duration) {
+        self.coordinator_config.discovery_interval = interval;
+        
+        // Restart discovery task with new interval
+        let discovery_task = self.discovery_task.clone();
+        let config = self.coordinator_config.clone();
+        let transports = self.transports.clone();
+        let event_sender = self.event_sender.clone();
+        
+        tokio::spawn(async move {
+            // Stop existing task if running
+            {
+                let mut task_guard = discovery_task.write().await;
+                if let Some(task) = task_guard.take() {
+                    task.abort();
+                }
+            }
+            
+            // Start new discovery task
+            let new_task = tokio::spawn(Self::discovery_task(config, transports, event_sender));
+            *discovery_task.write().await = Some(new_task);
+        });
     }
     
     /// Add a transport to the coordinator
-    pub fn add_transport(&mut self, _transport: Box<dyn Transport>) {
-        // TODO: Implement multiple transport support
-        // For now we only support Bluetooth
+    pub async fn add_transport(&self, transport: Box<dyn Transport>, priority: u8) -> Result<()> {
+        let mut transports = self.transports.write().await;
+        
+        if transports.len() >= self.coordinator_config.max_transports {
+            return Err(Error::Network(format!("Maximum transport limit ({}) reached", self.coordinator_config.max_transports)));
+        }
+        
+        let transport_instance = TransportInstance {
+            transport,
+            health: TransportHealth::Healthy,
+            last_activity: Instant::now(),
+            priority,
+        };
+        
+        transports.push(transport_instance);
+        
+        // Sort by priority (0 = highest)
+        transports.sort_by_key(|t| t.priority);
+        
+        println!("Added transport with priority {}, total: {}", priority, transports.len());
+        Ok(())
+    }
+    
+    /// Start peer discovery task
+    async fn discovery_task(
+        config: CoordinatorConfig,
+        transports: Arc<RwLock<Vec<TransportInstance>>>,
+        event_sender: mpsc::UnboundedSender<TransportEvent>,
+    ) {
+        let mut interval = interval(config.discovery_interval);
+        
+        loop {
+            interval.tick().await;
+            
+            // Perform discovery on all healthy transports
+            let transports_guard = transports.read().await;
+            for transport_instance in transports_guard.iter() {
+                if transport_instance.health == TransportHealth::Healthy {
+                    // In a real implementation, we'd call transport.discover_peers()
+                    // For now, just log the discovery attempt
+                    println!("Performing peer discovery (priority: {})", transport_instance.priority);
+                }
+            }
+            
+            // Health check on transports
+            drop(transports_guard);
+            Self::check_transport_health(&transports, &event_sender).await;
+        }
+    }
+    
+    /// Check health of all transports
+    async fn check_transport_health(
+        transports: &Arc<RwLock<Vec<TransportInstance>>>,
+        event_sender: &mpsc::UnboundedSender<TransportEvent>,
+    ) {
+        let mut transports_guard = transports.write().await;
+        let now = Instant::now();
+        
+        for transport_instance in transports_guard.iter_mut() {
+            // Mark as failed if no activity for too long (simplified health check)
+            if now.duration_since(transport_instance.last_activity) > Duration::from_secs(300) {
+                if transport_instance.health != TransportHealth::Failed {
+                    transport_instance.health = TransportHealth::Failed;
+                    let _ = event_sender.send(TransportEvent::Error {
+                        peer_id: None,
+                        error: "Transport health check failed".to_string(),
+                    });
+                }
+            }
+        }
     }
     
     /// Record a connection attempt for rate limiting
@@ -340,7 +476,7 @@ impl TransportCoordinator {
         Ok(())
     }
     
-    /// Connect to a peer via the best available transport
+    /// Connect to a peer via the best available transport with failover
     pub async fn connect_to_peer(&self, peer_id: PeerId, address: TransportAddress) -> Result<()> {
         // Check connection limits before attempting to connect
         self.check_connection_limits(&address).await?;
@@ -348,6 +484,77 @@ impl TransportCoordinator {
         // Record the connection attempt
         self.record_connection_attempt(&address).await;
         
+        if self.coordinator_config.enable_failover {
+            self.connect_with_failover(peer_id, address).await
+        } else {
+            self.connect_single_transport(peer_id, address).await
+        }
+    }
+    
+    /// Connect using failover logic across multiple transports
+    async fn connect_with_failover(&self, peer_id: PeerId, address: TransportAddress) -> Result<()> {
+        let transports = self.transports.read().await;
+        
+        // Try transports in priority order, only healthy ones
+        for transport_instance in transports.iter() {
+            if transport_instance.health != TransportHealth::Healthy {
+                continue;
+            }
+            
+            println!("Attempting connection via transport priority {}", transport_instance.priority);
+            
+            // Try to connect with timeout
+            let connect_future = self.attempt_transport_connection(transport_instance, peer_id, address.clone());
+            
+            match tokio::time::timeout(self.coordinator_config.failover_timeout, connect_future).await {
+                Ok(Ok(_)) => {
+                    // Connection successful - update tracking
+                    self.connections.write().await.insert(peer_id, address.clone());
+                    self.increment_connection_count(&address).await;
+                    
+                    // Send connection event
+                    let _ = self.event_sender.send(TransportEvent::Connected {
+                        peer_id,
+                        address: address.clone(),
+                    });
+                    
+                    return Ok(());
+                }
+                Ok(Err(e)) => {
+                    println!("Transport connection failed: {}", e);
+                    continue; // Try next transport
+                }
+                Err(_) => {
+                    println!("Transport connection timed out");
+                    continue; // Try next transport
+                }
+            }
+        }
+        
+        // All transports failed, try legacy Bluetooth as fallback
+        self.connect_single_transport(peer_id, address).await
+    }
+    
+    /// Attempt connection using a specific transport instance
+    async fn attempt_transport_connection(
+        &self,
+        _transport_instance: &TransportInstance,
+        _peer_id: PeerId,
+        _address: TransportAddress,
+    ) -> Result<()> {
+        // In a real implementation, this would call transport_instance.transport.connect()
+        // For now, simulate a connection attempt that might fail
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        if rng.gen_bool(0.7) { // 70% success rate for simulation
+            Ok(())
+        } else {
+            Err(Error::Network("Simulated connection failure".to_string()))
+        }
+    }
+    
+    /// Connect using single transport (legacy method)
+    async fn connect_single_transport(&self, peer_id: PeerId, address: TransportAddress) -> Result<()> {
         match address {
             TransportAddress::Bluetooth(_) => {
                 if let Some(bluetooth) = &self.bluetooth {

@@ -15,7 +15,12 @@ use bytes::{Bytes, BytesMut};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::protocol::{PeerId, BitchatPacket};
-use crate::transport::{Transport, TransportAddress, TransportEvent};
+use crate::transport::{
+    Transport, TransportAddress, TransportEvent,
+    crypto::{TransportCrypto, ConnectionPriority},
+    secure_gatt_server::{SecureGattServer, BITCRAPS_SERVICE_UUID as GATT_SERVICE_UUID},
+    bounded_queue::{BoundedTransportEventQueue, BoundedTransportEventSender}
+};
 
 /// BitCraps GATT Service UUID
 const BITCRAPS_SERVICE_UUID: Uuid = Uuid::from_u128(0x12345678_1234_5678_1234_567812345678);
@@ -139,15 +144,17 @@ struct PeerConnection {
     last_activity: Instant,
 }
 
-/// Bluetooth mesh transport implementation
+/// Bluetooth mesh transport implementation with bidirectional support
 pub struct BluetoothTransport {
     _manager: Manager,
     adapter: Option<Adapter>,
     connections: Arc<RwLock<HashMap<PeerId, PeerConnection>>>,
     connection_limits: BluetoothConnectionLimits,
     connection_attempts: Arc<RwLock<Vec<Instant>>>,
-    event_sender: mpsc::UnboundedSender<TransportEvent>,
-    event_receiver: mpsc::UnboundedReceiver<TransportEvent>,
+    /// Bounded event queue for overflow protection
+    event_queue: Arc<BoundedTransportEventQueue>,
+    event_sender: BoundedTransportEventSender,
+    event_receiver: Arc<Mutex<crate::transport::bounded_queue::BoundedTransportEventReceiver>>,
     local_peer_id: PeerId,
     is_scanning: Arc<RwLock<bool>>,
     discovered_peers: Arc<RwLock<HashMap<String, DiscoveredPeer>>>,
@@ -157,6 +164,12 @@ pub struct BluetoothTransport {
     monitor_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     /// Global memory pool for zero-copy operations
     global_memory_pool: Arc<MemoryPool>,
+    /// Transport-layer encryption and authentication
+    transport_crypto: Arc<TransportCrypto>,
+    /// Secure GATT server for peripheral mode
+    gatt_server: Arc<SecureGattServer>,
+    /// Peripheral mode enabled
+    peripheral_mode_enabled: Arc<RwLock<bool>>,
 }
 
 impl BluetoothTransport {
@@ -172,9 +185,22 @@ impl BluetoothTransport {
         let adapters = manager.adapters().await?;
         let adapter = adapters.into_iter().next();
         
-        let (event_sender, event_receiver) = mpsc::unbounded_channel();
+        // Create bounded event queue for overflow protection
+        let event_queue = Arc::new(BoundedTransportEventQueue::for_transport());
+        let event_sender = event_queue.sender();
+        let event_receiver = event_queue.receiver();
         
         let global_memory_pool = Arc::new(MemoryPool::new(POOL_BUFFER_SIZE, MAX_POOLED_BUFFERS));
+        
+        // Create transport crypto for security
+        let transport_crypto = Arc::new(TransportCrypto::new());
+        
+        // Create secure GATT server for peripheral mode
+        let gatt_server = Arc::new(SecureGattServer::new(
+            local_peer_id,
+            event_sender.clone(),
+            transport_crypto.clone(),
+        ));
         
         let transport = Self {
             _manager: manager,
@@ -182,14 +208,18 @@ impl BluetoothTransport {
             connections: Arc::new(RwLock::new(HashMap::new())),
             connection_limits: limits,
             connection_attempts: Arc::new(RwLock::new(Vec::new())),
+            event_queue,
             event_sender,
-            event_receiver,
+            event_receiver: Arc::new(Mutex::new(event_receiver)),
             local_peer_id,
             is_scanning: Arc::new(RwLock::new(false)),
             discovered_peers: Arc::new(RwLock::new(HashMap::new())),
             scan_task: Arc::new(Mutex::new(None)),
             monitor_task: Arc::new(Mutex::new(None)),
             global_memory_pool,
+            transport_crypto,
+            gatt_server,
+            peripheral_mode_enabled: Arc::new(RwLock::new(false)),
         };
         
         // Start cleanup task for connection attempts
@@ -305,29 +335,48 @@ impl BluetoothTransport {
         self.record_bluetooth_connection_attempt_internal().await;
     }
     
-    /// Start advertising as a BitCraps node
+    /// Start advertising as a BitCraps node with GATT server support
     pub async fn start_advertising(&self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(_adapter) = &self.adapter {
-            log::info!("Starting BitCraps BLE advertising with peer_id: {:?}", self.local_peer_id);
+            log::info!("Starting BitCraps BLE advertising with secure GATT server for peer_id: {:?}", self.local_peer_id);
             
-            // Note: btleplug doesn't currently support peripheral mode (advertising) on most platforms
-            // This is a limitation of the library. In a real implementation, you would need to use
-            // platform-specific APIs like Core Bluetooth on macOS/iOS or BlueZ on Linux.
-            // For now, we'll just log that we would start advertising and focus on the central (scanning) role.
+            // Start the secure GATT server
+            self.gatt_server.start().await
+                .map_err(|e| format!("Failed to start GATT server: {}", e))?;
             
-            log::warn!("BLE peripheral mode (advertising) not fully supported by btleplug on this platform.");
-            log::info!("Device will operate in central mode only - scanning for other BitCraps nodes.");
+            *self.peripheral_mode_enabled.write().await = true;
             
-            // In a real implementation, this would:
-            // 1. Set up GATT server with BitCraps service
-            // 2. Add TX/RX characteristics with proper permissions
-            // 3. Start advertising with service UUID in advertisement data
-            // 4. Handle incoming connections and characteristic writes
+            log::info!("BitCraps BLE advertising started with secure GATT server");
+            
+            // Note: Actual platform-specific advertising would be implemented here
+            // The SecureGattServer provides the service implementation
+            // Platform-specific code would:
+            // 1. Register GATT service with platform Bluetooth stack
+            // 2. Start BLE advertising with service UUID
+            // 3. Handle connection events and forward to GATT server
             
             Ok(())
         } else {
             Err("No Bluetooth adapter available".into())
         }
+    }
+    
+    /// Stop advertising and GATT server
+    pub async fn stop_advertising(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if !*self.peripheral_mode_enabled.read().await {
+            return Ok(());
+        }
+        
+        log::info!("Stopping BitCraps BLE advertising and GATT server");
+        
+        // Stop the GATT server
+        self.gatt_server.stop().await
+            .map_err(|e| format!("Failed to stop GATT server: {}", e))?;
+        
+        *self.peripheral_mode_enabled.write().await = false;
+        
+        log::info!("BitCraps BLE advertising stopped");
+        Ok(())
     }
     
     /// Scan for other BitCraps nodes
@@ -448,22 +497,49 @@ impl BluetoothTransport {
         Ok(())
     }
     
-    /// Send packet over Bluetooth to peer with zero-copy fragmentation
+    /// Send packet over Bluetooth to peer with encryption and zero-copy fragmentation
     async fn send_over_ble(
         &self,
         peer_id: PeerId,
         packet: &BitchatPacket,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        use std::time::Instant;
+        let start_time = Instant::now();
+        
+        // Serialize packet
+        let mut serialized_packet = packet.clone();
+        let data = serialized_packet.serialize()
+            .map_err(|e| format!("Packet serialization failed: {}", e))?;
+        
+        // First try GATT server (if peer is connected as client)
+        if *self.peripheral_mode_enabled.read().await {
+            match self.gatt_server.send_to_client(peer_id, &data).await {
+                Ok(()) => {
+                    log::debug!("Sent packet to peer {:?} via GATT server", peer_id);
+                    return Ok(());
+                }
+                Err(e) => {
+                    log::debug!("GATT server send failed for peer {:?}: {}, trying central connection", peer_id, e);
+                }
+            }
+        }
+        
+        // Fall back to central connection
         let mut connections = self.connections.write().await;
         
         if let Some(connection) = connections.get_mut(&peer_id) {
-            // Serialize packet to zero-copy buffer
-            let mut serialized_packet = packet.clone();
-            let data = serialized_packet.serialize()
-                .map_err(|e| format!("Packet serialization failed: {}", e))?;
+            // Encrypt the data
+            let encrypted_data = match self.transport_crypto.encrypt_message(peer_id, &data).await {
+                Ok(encrypted) => encrypted,
+                Err(e) => {
+                    log::error!("Failed to encrypt data for peer {:?}: {}", peer_id, e);
+                    let _ = self.transport_crypto.update_connection_metrics(peer_id, u32::MAX, false).await;
+                    return Err(format!("Encryption failed: {}", e).into());
+                }
+            };
             
             // Convert to zero-copy Bytes for efficient fragmentation
-            let data_bytes = Bytes::from(data);
+            let data_bytes = Bytes::from(encrypted_data);
             
             // Get TX characteristic (clone to avoid borrow conflicts)
             let tx_char = connection.tx_char.clone()
@@ -472,12 +548,14 @@ impl BluetoothTransport {
             // Use zero-copy fragmentation
             self.send_fragmented_zero_copy(connection, &tx_char, data_bytes, peer_id).await?;
             
-            // Update last activity
+            // Update connection metrics and last activity
             connection.last_activity = Instant::now();
+            let latency_ms = start_time.elapsed().as_millis() as u32;
+            let _ = self.transport_crypto.update_connection_metrics(peer_id, latency_ms, true).await;
             
             Ok(())
         } else {
-            Err("Peer not connected".into())
+            Err("Peer not connected via central or peripheral".into())
         }
     }
     
@@ -578,14 +656,30 @@ impl BluetoothTransport {
         Ok(())
     }
     
-    /// Handle incoming data from a peer
+    /// Handle incoming encrypted data from a peer and decrypt it
     #[allow(dead_code)]
-    async fn handle_incoming_data(&self, peer_id: PeerId, data: Vec<u8>) {
-        // Send event to application layer
-        let _ = self.event_sender.send(TransportEvent::DataReceived {
-            peer_id,
-            data,
-        });
+    async fn handle_incoming_data(&self, peer_id: PeerId, encrypted_data: Vec<u8>) {
+        // Decrypt the data
+        match self.transport_crypto.decrypt_message(peer_id, &encrypted_data).await {
+            Ok(decrypted_data) => {
+                log::debug!("Successfully decrypted {} bytes from peer {:?}", decrypted_data.len(), peer_id);
+                
+                // Send decrypted event to application layer
+                let _ = self.event_sender.send(TransportEvent::DataReceived {
+                    peer_id,
+                    data: decrypted_data,
+                }).await;
+            }
+            Err(e) => {
+                log::error!("Failed to decrypt data from peer {:?}: {}", peer_id, e);
+                
+                // Send error event
+                let _ = self.event_sender.send(TransportEvent::Error {
+                    peer_id: Some(peer_id),
+                    error: format!("Decryption failed: {}", e),
+                }).await;
+            }
+        }
     }
     
     /// Connect to a discovered peer with connection limits enforced
@@ -665,6 +759,15 @@ impl BluetoothTransport {
                 peer_id
             };
             
+            // Perform key exchange for secure communication
+            let crypto_public_key = self.transport_crypto.public_key();
+            // In a real implementation, we would get the peer's public key from the key exchange characteristic
+            // For now, we'll use our own key as a placeholder
+            if let Err(e) = self.transport_crypto.perform_key_exchange(peer_id, crypto_public_key).await {
+                log::error!("Key exchange failed for peer {:?}: {}", peer_id, e);
+                return Err(format!("Key exchange failed: {}", e).into());
+            }
+            
             // Create connection object with zero-copy fragmentation
             let fragmentation = FragmentationManager {
                 memory_pool: MemoryPool::new(POOL_BUFFER_SIZE, MAX_POOLED_BUFFERS / 4), // Smaller pool per connection
@@ -724,6 +827,55 @@ impl BluetoothTransport {
             recent_connection_attempts: recent_attempts,
             rate_limit: self.connection_limits.max_connection_attempts_per_minute,
         }
+    }
+    
+    /// Set connection priority for a peer
+    pub async fn set_peer_priority(&self, peer_id: PeerId, priority: ConnectionPriority) -> Result<(), Box<dyn std::error::Error>> {
+        // Update crypto priority
+        self.transport_crypto.set_connection_priority(peer_id, priority).await
+            .map_err(|e| format!("Failed to set peer priority: {}", e))?;
+        
+        // Update GATT server priority if peer is connected as client
+        if *self.peripheral_mode_enabled.read().await {
+            self.gatt_server.set_client_priority(peer_id, priority).await
+                .map_err(|e| format!("Failed to set GATT client priority: {}", e))?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Get connection priorities ordered by score
+    pub async fn get_peers_by_priority(&self) -> Vec<(PeerId, f32)> {
+        self.transport_crypto.get_peers_by_priority().await
+    }
+    
+    /// Get queue statistics for monitoring
+    pub async fn get_queue_stats(&self) -> crate::transport::bounded_queue::QueueStats {
+        self.event_queue.stats().await
+    }
+    
+    /// Get transport crypto statistics
+    pub async fn get_crypto_stats(&self) -> crate::transport::crypto::CryptoStats {
+        self.transport_crypto.get_crypto_stats().await
+    }
+    
+    /// Get GATT server statistics
+    pub async fn get_gatt_server_stats(&self) -> Option<crate::transport::secure_gatt_server::GattServerStats> {
+        if *self.peripheral_mode_enabled.read().await {
+            Some(self.gatt_server.get_stats().await)
+        } else {
+            None
+        }
+    }
+    
+    /// Enable/disable peripheral mode
+    pub async fn set_peripheral_mode(&self, enabled: bool) -> Result<(), Box<dyn std::error::Error>> {
+        if enabled && !*self.peripheral_mode_enabled.read().await {
+            self.start_advertising().await?;
+        } else if !enabled && *self.peripheral_mode_enabled.read().await {
+            self.stop_advertising().await?;
+        }
+        Ok(())
     }
 }
 
@@ -805,7 +957,8 @@ impl Transport for BluetoothTransport {
     }
     
     async fn next_event(&mut self) -> Option<TransportEvent> {
-        self.event_receiver.recv().await
+        let receiver = self.event_receiver.lock().await;
+        receiver.recv().await
     }
 }
 

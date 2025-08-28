@@ -29,6 +29,7 @@ fastrand = "2.0"
 sha2 = "0.10"
 argon2 = "0.5.3"
 chacha20poly1305 = "0.10.1"
+aes-gcm = "0.10.3"
 hmac = "0.12"
 pbkdf2 = "0.12"
 hkdf = "0.12"
@@ -48,6 +49,8 @@ android_logger = { version = "0.14", optional = true }
 
 # Database and storage
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+tokio-postgres = { version = "0.7", optional = true }
+deadpool-postgres = { version = "0.14", optional = true }
 
 # System monitoring
 sysinfo = "0.29"
@@ -111,25 +114,21 @@ ndk-context = "0.1"
 
 # Linux D-Bus integration for BlueZ
 [target.'cfg(target_os = "linux")'.dependencies]
-# Note: In a real implementation, you would add D-Bus libraries here:
-# zbus = { version = "4.0", features = ["tokio"] }
-# or
-# dbus = "0.9"
-# For now, we're using placeholder implementations
+zbus = { version = "4.0", features = ["tokio"] }
+futures-util = "0.3"
 
 # iOS/macOS Core Bluetooth FFI (when available)
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
-# Note: In a real implementation, you would add FFI bindings here:
-# cocoa = "0.24"
-# objc = "0.2"  
-# core-foundation = "0.9"
-# For now, we're using placeholder implementations
+core-foundation = "0.9"
+core-foundation-sys = "0.8"
+objc = "0.2"
+cocoa = "0.25"
 
 # Windows system monitoring
 [target.'cfg(target_os = "windows")'.dependencies]
 # Windows Performance Data Helper (PDH) for system metrics
-# winapi = { version = "0.3", features = ["pdh", "sysinfoapi", "winbase"] }
-# windows-sys = { version = "0.52", features = ["Win32_System_Performance", "Win32_System_SystemInformation"] }
+winapi = { version = "0.3", features = ["pdh", "sysinfoapi", "winbase", "winuser", "bluetoothapis"] }
+windows = { version = "0.52", features = ["Win32_Devices_Bluetooth", "Win32_Foundation", "Win32_System_Com"] }
 
 
 [dev-dependencies]

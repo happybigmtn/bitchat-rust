@@ -24,6 +24,8 @@ use tracing::{info, warn, error, debug};
 
 use crate::error::Error;
 use crate::monitoring::metrics::METRICS;
+use crate::storage::encryption::{EncryptionEngine, FileKeyManager, EncryptedData, KeyManager};
+use crate::storage::postgresql_backend::{PostgresBackend, PostgresConfig};
 
 /// Production persistent storage manager
 pub struct PersistentStorageManager {
@@ -35,6 +37,8 @@ pub struct PersistentStorageManager {
     backup_manager: Arc<BackupManager>,
     /// Compression engine for space efficiency
     compression_engine: Arc<CompressionEngine>,
+    /// Encryption engine for data at rest
+    encryption_engine: Arc<Mutex<EncryptionEngine>>,
     /// Storage statistics
     stats: Arc<StorageStats>,
     /// Configuration
@@ -56,6 +60,11 @@ impl PersistentStorageManager {
         // Initialize compression engine
         let compression_engine = Arc::new(CompressionEngine::new(config.compression_level));
         
+        // Initialize encryption engine
+        let key_dir = config.data_path.join("keys");
+        let key_manager = Box::new(FileKeyManager::new(key_dir)?);
+        let encryption_engine = Arc::new(Mutex::new(EncryptionEngine::new(key_manager)));
+
         // Initialize statistics
         let stats = Arc::new(StorageStats::new());
 
@@ -64,6 +73,7 @@ impl PersistentStorageManager {
             cache,
             backup_manager,
             compression_engine,
+            encryption_engine,
             stats,
             config,
         };
@@ -89,7 +99,7 @@ impl PersistentStorageManager {
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
         // Compress data if enabled
-        let (stored_data, is_compressed) = if self.config.enable_compression {
+        let (compressed_data, is_compressed) = if self.config.enable_compression {
             let compressed = self.compression_engine.compress(&serialized)?;
             if compressed.len() < serialized.len() {
                 (compressed, true)
@@ -98,6 +108,20 @@ impl PersistentStorageManager {
             }
         } else {
             (serialized, false)
+        };
+
+        // Encrypt data if enabled
+        let (stored_data, encrypted_metadata) = if self.config.enable_encryption {
+            let mut encryption_engine = self.encryption_engine.lock().await;
+            let encrypted = encryption_engine.encrypt(&compressed_data)
+                .map_err(|e| StorageError::ConfigurationError(format!("Encryption failed: {}", e)))?;
+            
+            let metadata = serde_json::to_vec(&encrypted)
+                .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+            
+            (metadata, Some(encrypted))
+        } else {
+            (compressed_data, None)
         };
 
         // Generate content hash for deduplication
@@ -128,7 +152,7 @@ impl PersistentStorageManager {
 
         self.db_pool.store_record(&storage_record).await?;
 
-        // Update cache
+        // Update cache (store encrypted data in cache for security)
         self.cache.put(
             &format!("{}:{}", collection, key),
             stored_data.clone(),
@@ -158,10 +182,22 @@ impl PersistentStorageManager {
         if let Some((data, is_compressed)) = self.cache.get(&cache_key).await {
             self.stats.cache_hits.fetch_add(1, Ordering::Relaxed);
             
-            let decompressed = if is_compressed {
-                self.compression_engine.decompress(&data)?
+            // Decrypt cached data if encryption is enabled
+            let decrypted_data = if self.config.enable_encryption {
+                let encrypted: EncryptedData = serde_json::from_slice(&data)
+                    .map_err(|e| StorageError::DeserializationError(e.to_string()))?;
+                
+                let encryption_engine = self.encryption_engine.lock().await;
+                encryption_engine.decrypt(&encrypted)
+                    .map_err(|e| StorageError::ConfigurationError(format!("Cache decryption failed: {}", e)))?
             } else {
                 data
+            };
+            
+            let decompressed = if is_compressed {
+                self.compression_engine.decompress(&decrypted_data)?
+            } else {
+                decrypted_data
             };
 
             let result: T = serde_json::from_slice(&decompressed)
@@ -181,11 +217,24 @@ impl PersistentStorageManager {
         // Update access statistics
         self.db_pool.update_access_stats(collection, key).await?;
 
-        // Decompress if needed
-        let decompressed_data = if record.is_compressed {
-            self.compression_engine.decompress(&record.data)?
+        // Decrypt if enabled
+        let decrypted_data = if self.config.enable_encryption {
+            // Deserialize encrypted metadata
+            let encrypted: EncryptedData = serde_json::from_slice(&record.data)
+                .map_err(|e| StorageError::DeserializationError(e.to_string()))?;
+            
+            let encryption_engine = self.encryption_engine.lock().await;
+            encryption_engine.decrypt(&encrypted)
+                .map_err(|e| StorageError::ConfigurationError(format!("Decryption failed: {}", e)))?
         } else {
             record.data.clone()
+        };
+
+        // Decompress if needed
+        let decompressed_data = if record.is_compressed {
+            self.compression_engine.decompress(&decrypted_data)?
+        } else {
+            decrypted_data
         };
 
         // Deserialize
@@ -309,6 +358,38 @@ impl PersistentStorageManager {
         Ok(report)
     }
 
+    /// Rotate encryption key
+    pub async fn rotate_encryption_key(&self) -> Result<String, StorageError> {
+        if self.config.enable_encryption {
+            let mut encryption_engine = self.encryption_engine.lock().await;
+            encryption_engine.rotate_key()
+                .map_err(|e| StorageError::ConfigurationError(format!("Key rotation failed: {}", e)))
+        } else {
+            Err(StorageError::ConfigurationError("Encryption not enabled".to_string()))
+        }
+    }
+
+    /// List available encryption keys
+    pub async fn list_encryption_keys(&self) -> Vec<String> {
+        if self.config.enable_encryption {
+            let encryption_engine = self.encryption_engine.lock().await;
+            encryption_engine.list_keys()
+        } else {
+            vec![]
+        }
+    }
+
+    /// Derive encryption key from password
+    pub async fn derive_key_from_password(&self, password: &str) -> Result<String, StorageError> {
+        if self.config.enable_encryption {
+            let mut encryption_engine = self.encryption_engine.lock().await;
+            encryption_engine.derive_key_from_password(password)
+                .map_err(|e| StorageError::ConfigurationError(format!("Key derivation failed: {}", e)))
+        } else {
+            Err(StorageError::ConfigurationError("Encryption not enabled".to_string()))
+        }
+    }
+
     /// Start background maintenance tasks
     async fn start_background_tasks(&self) -> Result<(), StorageError> {
         // Statistics reporting
@@ -371,6 +452,7 @@ impl Clone for PersistentStorageManager {
             cache: Arc::clone(&self.cache),
             backup_manager: Arc::clone(&self.backup_manager),
             compression_engine: Arc::clone(&self.compression_engine),
+            encryption_engine: Arc::clone(&self.encryption_engine),
             stats: Arc::clone(&self.stats),
             config: self.config.clone(),
         }
@@ -620,13 +702,22 @@ impl DatabasePool {
 // Supporting types and implementations...
 // (Due to length limits, I'll include key types and continue in the next file)
 
+/// Database backend type
+#[derive(Debug, Clone)]
+pub enum DatabaseBackend {
+    Sqlite,
+    Postgres(PostgresConfig),
+}
+
 #[derive(Debug, Clone)]
 pub struct StorageConfig {
     pub data_path: PathBuf,
+    pub database_backend: DatabaseBackend,
     pub max_connections: usize,
     pub cache_size_mb: usize,
     pub enable_compression: bool,
     pub compression_level: CompressionLevel,
+    pub enable_encryption: bool,
     pub enable_deduplication: bool,
     pub backup_retention_days: u32,
     pub auto_backup_interval_hours: u32,
@@ -636,10 +727,12 @@ impl Default for StorageConfig {
     fn default() -> Self {
         Self {
             data_path: PathBuf::from("./data"),
+            database_backend: DatabaseBackend::Sqlite,
             max_connections: 10,
             cache_size_mb: 128,
             enable_compression: true,
             compression_level: CompressionLevel::Balanced,
+            enable_encryption: true,
             enable_deduplication: true,
             backup_retention_days: 30,
             auto_backup_interval_hours: 24,

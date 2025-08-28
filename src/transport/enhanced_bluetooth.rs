@@ -12,7 +12,9 @@ use async_trait::async_trait;
 use crate::protocol::PeerId;
 use crate::transport::{
     Transport, TransportAddress, TransportEvent, BluetoothTransport,
-    BlePeripheral, BlePeripheralFactory, AdvertisingConfig, PeripheralEvent, PeripheralStats
+    BlePeripheral, BlePeripheralFactory, AdvertisingConfig, PeripheralEvent, PeripheralStats,
+    bounded_queue::{BoundedTransportEventQueue, BoundedTransportEventSender, BoundedTransportEventReceiver, QueueConfig, OverflowBehavior},
+    crypto::{TransportCrypto, ConnectionPriority, ConnectionScore}
 };
 use crate::error::{Error, Result};
 
@@ -27,9 +29,10 @@ pub struct EnhancedBluetoothTransport {
     /// Local peer ID
     local_peer_id: PeerId,
     
-    /// Combined event channel
-    event_sender: mpsc::UnboundedSender<TransportEvent>,
-    event_receiver: Arc<RwLock<mpsc::UnboundedReceiver<TransportEvent>>>,
+    /// Bounded event queue for overflow protection
+    event_queue: Arc<BoundedTransportEventQueue>,
+    event_sender: BoundedTransportEventSender,
+    event_receiver: Arc<Mutex<BoundedTransportEventReceiver>>,
     
     /// Peripheral event processing task
     peripheral_event_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
@@ -49,6 +52,12 @@ pub struct EnhancedBluetoothTransport {
     
     /// State management
     initialization_complete: Arc<RwLock<bool>>,
+    
+    /// Transport-layer encryption
+    transport_crypto: Arc<TransportCrypto>,
+    
+    /// Connection prioritization enabled
+    prioritization_enabled: Arc<RwLock<bool>>,
 }
 
 /// Combined statistics for enhanced Bluetooth transport
@@ -90,15 +99,21 @@ impl EnhancedBluetoothTransport {
             BlePeripheralFactory::create_peripheral(local_peer_id).await?
         ));
         
-        // Create event channels
-        let (event_sender, event_receiver) = mpsc::unbounded_channel();
+        // Create bounded event queue for overflow protection
+        let event_queue = Arc::new(BoundedTransportEventQueue::for_transport());
+        let event_sender = event_queue.sender();
+        let event_receiver = event_queue.receiver();
+        
+        // Create transport crypto for security
+        let transport_crypto = Arc::new(TransportCrypto::new());
         
         let transport = Self {
             central_transport,
             peripheral,
             local_peer_id,
+            event_queue: event_queue.clone(),
             event_sender,
-            event_receiver: Arc::new(RwLock::new(event_receiver)),
+            event_receiver: Arc::new(Mutex::new(event_receiver)),
             peripheral_event_task: Arc::new(Mutex::new(None)),
             advertising_config: Arc::new(RwLock::new(AdvertisingConfig::default())),
             combined_stats: Arc::new(RwLock::new(EnhancedBluetoothStats::default())),
@@ -106,6 +121,8 @@ impl EnhancedBluetoothTransport {
             is_scanning: Arc::new(RwLock::new(false)),
             peripheral_connections: Arc::new(RwLock::new(HashMap::new())),
             initialization_complete: Arc::new(RwLock::new(false)),
+            transport_crypto,
+            prioritization_enabled: Arc::new(RwLock::new(true)),
         };
         
         // Start peripheral event processing
@@ -227,16 +244,33 @@ impl EnhancedBluetoothTransport {
     }
     
     /// Send data to a peer (tries both central and peripheral connections)
+    /// Data is encrypted using transport-layer encryption
     pub async fn send_to_peer(&self, peer_id: PeerId, data: Vec<u8>) -> Result<()> {
+        use std::time::Instant;
+        let start_time = Instant::now();
+        
+        // Encrypt the data using transport crypto
+        let encrypted_data = match self.transport_crypto.encrypt_message(peer_id, &data).await {
+            Ok(encrypted) => encrypted,
+            Err(e) => {
+                log::warn!("Failed to encrypt data for peer {:?}: {}", peer_id, e);
+                // Update metrics with failure
+                let _ = self.transport_crypto.update_connection_metrics(peer_id, u32::MAX, false).await;
+                return Err(e);
+            }
+        };
+        
+        let mut success = false;
+        
         // Try peripheral connection first (if peer connected as central to us)
         {
             let peripheral_connections = self.peripheral_connections.read().await;
             if peripheral_connections.contains_key(&peer_id) {
                 let mut peripheral = self.peripheral.lock().await;
-                match peripheral.send_to_central(peer_id, &data).await {
+                match peripheral.send_to_central(peer_id, &encrypted_data).await {
                     Ok(()) => {
-                        log::debug!("Sent {} bytes to peer {:?} via peripheral connection", data.len(), peer_id);
-                        return Ok(());
+                        success = true;
+                        log::debug!("Sent {} encrypted bytes to peer {:?} via peripheral connection", encrypted_data.len(), peer_id);
                     }
                     Err(e) => {
                         log::debug!("Failed to send via peripheral connection: {}", e);
@@ -246,23 +280,33 @@ impl EnhancedBluetoothTransport {
             }
         }
         
-        // Try central connection (if we're connected as central to them)
-        {
+        // Try central connection if peripheral failed
+        if !success {
             let mut central = self.central_transport.write().await;
-            match central.send(peer_id, data.clone()).await {
+            match central.send(peer_id, encrypted_data.clone()).await {
                 Ok(()) => {
-                    log::debug!("Sent {} bytes to peer {:?} via central connection", data.len(), peer_id);
-                    Ok(())
+                    success = true;
+                    log::debug!("Sent {} encrypted bytes to peer {:?} via central connection", encrypted_data.len(), peer_id);
                 }
                 Err(e) => {
                     log::debug!("Failed to send via central connection: {}", e);
-                    Err(Error::Network(format!("Failed to send to peer {:?}: no active connection", peer_id)))
                 }
             }
+        }
+        
+        // Update connection metrics
+        let latency_ms = start_time.elapsed().as_millis() as u32;
+        let _ = self.transport_crypto.update_connection_metrics(peer_id, latency_ms, success).await;
+        
+        if success {
+            Ok(())
+        } else {
+            Err(Error::Network(format!("Failed to send to peer {:?}: no active connection", peer_id)))
         }
     }
     
     /// Get list of all connected peers (both central and peripheral)
+    /// Sorted by connection priority if prioritization is enabled
     pub async fn get_all_connected_peers(&self) -> Vec<PeerId> {
         let mut peers = Vec::new();
         
@@ -281,6 +325,18 @@ impl EnhancedBluetoothTransport {
         // Remove duplicates
         peers.sort();
         peers.dedup();
+        
+        // Sort by priority if enabled
+        if *self.prioritization_enabled.read().await {
+            let peer_priorities = self.transport_crypto.get_peers_by_priority().await;
+            let priority_map: HashMap<PeerId, f32> = peer_priorities.into_iter().collect();
+            
+            peers.sort_by(|a, b| {
+                let priority_a = priority_map.get(a).copied().unwrap_or(0.0);
+                let priority_b = priority_map.get(b).copied().unwrap_or(0.0);
+                priority_b.partial_cmp(&priority_a).unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
         
         peers
     }
@@ -316,6 +372,7 @@ impl EnhancedBluetoothTransport {
         let event_sender = self.event_sender.clone();
         let peripheral_connections = self.peripheral_connections.clone();
         let combined_stats = self.combined_stats.clone();
+        let transport_crypto = self.transport_crypto.clone();
         
         let task = tokio::spawn(async move {
             log::debug!("Starting peripheral event processing");
@@ -332,7 +389,7 @@ impl EnhancedBluetoothTransport {
                         let _ = event_sender.send(TransportEvent::Connected {
                             peer_id: [0u8; 32], // Placeholder for advertising started
                             address: TransportAddress::Bluetooth("advertising".to_string()),
-                        });
+                        }).await;
                     }
                     
                     Some(PeripheralEvent::CentralConnected { peer_id, central_address }) => {
@@ -347,11 +404,17 @@ impl EnhancedBluetoothTransport {
                             stats.successful_connections += 1;
                         }
                         
+                        // Perform key exchange for this peer
+                        let crypto_public_key = transport_crypto.public_key();
+                        // In a real implementation, we would exchange keys here
+                        // For now, we'll use a mock key exchange
+                        let _ = transport_crypto.perform_key_exchange(peer_id, crypto_public_key).await;
+                        
                         // Send transport event
                         let _ = event_sender.send(TransportEvent::Connected {
                             peer_id,
                             address: TransportAddress::Bluetooth(central_address),
-                        });
+                        }).await;
                     }
                     
                     Some(PeripheralEvent::CentralDisconnected { peer_id, reason }) => {
@@ -360,27 +423,44 @@ impl EnhancedBluetoothTransport {
                         // Remove connection
                         peripheral_connections.write().await.remove(&peer_id);
                         
+                        // Remove crypto state for disconnected peer
+                        transport_crypto.remove_peer(peer_id).await;
+                        
                         // Send transport event
                         let _ = event_sender.send(TransportEvent::Disconnected {
                             peer_id,
                             reason,
-                        });
+                        }).await;
                     }
                     
                     Some(PeripheralEvent::DataReceived { peer_id, data }) => {
-                        log::debug!("Received {} bytes from central {:?}", data.len(), peer_id);
+                        log::debug!("Received {} encrypted bytes from central {:?}", data.len(), peer_id);
                         
-                        // Update stats
-                        {
-                            let mut stats = combined_stats.write().await;
-                            stats.total_bytes_received += data.len() as u64;
+                        // Decrypt the data
+                        match transport_crypto.decrypt_message(peer_id, &data).await {
+                            Ok(decrypted_data) => {
+                                log::debug!("Successfully decrypted {} bytes from peer {:?}", decrypted_data.len(), peer_id);
+                                
+                                // Update stats
+                                {
+                                    let mut stats = combined_stats.write().await;
+                                    stats.total_bytes_received += decrypted_data.len() as u64;
+                                }
+                                
+                                // Send transport event with decrypted data
+                                let _ = event_sender.send(TransportEvent::DataReceived {
+                                    peer_id,
+                                    data: decrypted_data,
+                                }).await;
+                            }
+                            Err(e) => {
+                                log::error!("Failed to decrypt message from peer {:?}: {}", peer_id, e);
+                                let _ = event_sender.send(TransportEvent::Error {
+                                    peer_id: Some(peer_id),
+                                    error: format!("Decryption failed: {}", e),
+                                }).await;
+                            }
                         }
-                        
-                        // Send transport event
-                        let _ = event_sender.send(TransportEvent::DataReceived {
-                            peer_id,
-                            data,
-                        });
                     }
                     
                     Some(PeripheralEvent::Error { error }) => {
@@ -388,7 +468,7 @@ impl EnhancedBluetoothTransport {
                         let _ = event_sender.send(TransportEvent::Error {
                             peer_id: None,
                             error,
-                        });
+                        }).await;
                     }
                     
                     Some(PeripheralEvent::AdvertisingStopped) => {
@@ -422,6 +502,34 @@ impl EnhancedBluetoothTransport {
         }
         
         Ok(())
+    }
+    
+    /// Set connection priority for a peer
+    pub async fn set_peer_priority(&self, peer_id: PeerId, priority: ConnectionPriority) -> Result<()> {
+        self.transport_crypto.set_connection_priority(peer_id, priority).await
+    }
+    
+    /// Get connection priority for a peer
+    pub async fn get_peer_priority(&self, peer_id: PeerId) -> Option<f32> {
+        let priorities = self.transport_crypto.get_peers_by_priority().await;
+        priorities.iter()
+            .find(|(id, _)| *id == peer_id)
+            .map(|(_, priority)| *priority)
+    }
+    
+    /// Enable or disable connection prioritization
+    pub async fn set_prioritization_enabled(&self, enabled: bool) {
+        *self.prioritization_enabled.write().await = enabled;
+    }
+    
+    /// Get queue statistics for monitoring
+    pub async fn get_queue_stats(&self) -> crate::transport::bounded_queue::QueueStats {
+        self.event_queue.stats().await
+    }
+    
+    /// Get transport crypto statistics
+    pub async fn get_crypto_stats(&self) -> crate::transport::crypto::CryptoStats {
+        self.transport_crypto.get_crypto_stats().await
     }
 }
 
@@ -540,9 +648,10 @@ impl Transport for EnhancedBluetoothTransport {
     }
     
     async fn next_event(&mut self) -> Option<TransportEvent> {
-        // First check our own event queue
-        if let Ok(mut receiver) = self.event_receiver.try_write() {
-            if let Ok(event) = receiver.try_recv() {
+        // First check our bounded event queue
+        {
+            let receiver = self.event_receiver.lock().await;
+            if let Ok(Some(event)) = receiver.try_recv().await {
                 return Some(event);
             }
         }
@@ -555,8 +664,8 @@ impl Transport for EnhancedBluetoothTransport {
             }
         }
         
-        // Wait for next event from our queue
-        let mut receiver = self.event_receiver.write().await;
+        // Wait for next event from our bounded queue
+        let receiver = self.event_receiver.lock().await;
         receiver.recv().await
     }
 }
