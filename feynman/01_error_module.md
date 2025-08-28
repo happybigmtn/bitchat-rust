@@ -591,6 +591,186 @@ Implement a circuit breaker that stops retrying after repeated failures.
 
 ---
 
+## Practical Exercises
+
+### Exercise 1: Implement Custom Error Context
+
+Create an error wrapper that adds context to errors as they bubble up:
+
+```rust
+use std::fmt;
+
+struct ContextError {
+    context: String,
+    source: Error,
+}
+
+impl ContextError {
+    fn new(context: impl Into<String>, source: Error) -> Self {
+        // TODO: Implement constructor
+    }
+    
+    fn add_context(self, context: impl Into<String>) -> Self {
+        // TODO: Add additional context layer
+    }
+}
+
+// Test your implementation:
+fn read_config() -> Result<Config> {
+    std::fs::read_to_string("config.toml")
+        .map_err(|e| Error::Io(Arc::new(e)))
+        .map_err(|e| ContextError::new("Failed to read config file", e))?;
+    // Parse config...
+}
+```
+
+### Exercise 2: Build a Retry Mechanism
+
+Implement a retry function that handles different error types appropriately:
+
+```rust
+async fn retry_with_backoff<F, T>(
+    mut operation: F,
+    max_retries: u32,
+) -> Result<T>
+where
+    F: FnMut() -> Result<T>,
+{
+    let mut attempts = 0;
+    loop {
+        match operation() {
+            Ok(value) => return Ok(value),
+            Err(e) => {
+                // TODO: Check if error is retryable
+                // TODO: Implement exponential backoff
+                // TODO: Return error after max_retries
+            }
+        }
+    }
+}
+
+// Determine which errors are retryable:
+fn is_retryable(error: &Error) -> bool {
+    match error {
+        Error::Network(_) => true,  // Network errors often transient
+        Error::Timeout(_) => true,  // Timeouts might succeed on retry
+        Error::Consensus(_) => false, // Consensus errors need intervention
+        // TODO: Complete for all error types
+    }
+}
+```
+
+### Exercise 3: Error Metrics Collection
+
+Create a system to track error frequencies for monitoring:
+
+```rust
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+struct ErrorMetrics {
+    counts: Mutex<HashMap<String, u64>>,
+}
+
+impl ErrorMetrics {
+    fn record_error(&self, error: &Error) {
+        // TODO: Categorize error and increment counter
+    }
+    
+    fn get_report(&self) -> HashMap<String, u64> {
+        // TODO: Return current error counts
+    }
+    
+    fn alert_on_threshold(&self, error_type: &str, threshold: u64) -> bool {
+        // TODO: Check if error type exceeds threshold
+    }
+}
+
+// Usage:
+static METRICS: ErrorMetrics = ErrorMetrics::new();
+
+fn handle_request() -> Result<Response> {
+    match process_request() {
+        Ok(resp) => Ok(resp),
+        Err(e) => {
+            METRICS.record_error(&e);
+            Err(e)
+        }
+    }
+}
+```
+
+### Exercise 4: Distributed Error Aggregation
+
+Design a system to aggregate errors from multiple nodes:
+
+```rust
+#[derive(Serialize, Deserialize)]
+struct NodeError {
+    node_id: String,
+    timestamp: SystemTime,
+    error: Error,
+    context: Vec<String>,
+}
+
+struct ErrorAggregator {
+    errors: Vec<NodeError>,
+}
+
+impl ErrorAggregator {
+    fn add_error(&mut self, node_error: NodeError) {
+        // TODO: Store error with deduplication
+    }
+    
+    fn find_correlated_errors(&self, time_window: Duration) -> Vec<Vec<NodeError>> {
+        // TODO: Group errors that occurred within time window
+    }
+    
+    fn diagnose_cascade(&self) -> Option<String> {
+        // TODO: Identify if errors represent a cascade failure
+        // Return root cause if found
+    }
+}
+```
+
+### Challenge: Build a Circuit Breaker
+
+Implement a circuit breaker that prevents cascading failures:
+
+```rust
+enum CircuitState {
+    Closed,     // Normal operation
+    Open,       // Failing, reject requests
+    HalfOpen,   // Testing if service recovered
+}
+
+struct CircuitBreaker {
+    state: Mutex<CircuitState>,
+    failure_count: AtomicU32,
+    last_failure_time: Mutex<Option<Instant>>,
+    config: CircuitConfig,
+}
+
+struct CircuitConfig {
+    failure_threshold: u32,
+    timeout: Duration,
+    half_open_max_requests: u32,
+}
+
+impl CircuitBreaker {
+    async fn call<F, T>(&self, operation: F) -> Result<T>
+    where
+        F: Future<Output = Result<T>>,
+    {
+        // TODO: Implement circuit breaker logic
+        // 1. Check circuit state
+        // 2. If open, return error immediately
+        // 3. If closed or half-open, try operation
+        // 4. Update state based on result
+    }
+}
+```
+
 ## Key Takeaways
 
 1. **Errors are information**, not failures
