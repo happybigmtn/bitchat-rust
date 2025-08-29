@@ -7,7 +7,6 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
-use uuid::Uuid;
 
 // Android-specific modules
 #[cfg(target_os = "android")]
@@ -30,10 +29,10 @@ pub mod network_optimizer;
 // Legacy mobile platform modules
 mod uniffi_impl;
 mod ffi;
-mod power_management;
+pub mod power_management;
 mod platform_config;
 mod jni_bindings;
-mod battery_optimization;
+pub mod battery_optimization;
 mod platform_adaptations;
 mod secure_storage;
 mod android_keystore;
@@ -261,6 +260,10 @@ pub enum BitCrapsError {
     Timeout,
     #[error("Item not found: {item}")]
     NotFound { item: String },
+    #[error("Game logic error: {reason}")]
+    GameLogic { reason: String },
+    #[error("Consensus error: {reason}")]
+    ConsensusError { reason: String },
 }
 
 impl Default for BitCrapsConfig {

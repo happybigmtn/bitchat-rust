@@ -1,0 +1,495 @@
+name: Monitoring & Health Checks
+
+on:
+  schedule:
+    # Run health checks every 15 minutes
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to check'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - staging
+          - production
+      alert_threshold:
+        description: 'Alert threshold (failures before alerting)'
+        required: false
+        default: '3'
+      deep_check:
+        description: 'Perform deep health checks'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  ALERT_THRESHOLD: ${{ github.event.inputs.alert_threshold || '3' }}
+
+jobs:
+  # Staging environment health check
+  staging-health-check:
+    name: Staging Health Check
+    runs-on: ubuntu-latest
+    if: github.event.inputs.environment == 'all' || github.event.inputs.environment == 'staging' || github.event.inputs.environment == ''
+    environment: staging
+    
+    steps:
+    - name: Configure kubectl for staging
+      env:
+        KUBE_CONFIG_STAGING: ${{ secrets.KUBE_CONFIG_STAGING }}
+      run: |
+        mkdir -p $HOME/.kube
+        echo "$KUBE_CONFIG_STAGING" | base64 -d > $HOME/.kube/config
+        kubectl config current-context
+    
+    - name: Check staging deployment status
+      id: deployment-check
+      run: |
+        echo "Checking staging deployment health..."
+        
+        # Check if deployment exists and is ready
+        if kubectl get deployment bitcraps-staging -n staging >/dev/null 2>&1; then
+          READY_REPLICAS=$(kubectl get deployment bitcraps-staging -n staging -o jsonpath='{.status.readyReplicas}')
+          DESIRED_REPLICAS=$(kubectl get deployment bitcraps-staging -n staging -o jsonpath='{.spec.replicas}')
+          
+          echo "ready_replicas=$READY_REPLICAS" >> $GITHUB_OUTPUT
+          echo "desired_replicas=$DESIRED_REPLICAS" >> $GITHUB_OUTPUT
+          
+          if [ "$READY_REPLICAS" = "$DESIRED_REPLICAS" ] && [ "$READY_REPLICAS" -gt 0 ]; then
+            echo "status=healthy" >> $GITHUB_OUTPUT
+            echo "✅ Staging deployment is healthy ($READY_REPLICAS/$DESIRED_REPLICAS replicas ready)"
+          else
+            echo "status=unhealthy" >> $GITHUB_OUTPUT
+            echo "❌ Staging deployment is unhealthy ($READY_REPLICAS/$DESIRED_REPLICAS replicas ready)"
+          fi
+        else
+          echo "status=missing" >> $GITHUB_OUTPUT
+          echo "❌ Staging deployment not found"
+        fi
+    
+    - name: Application health check
+      id: app-health
+      run: |
+        echo "Performing application health checks..."
+        
+        # Basic health endpoint check
+        HEALTH_STATUS="unknown"
+        for i in {1..5}; do
+          if kubectl exec -n staging deployment/bitcraps-staging -- /usr/local/bin/bitcraps health >/dev/null 2>&1; then
+            HEALTH_STATUS="healthy"
+            echo "✅ Health check $i/5 passed"
+            break
+          else
+            echo "❌ Health check $i/5 failed, retrying in 10s..."
+            sleep 10
+          fi
+        done
+        
+        echo "health_status=$HEALTH_STATUS" >> $GITHUB_OUTPUT
+        
+        if [ "$HEALTH_STATUS" = "healthy" ]; then
+          echo "✅ Application health checks passed"
+        else
+          echo "❌ Application health checks failed"
+        fi
+    
+    - name: Deep health checks
+      if: github.event.inputs.deep_check == 'true'
+      run: |
+        echo "Performing deep health checks..."
+        
+        # Check resource usage
+        kubectl top pods -n staging --containers=true || echo "Metrics not available"
+        
+        # Check logs for errors
+        kubectl logs -n staging deployment/bitcraps-staging --tail=100 | grep -i "error\|panic\|fatal" || echo "No errors found in recent logs"
+        
+        # Check service endpoints
+        kubectl get endpoints -n staging
+        
+        # Performance check
+        echo "Running performance check..."
+        for i in {1..10}; do
+          kubectl exec -n staging deployment/bitcraps-staging -- /usr/local/bin/bitcraps --version &
+        done
+        wait
+        echo "✅ Performance check completed"
+    
+    - name: Record staging health status
+      run: |
+        echo "STAGING_STATUS=${{ steps.deployment-check.outputs.status }}" >> $GITHUB_ENV
+        echo "STAGING_APP_HEALTH=${{ steps.app-health.outputs.health_status }}" >> $GITHUB_ENV
+
+  # Production environment health check
+  production-health-check:
+    name: Production Health Check
+    runs-on: ubuntu-latest
+    if: github.event.inputs.environment == 'all' || github.event.inputs.environment == 'production' || github.event.inputs.environment == ''
+    environment: production
+    
+    steps:
+    - name: Configure kubectl for production
+      env:
+        KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+      run: |
+        mkdir -p $HOME/.kube
+        echo "$KUBE_CONFIG" | base64 -d > $HOME/.kube/config
+        kubectl config current-context
+    
+    - name: Check production deployment status
+      id: deployment-check
+      run: |
+        echo "Checking production deployment health..."
+        
+        # Check if deployment exists and is ready
+        if kubectl get deployment bitcraps -n production >/dev/null 2>&1; then
+          READY_REPLICAS=$(kubectl get deployment bitcraps -n production -o jsonpath='{.status.readyReplicas}')
+          DESIRED_REPLICAS=$(kubectl get deployment bitcraps -n production -o jsonpath='{.spec.replicas}')
+          
+          echo "ready_replicas=$READY_REPLICAS" >> $GITHUB_OUTPUT
+          echo "desired_replicas=$DESIRED_REPLICAS" >> $GITHUB_OUTPUT
+          
+          if [ "$READY_REPLICAS" = "$DESIRED_REPLICAS" ] && [ "$READY_REPLICAS" -gt 0 ]; then
+            echo "status=healthy" >> $GITHUB_OUTPUT
+            echo "✅ Production deployment is healthy ($READY_REPLICAS/$DESIRED_REPLICAS replicas ready)"
+          else
+            echo "status=unhealthy" >> $GITHUB_OUTPUT
+            echo "❌ Production deployment is unhealthy ($READY_REPLICAS/$DESIRED_REPLICAS replicas ready)"
+          fi
+        else
+          echo "status=missing" >> $GITHUB_OUTPUT
+          echo "❌ Production deployment not found"
+        fi
+    
+    - name: Application health check
+      id: app-health
+      run: |
+        echo "Performing application health checks..."
+        
+        # Basic health endpoint check
+        HEALTH_STATUS="unknown"
+        for i in {1..5}; do
+          if kubectl exec -n production deployment/bitcraps -- /usr/local/bin/bitcraps health >/dev/null 2>&1; then
+            HEALTH_STATUS="healthy"
+            echo "✅ Health check $i/5 passed"
+            break
+          else
+            echo "❌ Health check $i/5 failed, retrying in 10s..."
+            sleep 10
+          fi
+        done
+        
+        echo "health_status=$HEALTH_STATUS" >> $GITHUB_OUTPUT
+        
+        if [ "$HEALTH_STATUS" = "healthy" ]; then
+          echo "✅ Application health checks passed"
+        else
+          echo "❌ Application health checks failed"
+        fi
+    
+    - name: Production-specific checks
+      run: |
+        echo "Performing production-specific checks..."
+        
+        # Check autoscaling status
+        if kubectl get hpa bitcraps -n production >/dev/null 2>&1; then
+          kubectl describe hpa bitcraps -n production
+          echo "✅ HPA configuration found"
+        else
+          echo "⚠️ No HPA configuration found"
+        fi
+        
+        # Check persistent volumes
+        kubectl get pv | grep production || echo "No production PVs found"
+        
+        # Check network policies
+        kubectl get networkpolicies -n production || echo "No network policies found"
+        
+        # Check resource quotas
+        kubectl describe quota -n production || echo "No resource quotas found"
+    
+    - name: Deep health checks
+      if: github.event.inputs.deep_check == 'true'
+      run: |
+        echo "Performing deep health checks..."
+        
+        # Check resource usage
+        kubectl top pods -n production --containers=true || echo "Metrics not available"
+        
+        # Check logs for errors
+        kubectl logs -n production deployment/bitcraps --tail=100 | grep -i "error\|panic\|fatal" || echo "No errors found in recent logs"
+        
+        # Check service endpoints
+        kubectl get endpoints -n production
+        
+        # Load balancer check
+        LB_IP=$(kubectl get service bitcraps -n production -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+        if [ -n "$LB_IP" ]; then
+          echo "✅ Load balancer IP: $LB_IP"
+        else
+          echo "⚠️ No load balancer IP found"
+        fi
+        
+        # Database connectivity (if applicable)
+        kubectl exec -n production deployment/bitcraps -- /usr/local/bin/bitcraps --version >/dev/null 2>&1 && echo "✅ Database connectivity OK" || echo "❌ Database connectivity issues"
+    
+    - name: Record production health status
+      run: |
+        echo "PRODUCTION_STATUS=${{ steps.deployment-check.outputs.status }}" >> $GITHUB_ENV
+        echo "PRODUCTION_APP_HEALTH=${{ steps.app-health.outputs.health_status }}" >> $GITHUB_ENV
+
+  # External monitoring checks
+  external-monitoring:
+    name: External Monitoring
+    runs-on: ubuntu-latest
+    if: github.event.inputs.environment == 'all' || github.event.inputs.environment == ''
+    
+    steps:
+    - name: Check external dependencies
+      run: |
+        echo "Checking external service dependencies..."
+        
+        # Check critical external services
+        SERVICES=(
+          "https://api.github.com"
+          "https://crates.io"
+          "https://docs.rs"
+        )
+        
+        for service in "${SERVICES[@]}"; do
+          if curl -s -o /dev/null -w "%{http_code}" "$service" | grep -q "200"; then
+            echo "✅ $service is accessible"
+          else
+            echo "❌ $service is not accessible"
+          fi
+        done
+    
+    - name: DNS resolution check
+      run: |
+        echo "Checking DNS resolution..."
+        
+        DOMAINS=(
+          "github.com"
+          "crates.io"
+          "bitcraps.example.com"
+        )
+        
+        for domain in "${DOMAINS[@]}"; do
+          if nslookup "$domain" >/dev/null 2>&1; then
+            echo "✅ $domain resolves correctly"
+          else
+            echo "❌ $domain DNS resolution failed"
+          fi
+        done
+    
+    - name: SSL certificate check
+      run: |
+        echo "Checking SSL certificates..."
+        
+        # Check certificate expiry for critical domains
+        DOMAINS=(
+          "github.com:443"
+          "crates.io:443"
+        )
+        
+        for domain in "${DOMAINS[@]}"; do
+          EXPIRY=$(echo | openssl s_client -servername "${domain%:*}" -connect "$domain" 2>/dev/null | openssl x509 -noout -dates | grep notAfter | cut -d= -f2)
+          if [ -n "$EXPIRY" ]; then
+            EXPIRY_EPOCH=$(date -d "$EXPIRY" +%s)
+            NOW_EPOCH=$(date +%s)
+            DAYS_LEFT=$(( (EXPIRY_EPOCH - NOW_EPOCH) / 86400 ))
+            
+            if [ $DAYS_LEFT -gt 30 ]; then
+              echo "✅ ${domain%:*} certificate valid for $DAYS_LEFT days"
+            else
+              echo "⚠️ ${domain%:*} certificate expires in $DAYS_LEFT days"
+            fi
+          else
+            echo "❌ Could not check certificate for ${domain%:*}"
+          fi
+        done
+
+  # Alert and notification
+  health-summary:
+    name: Health Summary & Alerts
+    needs: [staging-health-check, production-health-check, external-monitoring]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Evaluate overall health
+      id: health-eval
+      run: |
+        # Determine overall health status
+        STAGING_STATUS="${{ needs.staging-health-check.result }}"
+        PRODUCTION_STATUS="${{ needs.production-health-check.result }}"
+        EXTERNAL_STATUS="${{ needs.external-monitoring.result }}"
+        
+        OVERALL_STATUS="healthy"
+        ALERT_REQUIRED="false"
+        
+        # Check for failures
+        if [ "$STAGING_STATUS" = "failure" ]; then
+          OVERALL_STATUS="degraded"
+          ALERT_REQUIRED="true"
+          echo "❌ Staging environment issues detected"
+        fi
+        
+        if [ "$PRODUCTION_STATUS" = "failure" ]; then
+          OVERALL_STATUS="critical"
+          ALERT_REQUIRED="true"
+          echo "🔥 Production environment issues detected"
+        fi
+        
+        if [ "$EXTERNAL_STATUS" = "failure" ]; then
+          OVERALL_STATUS="degraded"
+          echo "⚠️ External dependency issues detected"
+        fi
+        
+        echo "overall_status=$OVERALL_STATUS" >> $GITHUB_OUTPUT
+        echo "alert_required=$ALERT_REQUIRED" >> $GITHUB_OUTPUT
+        
+        echo "## 🏥 Health Check Summary" >> $GITHUB_STEP_SUMMARY
+        echo "**Overall Status:** $OVERALL_STATUS" >> $GITHUB_STEP_SUMMARY
+        echo "- Staging: $STAGING_STATUS" >> $GITHUB_STEP_SUMMARY
+        echo "- Production: $PRODUCTION_STATUS" >> $GITHUB_STEP_SUMMARY
+        echo "- External: $EXTERNAL_STATUS" >> $GITHUB_STEP_SUMMARY
+    
+    - name: Send alerts (if needed)
+      if: steps.health-eval.outputs.alert_required == 'true'
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        PAGERDUTY_ROUTING_KEY: ${{ secrets.PAGERDUTY_ROUTING_KEY }}
+      run: |
+        SEVERITY="warning"
+        if [ "${{ steps.health-eval.outputs.overall_status }}" = "critical" ]; then
+          SEVERITY="error"
+        fi
+        
+        # Slack notification
+        if [ -n "$SLACK_WEBHOOK" ]; then
+          curl -X POST "$SLACK_WEBHOOK" \
+            -H 'Content-Type: application/json' \
+            -d "{
+              \"text\": \"🚨 BitCraps Health Alert - ${{ steps.health-eval.outputs.overall_status }}\",
+              \"attachments\": [
+                {
+                  \"color\": \"$([ "$SEVERITY" = "error" ] && echo "danger" || echo "warning")\",
+                  \"blocks\": [
+                    {
+                      \"type\": \"header\",
+                      \"text\": {
+                        \"type\": \"plain_text\",
+                        \"text\": \"🏥 Health Check Alert\"
+                      }
+                    },
+                    {
+                      \"type\": \"section\",
+                      \"fields\": [
+                        {
+                          \"type\": \"mrkdwn\",
+                          \"text\": \"*Status:* ${{ steps.health-eval.outputs.overall_status }}\"
+                        },
+                        {
+                          \"type\": \"mrkdwn\",
+                          \"text\": \"*Time:* $(date)\"
+                        },
+                        {
+                          \"type\": \"mrkdwn\",
+                          \"text\": \"*Staging:* ${{ needs.staging-health-check.result }}\"
+                        },
+                        {
+                          \"type\": \"mrkdwn\",
+                          \"text\": \"*Production:* ${{ needs.production-health-check.result }}\"
+                        }
+                      ]
+                    },
+                    {
+                      \"type\": \"actions\",
+                      \"elements\": [
+                        {
+                          \"type\": \"button\",
+                          \"text\": {
+                            \"type\": \"plain_text\",
+                            \"text\": \"View Details\"
+                          },
+                          \"url\": \"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }"
+        fi
+        
+        # PagerDuty alert for critical issues
+        if [ "$SEVERITY" = "error" ] && [ -n "$PAGERDUTY_ROUTING_KEY" ]; then
+          curl -X POST 'https://events.pagerduty.com/v2/enqueue' \
+            -H 'Content-Type: application/json' \
+            -d "{
+              \"routing_key\": \"$PAGERDUTY_ROUTING_KEY\",
+              \"event_action\": \"trigger\",
+              \"dedup_key\": \"bitcraps-health-check-${{ github.run_id }}\",
+              \"payload\": {
+                \"summary\": \"BitCraps Production Health Check Failed\",
+                \"severity\": \"critical\",
+                \"source\": \"github-actions\",
+                \"component\": \"bitcraps-production\",
+                \"custom_details\": {
+                  \"status\": \"${{ steps.health-eval.outputs.overall_status }}\",
+                  \"staging\": \"${{ needs.staging-health-check.result }}\",
+                  \"production\": \"${{ needs.production-health-check.result }}\",
+                  \"workflow_url\": \"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+                }
+              }
+            }"
+        fi
+    
+    - name: Create health report
+      run: |
+        cat > HEALTH_REPORT.md << EOF
+# 🏥 BitCraps Health Report
+        
+**Generated:** $(date)
+**Overall Status:** ${{ steps.health-eval.outputs.overall_status }}
+
+## Environment Status
+- **Staging:** ${{ needs.staging-health-check.result }}
+- **Production:** ${{ needs.production-health-check.result }}
+- **External Dependencies:** ${{ needs.external-monitoring.result }}
+
+## Next Steps
+EOF
+        
+        if [ "${{ steps.health-eval.outputs.overall_status }}" != "healthy" ]; then
+          cat >> HEALTH_REPORT.md << EOF
+
+### Immediate Actions Required
+1. Check failed environment logs
+2. Verify resource availability
+3. Review recent deployments
+4. Check external service status
+5. Contact on-call engineer if critical
+
+### Runbook Links
+- [Incident Response](https://github.com/${{ github.repository }}/wiki/Incident-Response)
+- [Health Check Procedures](https://github.com/${{ github.repository }}/wiki/Health-Checks)
+- [Rollback Procedures](https://github.com/${{ github.repository }}/wiki/Rollback)
+EOF
+        else
+          cat >> HEALTH_REPORT.md << EOF
+
+All systems operational. No action required.
+EOF
+        fi
+    
+    - name: Upload health report
+      uses: actions/upload-artifact@v4
+      with:
+        name: health-report-${{ github.run_number }}
+        path: HEALTH_REPORT.md
+        retention-days: 30

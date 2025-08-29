@@ -1,0 +1,243 @@
+# BitCraps Performance Optimization Configuration
+# This configuration file controls all performance optimization settings
+
+[cpu]
+# CPU optimization settings
+enable_simd = true
+target_cpu_usage = 70.0  # Target CPU usage percentage (0-100)
+thermal_throttle_threshold = 45.0  # Temperature in Celsius to start throttling
+emergency_throttle_threshold = 55.0  # Temperature for emergency throttling
+
+# Thread pool configuration
+game_thread_ratio = 0.5  # Fraction of CPU cores for game processing
+network_thread_ratio = 0.25  # Fraction of CPU cores for network processing
+io_thread_ratio = 0.25  # Fraction of CPU cores for I/O operations
+
+# SIMD feature preferences (auto-detected if not specified)
+prefer_avx2 = true
+prefer_avx512 = false  # May cause throttling on some CPUs
+prefer_aes_ni = true
+
+[memory]
+# Memory optimization settings
+enable_memory_pooling = true
+pool_sizes = [1024, 8192, 65536]  # Buffer pool sizes in bytes
+max_pool_capacity = 1000  # Maximum buffers per pool
+
+# Garbage collection settings
+gc_aggressive_cleanup = false
+gc_cleanup_interval_seconds = 30
+gc_memory_pressure_threshold = 0.80  # Trigger cleanup at 80% memory usage
+
+# Cache settings
+enable_lru_cache = true
+cache_size_mb = 256
+cache_ttl_seconds = 300
+
+# Memory mapping for large files
+enable_mmap = true
+mmap_threshold_mb = 10  # Use mmap for files larger than 10MB
+
+[network]
+# Network optimization settings
+enable_compression = true
+compression_threshold_bytes = 1024  # Compress messages larger than 1KB
+preferred_compression = "lz4"  # Options: "lz4", "zstd", "brotli"
+
+# Batching configuration
+enable_message_batching = true
+max_batch_size = 10
+max_batch_delay_ms = 50
+
+# Connection management
+max_connections = 100
+connection_timeout_seconds = 30
+enable_connection_pooling = true
+
+# Rate limiting
+enable_rate_limiting = true
+max_requests_per_second = 100
+
+# Quality adaptation
+enable_adaptive_quality = true
+latency_threshold_ms = 200
+packet_loss_threshold = 0.05
+
+[database]
+# Database optimization settings
+enable_query_caching = true
+cache_size_entries = 1000
+cache_ttl_read_seconds = 300
+cache_ttl_write_seconds = 60
+
+# Transaction batching
+enable_transaction_batching = true
+batch_size = 100
+batch_timeout_ms = 100
+
+# Connection pooling
+max_db_connections = 20
+connection_timeout_seconds = 30
+
+# Query optimization
+enable_prepared_statements = true
+slow_query_threshold_ms = 1000
+enable_query_logging = true
+
+# Index suggestions
+enable_auto_index_analysis = true
+min_query_count_for_index = 100
+
+[mobile]
+# Mobile-specific optimizations
+enable_battery_optimization = true
+enable_thermal_management = true
+enable_memory_pressure_handling = true
+
+# Battery thresholds
+critical_battery_threshold = 0.15  # 15%
+low_battery_threshold = 0.30  # 30%
+
+# Thermal thresholds (Celsius)
+thermal_warning_threshold = 45.0
+thermal_critical_threshold = 55.0
+
+# Memory pressure thresholds
+memory_warning_threshold = 0.80  # 80%
+memory_critical_threshold = 0.90  # 90%
+
+# Background task management
+background_task_limit = 3
+enable_background_throttling = true
+
+# Power profiles
+enable_power_profiles = true
+default_profile = "balanced"  # Options: "performance", "balanced", "power_saver"
+
+# BLE optimization
+enable_ble_optimization = true
+reduce_advertising_on_low_battery = true
+adaptive_scan_interval = true
+
+[profiling]
+# Performance profiling settings
+enable_profiling = false  # Disable in production
+profiling_overhead_budget_percent = 2.0  # Maximum overhead allowed
+
+# CPU profiling
+cpu_sample_interval_ms = 100
+enable_hotspot_detection = true
+hotspot_threshold_ms = 10
+
+# Memory profiling
+memory_sample_interval_ms = 250
+enable_allocation_tracking = false  # High overhead, use sparingly
+enable_leak_detection = true
+leak_detection_threshold_minutes = 5
+
+# Network profiling
+enable_network_profiling = true
+network_sample_interval_ms = 500
+
+# Mobile profiling
+enable_mobile_profiling = true
+mobile_sample_interval_ms = 1000
+
+[benchmarking]
+# Benchmarking configuration
+enable_benchmarks = false  # Only for development/testing
+benchmark_duration_seconds = 10
+benchmark_warmup_seconds = 2
+
+# Benchmark categories
+enable_cpu_benchmarks = true
+enable_memory_benchmarks = true
+enable_network_benchmarks = true
+enable_database_benchmarks = true
+enable_integration_benchmarks = true
+
+# Results
+save_benchmark_results = true
+benchmark_results_path = "./benchmark_results"
+
+[adaptive_optimization]
+# Adaptive optimization system
+enable_adaptive_optimization = true
+adaptation_interval_seconds = 60
+adaptation_sensitivity = 0.1  # How aggressively to adapt (0.0-1.0)
+
+# Performance targets
+target_cpu_usage = 70.0
+target_memory_usage = 80.0
+target_network_latency_ms = 100.0
+target_battery_life_hours = 8.0
+
+# Adaptation thresholds
+cpu_adaptation_threshold = 5.0  # Adapt if off target by 5%
+memory_adaptation_threshold = 10.0
+latency_adaptation_threshold = 50.0  # milliseconds
+battery_adaptation_threshold = 0.5  # hours
+
+# Learning system
+enable_machine_learning = false  # Experimental
+learning_rate = 0.01
+training_data_retention_days = 7
+
+[platform_specific]
+# Android-specific optimizations
+[platform_specific.android]
+enable_doze_optimization = true
+enable_app_standby_optimization = true
+target_api_level = 31
+enable_background_processing_limits = true
+
+# iOS-specific optimizations
+[platform_specific.ios]
+enable_background_app_refresh_optimization = true
+enable_low_power_mode_detection = true
+background_execution_time_limit_seconds = 30
+
+# Desktop-specific optimizations
+[platform_specific.desktop]
+enable_multi_core_optimization = true
+enable_hardware_acceleration = true
+prefer_dedicated_threads = true
+
+[monitoring]
+# Performance monitoring and alerting
+enable_monitoring = true
+monitoring_interval_seconds = 30
+
+# Alert thresholds
+cpu_alert_threshold = 90.0
+memory_alert_threshold = 95.0
+network_latency_alert_threshold_ms = 1000
+battery_drain_alert_threshold_percent_per_hour = 10.0
+
+# Metrics collection
+enable_metrics_collection = true
+metrics_retention_hours = 24
+enable_metrics_export = false
+metrics_export_endpoint = "http://localhost:9090/metrics"
+
+# Health checks
+enable_health_checks = true
+health_check_interval_seconds = 60
+health_check_timeout_seconds = 10
+
+[experimental]
+# Experimental optimizations (use with caution)
+enable_experimental_features = false
+
+# Lock-free data structures
+enable_lockfree_optimization = false
+lockfree_queue_size = 1024
+
+# Predictive optimization
+enable_predictive_optimization = false
+prediction_window_minutes = 10
+
+# Auto-scaling
+enable_auto_scaling = false
+scale_up_threshold = 0.8
+scale_down_threshold = 0.3

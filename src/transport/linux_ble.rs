@@ -5,14 +5,15 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock, Mutex};
 use uuid::Uuid;
 
 use crate::protocol::PeerId;
 use crate::error::{Error, Result};
 use crate::transport::ble_peripheral::{
-    BlePeripheral, AdvertisingConfig, PeripheralEvent, PeripheralStats, BITCRAPS_SERVICE_UUID
+    BlePeripheral, AdvertisingConfig, PeripheralEvent, PeripheralStats, BITCRAPS_SERVICE_UUID,
+    RecoveryConfig, ConnectionState
 };
 
 /// BlueZ D-Bus interface constants
@@ -736,6 +737,82 @@ impl BlePeripheral for LinuxBlePeripheral {
         if was_advertising {
             self.start_advertising(config).await?;
         }
+        
+        Ok(())
+    }
+    
+    async fn set_recovery_config(&mut self, _config: RecoveryConfig) -> Result<()> {
+        // TODO: Store recovery configuration
+        Ok(())
+    }
+    
+    async fn recover(&mut self) -> Result<()> {
+        log::warn!("Attempting Linux BLE recovery");
+        
+        // Stop advertising and unregister services
+        self.stop_advertising().await?;
+        
+        // Reset D-Bus registrations
+        *self.application_registered.write().await = false;
+        *self.advertisement_registered.write().await = false;
+        
+        // Wait before attempting recovery
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+        
+        // Reinitialize BlueZ connection
+        self.initialize_bluez().await?;
+        
+        // Restart with current config
+        let config = self.config.read().await.clone();
+        self.start_advertising(&config).await
+    }
+    
+    async fn get_connection_state(&self, peer_id: PeerId) -> Option<ConnectionState> {
+        self.connected_centrals.read().await
+            .get(&peer_id)
+            .map(|_| ConnectionState::Connected)
+    }
+    
+    async fn force_reconnect(&mut self, peer_id: PeerId) -> Result<()> {
+        // Disconnect and attempt reconnection
+        self.disconnect_central(peer_id).await?;
+        Ok(())
+    }
+    
+    async fn health_check(&self) -> Result<bool> {
+        // Check if D-Bus connection is healthy
+        if let Some(dbus) = &self.dbus_connection {
+            // Try to get adapter state to verify connection
+            match dbus.get_property(
+                bluez_constants::BLUEZ_SERVICE,
+                &self.adapter_path,
+                bluez_constants::ADAPTER_INTERFACE,
+                "Powered",
+            ).await {
+                Ok(_) => Ok(true),
+                Err(_) => Ok(false),
+            }
+        } else {
+            Ok(false)
+        }
+    }
+    
+    async fn reset(&mut self) -> Result<()> {
+        log::info!("Resetting Linux BLE peripheral");
+        
+        // Stop advertising and clear all connections
+        self.stop_advertising().await?;
+        self.connected_centrals.write().await.clear();
+        
+        // Reset all D-Bus registrations
+        *self.application_registered.write().await = false;
+        *self.advertisement_registered.write().await = false;
+        
+        // Reset statistics
+        *self.stats.write().await = PeripheralStats::default();
+        
+        // Clear characteristic data
+        self.service_characteristics.write().await.clear();
         
         Ok(())
     }

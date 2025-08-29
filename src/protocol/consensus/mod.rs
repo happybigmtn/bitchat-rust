@@ -58,6 +58,9 @@ pub struct ConsensusConfig {
     pub fork_resolution_timeout: Duration,
     pub require_unanimous_bets: bool,
     pub enable_fork_recovery: bool,
+    pub max_round_time: Duration,
+    pub vote_timeout: Duration,
+    pub max_forks: usize,
 }
 
 impl Default for ConsensusConfig {
@@ -70,6 +73,9 @@ impl Default for ConsensusConfig {
             fork_resolution_timeout: FORK_RESOLUTION_TIMEOUT,
             require_unanimous_bets: true,
             enable_fork_recovery: true,
+            max_round_time: CONSENSUS_TIMEOUT,
+            vote_timeout: Duration::from_secs(5),
+            max_forks: 3,
         }
     }
 }

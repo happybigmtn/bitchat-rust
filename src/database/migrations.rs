@@ -3,6 +3,7 @@
 use rusqlite::Connection;
 use std::collections::HashMap;
 use chrono::Utc;
+use sha2::{Sha256, Digest};
 use crate::error::{Error, Result};
 
 /// Migration manager for database schema versioning
@@ -41,7 +42,6 @@ impl Migration {
     }
 
     fn calculate_checksum(sql: &str) -> String {
-        use sha2::{Sha256, Digest};
         let mut hasher = Sha256::new();
         hasher.update(sql.as_bytes());
         format!("{:x}", hasher.finalize())

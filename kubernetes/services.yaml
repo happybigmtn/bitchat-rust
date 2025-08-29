@@ -1,0 +1,156 @@
+# BitCraps Core Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitcraps-core-service
+  namespace: bitcraps-production
+  labels:
+    app: bitcraps
+    component: core
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    app: bitcraps
+    component: core
+  ports:
+  - name: p2p
+    port: 8334
+    targetPort: 8334
+    protocol: TCP
+  - name: health
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 300
+
+---
+# BitCraps Core Headless Service (for StatefulSet if needed)
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitcraps-core-headless
+  namespace: bitcraps-production
+  labels:
+    app: bitcraps
+    component: core
+spec:
+  clusterIP: None
+  selector:
+    app: bitcraps
+    component: core
+  ports:
+  - name: p2p
+    port: 8334
+    targetPort: 8334
+    protocol: TCP
+
+---
+# BitCraps Gateway Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitcraps-gateway-service
+  namespace: bitcraps-production
+  labels:
+    app: bitcraps
+    component: gateway
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+spec:
+  type: LoadBalancer
+  selector:
+    app: bitcraps
+    component: gateway
+  ports:
+  - name: gateway
+    port: 8335
+    targetPort: 8335
+    protocol: TCP
+  - name: health
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+
+---
+# BitCraps TURN Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitcraps-turn-service
+  namespace: bitcraps-production
+  labels:
+    app: bitcraps
+    component: turn
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+spec:
+  type: LoadBalancer
+  selector:
+    app: bitcraps
+    component: turn
+  ports:
+  - name: turn-tcp
+    port: 3478
+    targetPort: 3478
+    protocol: TCP
+  - name: turn-udp
+    port: 3478
+    targetPort: 3478
+    protocol: UDP
+  - name: turns-tcp
+    port: 5349
+    targetPort: 5349
+    protocol: TCP
+  - name: turns-udp
+    port: 5349
+    targetPort: 5349
+    protocol: UDP
+
+---
+# BitCraps Metrics Service (for Prometheus)
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitcraps-metrics
+  namespace: bitcraps-production
+  labels:
+    app: bitcraps
+    service: metrics
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9091"
+    prometheus.io/path: "/metrics"
+spec:
+  selector:
+    app: bitcraps
+  ports:
+  - name: metrics
+    port: 9091
+    targetPort: 9091
+    protocol: TCP
+  type: ClusterIP
+
+---
+# PostgreSQL Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: bitcraps-production
+  labels:
+    app: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+    protocol: TCP
+  type: ClusterIP

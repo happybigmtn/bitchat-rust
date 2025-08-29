@@ -40,6 +40,11 @@ pub mod persistence;  // Data persistence layer
 pub mod cache;        // Multi-tier caching system
 pub mod mobile;       // Mobile platform bindings and UniFFI interface
 pub mod performance;  // Performance benchmarking and analysis
+pub mod profiling;    // Performance profiling and analysis
+pub mod economics;    // Advanced token economics and supply management
+pub mod treasury;     // Treasury management and automated market making
+pub mod contracts;    // Smart contract integration and cross-chain bridges
+pub mod app;          // Main application coordinator
 
 // UniFFI type tag (required by generated code)
 #[cfg(feature = "uniffi")]
@@ -89,6 +94,18 @@ pub use monitoring::{
     NetworkDashboard, NetworkMetrics, HealthCheck,
 };
 pub use persistence::PersistenceManager;
+pub use economics::{
+    TokenEconomics, EconomicsConfig, AdvancedStakingPosition, EconomicsStats,
+};
+pub use app::{
+    BitCrapsApp, ApplicationConfig,
+};
+pub use treasury::{
+    TreasuryManager, TreasuryConfig, TreasuryWallet, AutomatedMarketMaker, TreasuryStats,
+};
+pub use contracts::{
+    ContractManager, BlockchainNetwork, TokenContract, StakingContract, BridgeContract,
+};
 
 /// Application configuration
 #[derive(Debug, Clone)]

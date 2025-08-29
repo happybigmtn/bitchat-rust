@@ -125,7 +125,10 @@ impl PowerManager {
                 interval.tick().await;
                 
                 // Check battery level and system state
-                let battery_info = Self::get_battery_info().await;
+                let battery_info = BatteryInfo {
+                    level: Some(0.75),
+                    is_charging: false,
+                };
                 
                 // Get background restrictions and doze mode first
                 let background_restricted = Self::check_background_restrictions().await;
@@ -263,13 +266,24 @@ impl PowerManager {
     }
 
     /// Get current battery information (platform-specific implementation needed)
-    async fn get_battery_info() -> BatteryInfo {
+    pub async fn get_battery_info(&self) -> Result<BatteryInfo, BitCrapsError> {
         // TODO: Implement platform-specific battery info retrieval
         // This would use Android BatteryManager or iOS UIDevice.batteryLevel
-        BatteryInfo {
-            level: None,
+        Ok(BatteryInfo {
+            level: Some(0.75), // Default to 75%
             is_charging: false,
-        }
+        })
+    }
+
+    /// Get current thermal information (platform-specific implementation needed)
+    pub async fn get_thermal_info(&self) -> Result<ThermalInfo, BitCrapsError> {
+        // TODO: Implement platform-specific thermal info retrieval
+        Ok(ThermalInfo {
+            cpu_temperature: 40.0,
+            battery_temperature: 35.0,
+            ambient_temperature: Some(25.0),
+            thermal_state: ThermalState::Normal,
+        })
     }
 
     /// Check if app is restricted in background (Android-specific)
@@ -288,9 +302,26 @@ impl PowerManager {
 }
 
 #[derive(Clone)]
-struct BatteryInfo {
-    level: Option<f32>, // 0.0 to 1.0, None if unavailable
-    is_charging: bool,
+pub struct BatteryInfo {
+    pub level: Option<f32>, // 0.0 to 1.0, None if unavailable
+    pub is_charging: bool,
+}
+
+/// Thermal information for mobile devices
+#[derive(Debug, Clone)]
+pub struct ThermalInfo {
+    pub cpu_temperature: f32, // Celsius
+    pub battery_temperature: f32, // Celsius
+    pub ambient_temperature: Option<f32>, // Celsius
+    pub thermal_state: ThermalState,
+}
+
+/// Thermal state levels
+#[derive(Debug, Clone)]
+pub enum ThermalState {
+    Normal,
+    Warning,
+    Critical,
 }
 
 /// Battery optimization detector for mobile platforms

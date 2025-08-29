@@ -1,0 +1,279 @@
+[tool.tarpaulin]
+# Tarpaulin configuration for BitCraps code coverage
+
+# Basic coverage configuration
+out = ["Html", "Lcov", "Json"]
+output-dir = "target/tarpaulin"
+target-dir = "target/tarpaulin"
+
+# Test timeout settings
+timeout = 300
+follow-exec = true
+post-args = ["--", "--test-threads=1"]
+
+# Include/exclude patterns
+include-tests = true
+run-types = ["Tests", "Doctests"]
+
+# Coverage thresholds
+fail-under = 70.0  # Fail if coverage is below 70%
+
+# Exclude patterns
+exclude = [
+    # Exclude generated code
+    "target/*",
+    "*/build.rs",
+    
+    # Exclude test files from coverage (we want to test the actual code)
+    "tests/*",
+    "benches/*",
+    "examples/*",
+    
+    # Exclude platform-specific code that can't be tested on all platforms
+    "src/mobile/android/*",
+    "src/mobile/ios/*", 
+    "src/platform/android.rs",
+    "src/platform/ios.rs",
+    
+    # Exclude FFI bindings that are hard to test
+    "src/mobile/jni_bindings.rs",
+    "src/mobile/uniffi_impl.rs",
+    
+    # Exclude some complex system monitoring code
+    "src/monitoring/system/windows.rs",
+    "src/monitoring/system/macos.rs",
+    
+    # Exclude external dependencies and generated code
+    "*/proto/*",
+    "*/.cargo/*",
+]
+
+# Include patterns (explicit include for core modules)
+include = [
+    "src/error.rs",
+    "src/config/*",
+    "src/protocol/*",
+    "src/crypto/*",
+    "src/transport/*",
+    "src/mesh/*",
+    "src/gaming/*",
+    "src/session/*",
+    "src/token/*",
+    "src/database/*",
+    "src/validation/*",
+    "src/resilience/*",
+    "src/monitoring/*",
+    "src/operations/*",
+    "src/performance/*",
+    "src/ui/*",
+]
+
+# Ignore specific functions/modules
+ignore-panics = true
+ignore-tests = false
+
+# Output configuration
+verbose = true
+color = "auto"
+
+# Feature flags for different test scenarios
+features = []
+
+# Engine configuration  
+engine = "llvm"
+release = false
+
+# Advanced options
+count = true
+branch = true
+forward = true
+coveralls = false
+
+[tool.tarpaulin.report]
+# HTML report configuration
+html_dir = "target/tarpaulin/html"
+
+[tool.tarpaulin.cicd]
+# CI/CD integration settings
+format = "lcov"
+output_file = "target/tarpaulin/lcov.info"
+
+# GitHub Actions integration
+github_action = true
+
+[tool.tarpaulin.coverage_by_module]
+# Module-specific coverage targets
+
+# Core modules should have high coverage
+"bitcraps::protocol" = 85.0
+"bitcraps::crypto" = 90.0
+"bitcraps::error" = 95.0
+"bitcraps::config" = 85.0
+
+# Gaming modules (critical business logic)
+"bitcraps::gaming" = 85.0
+"bitcraps::token" = 90.0
+"bitcraps::session" = 80.0
+
+# Transport and networking
+"bitcraps::transport" = 75.0
+"bitcraps::mesh" = 75.0
+"bitcraps::resilience" = 80.0
+
+# Database and persistence
+"bitcraps::database" = 85.0
+"bitcraps::validation" = 90.0
+
+# Monitoring and operations (lower priority)
+"bitcraps::monitoring" = 60.0
+"bitcraps::operations" = 65.0
+"bitcraps::performance" = 70.0
+
+# UI modules (harder to test comprehensively)
+"bitcraps::ui" = 50.0
+
+[tool.tarpaulin.exclude_lines]
+# Patterns for lines to exclude from coverage
+patterns = [
+    # Debug and logging statements
+    "println!",
+    "eprintln!",
+    "log::",
+    "tracing::",
+    
+    # Panic and unreachable code
+    "panic!",
+    "unreachable!",
+    "unimplemented!",
+    "todo!",
+    
+    # Platform-specific code blocks
+    "#\\[cfg\\(target_os",
+    "#\\[cfg\\(feature",
+    
+    # Test-only code
+    "#\\[cfg\\(test\\)\\]",
+    
+    # Error handling that's hard to test
+    "\\.expect\\(",
+    "\\.unwrap\\(",
+    
+    # FFI and unsafe code
+    "unsafe",
+    "extern",
+]
+
+# Regex patterns for more complex exclusions
+regex_patterns = [
+    # Exclude entire function bodies for certain functions
+    "fn.*debug.*\\{[\\s\\S]*?\\}",
+    "fn.*fmt.*\\{[\\s\\S]*?\\}",
+    
+    # Exclude match arms that handle errors
+    "Err\\(_\\).*=>.*,",
+    
+    # Exclude platform-specific implementations
+    "impl.*for.*Windows.*\\{[\\s\\S]*?\\}",
+    "impl.*for.*MacOS.*\\{[\\s\\S]*?\\}",
+]
+
+[tool.tarpaulin.workspace]
+# Workspace configuration
+workspace = true
+all_features = false
+no_default_features = false
+
+# Skip certain dependencies
+skip_deps = [
+    "proc-macro2",
+    "quote", 
+    "syn",
+    "serde_derive",
+    "tokio-macros"
+]
+
+[tool.tarpaulin.benchmarks]
+# Benchmark testing configuration
+run_benchmarks = false
+benchmark_timeout = 600
+
+[tool.tarpaulin.integration]
+# Integration test configuration
+integration_tests = true
+test_timeout = 120
+
+# Parallel test execution
+jobs = 4
+test_threads = 2
+
+[tool.tarpaulin.output_formats]
+# Multiple output formats for different use cases
+
+# HTML for local development
+html = true
+html_theme = "dark"
+
+# LCOV for CI/CD integration  
+lcov = true
+
+# JSON for programmatic processing
+json = true
+pretty_json = true
+
+# XML for some CI systems
+cobertura = false
+
+# Plain text summary
+stdout = true
+
+[tool.tarpaulin.hooks]
+# Pre/post coverage hooks
+
+# Pre-coverage setup
+pre_commands = [
+    "cargo clean",
+    "cargo check --all-features",
+]
+
+# Post-coverage cleanup  
+post_commands = [
+    "echo 'Coverage report generated successfully'",
+]
+
+[tool.tarpaulin.filters]
+# Additional filtering options
+
+# Minimum hit count for lines to be considered covered
+min_coverage_hits = 1
+
+# Maximum function complexity to include in coverage
+max_function_complexity = 50
+
+# File size limits (exclude very large generated files)
+max_file_size = 10000  # 10KB limit for individual files
+
+[tool.tarpaulin.advanced]
+# Advanced configuration options
+
+# Memory limit for coverage analysis
+memory_limit = "4GB"
+
+# Enable experimental features
+experimental = false
+
+# Debug output for troubleshooting
+debug = false
+
+# Custom rustflags for instrumentation
+rustflags = [
+    "-C", "instrument-coverage",
+    "-C", "codegen-units=1",
+    "-C", "inline-threshold=0",
+]
+
+# Environment variables for test execution
+env = [
+    "RUST_BACKTRACE=1",
+    "RUST_LOG=debug",
+    "BITCRAPS_TEST_MODE=1",
+]

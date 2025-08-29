@@ -575,3 +575,6 @@ impl BatteryAwareScanStrategy {
         }
     }
 }
+
+/// Alias for backward compatibility
+pub type BatteryOptimizationManager = BatteryOptimizationHandler;

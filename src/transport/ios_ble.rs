@@ -771,4 +771,61 @@ impl BlePeripheral for IosBlePeripheral {
         
         Ok(())
     }
+    
+    async fn set_recovery_config(&mut self, _config: RecoveryConfig) -> Result<()> {
+        // TODO: Store recovery configuration
+        Ok(())
+    }
+    
+    async fn recover(&mut self) -> Result<()> {
+        log::warn!("Attempting iOS BLE recovery");
+        
+        // Stop advertising and reinitialize Core Bluetooth
+        self.stop_advertising().await?;
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+        
+        // Wait for powered on state again
+        self.wait_for_powered_on().await?;
+        
+        // Restart with current config
+        let config = self.config.read().await.clone();
+        self.start_advertising(&config).await
+    }
+    
+    async fn get_connection_state(&self, peer_id: PeerId) -> Option<ConnectionState> {
+        self.connected_centrals.read().await
+            .get(&peer_id)
+            .map(|_| ConnectionState::Connected)
+    }
+    
+    async fn force_reconnect(&mut self, peer_id: PeerId) -> Result<()> {
+        // iOS doesn't allow peripheral to force reconnection
+        // We can only disconnect and wait for central to reconnect
+        self.disconnect_central(peer_id).await?;
+        Ok(())
+    }
+    
+    async fn health_check(&self) -> Result<bool> {
+        // Check if peripheral manager is still valid and powered on
+        let state = *self.manager_state.read().await;
+        match state {
+            core_bluetooth_ffi::CBManagerState::PoweredOn => Ok(true),
+            _ => Ok(false),
+        }
+    }
+    
+    async fn reset(&mut self) -> Result<()> {
+        log::info!("Resetting iOS BLE peripheral");
+        
+        // Stop advertising and clear all connections
+        self.stop_advertising().await?;
+        self.connected_centrals.write().await.clear();
+        
+        // Reset statistics
+        *self.stats.write().await = PeripheralStats::default();
+        *self.initialization_complete.write().await = false;
+        
+        // Reinitialize Core Bluetooth
+        self.initialize_core_bluetooth().await
+    }
 }

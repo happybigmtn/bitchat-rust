@@ -16,6 +16,8 @@ interface BitCrapsError {
     InvalidInput(string reason);
     Timeout();
     NotFound(string item);
+    GameLogic(string reason);
+    ConsensusError(string reason);
 };
 
 interface BitCrapsNode {

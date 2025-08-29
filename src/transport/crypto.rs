@@ -10,16 +10,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{RwLock, Mutex};
-use bytes::{Bytes, BytesMut};
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::Zeroize;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 use chacha20poly1305::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
+    aead::{Aead, KeyInit, OsRng},
     ChaCha20Poly1305, Nonce, Key
 };
 use hkdf::Hkdf;
 use sha2::Sha256;
-use rand::{RngCore, CryptoRng};
+use rand::RngCore;
 
 use crate::protocol::PeerId;
 use crate::error::{Error, Result};
@@ -35,6 +34,12 @@ const MESSAGE_COUNTER_SIZE: usize = 8;
 
 /// Size of timestamp for message freshness
 const TIMESTAMP_SIZE: usize = 8;
+
+/// BLE message size limit (244 bytes for single packet)
+const BLE_MAX_PAYLOAD_SIZE: usize = 244;
+
+/// Message fragmentation support for large payloads
+const FRAGMENT_HEADER_SIZE: usize = 4; // fragment_id (2) + total_fragments (1) + sequence (1)
 
 /// Connection priority levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

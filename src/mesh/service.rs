@@ -13,6 +13,7 @@ use super::message_queue::MessageQueue;
 use super::game_session::GameSessionManager;
 use super::anti_cheat::AntiCheatMonitor;
 use crate::token::ProofOfRelay;
+use crate::gaming::{GameOrchestrator, ConsensusGameManager};
 
 /// Configuration for the mesh service
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +58,10 @@ pub struct MeshService {
     game_sessions: Arc<RwLock<GameSessionManager>>,
     anti_cheat: Arc<AntiCheatMonitor>,
     proof_of_relay: Option<Arc<ProofOfRelay>>,
+    
+    // Gaming components
+    pub game_orchestrator: Option<Arc<GameOrchestrator>>,
+    pub consensus_manager: Option<Arc<ConsensusGameManager>>,
     
     // Peer management
     peers: Arc<RwLock<FxHashMap<PeerId, PeerInfo>>>,
@@ -179,6 +184,11 @@ impl MeshService {
             game_sessions,
             anti_cheat,
             proof_of_relay: None, // Will be set later via set_proof_of_relay
+            
+            // Gaming components - initially None, will be set via setters
+            game_orchestrator: None,
+            consensus_manager: None,
+            
             peers: Arc::new(RwLock::new(FxHashMap::default())),
             _routing_table: Arc::new(RwLock::new(RoutingTable {
                 routes: FxHashMap::default(),
@@ -197,6 +207,16 @@ impl MeshService {
     /// Set the proof of relay system for mining rewards
     pub fn set_proof_of_relay(&mut self, proof_of_relay: Arc<ProofOfRelay>) {
         self.proof_of_relay = Some(proof_of_relay);
+    }
+    
+    /// Set the game orchestrator
+    pub fn set_game_orchestrator(&mut self, orchestrator: Arc<GameOrchestrator>) {
+        self.game_orchestrator = Some(orchestrator);
+    }
+    
+    /// Set the consensus game manager
+    pub fn set_consensus_manager(&mut self, manager: Arc<ConsensusGameManager>) {
+        self.consensus_manager = Some(manager);
     }
     
     /// Start the mesh service

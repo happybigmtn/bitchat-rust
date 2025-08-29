@@ -9,13 +9,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{RwLock, Mutex, mpsc};
-use bytes::{Bytes, BytesMut};
+use tokio::sync::{RwLock, Mutex};
 use uuid::Uuid;
 
 use crate::protocol::PeerId;
 use crate::transport::{
-    TransportEvent, BlePeripheral, PeripheralEvent,
+    TransportEvent,
     crypto::{TransportCrypto, ConnectionPriority},
     bounded_queue::{BoundedTransportEventSender, BoundedQueueError}
 };
@@ -316,7 +315,7 @@ impl SecureGattServer {
         // Disconnect all clients
         let clients = self.clients.read().await.keys().copied().collect::<Vec<_>>();
         for peer_id in clients {
-            self.disconnect_client(peer_id, "Server shutting down".to_string()).await;
+            let _ = self.disconnect_client(peer_id, "Server shutting down".to_string()).await;
         }
         
         log::info!("Secure GATT server stopped");
@@ -477,6 +476,7 @@ impl SecureGattServer {
         
         // Encrypt the data
         let encrypted_data = self.crypto.encrypt_message(peer_id, data).await?;
+        let encrypted_data_len = encrypted_data.len(); // Store length before moving data
         
         // Fragment data if necessary
         let mtu = client.mtu as usize;
@@ -498,7 +498,7 @@ impl SecureGattServer {
         let latency_ms = start_time.elapsed().as_millis() as u32;
         let _ = self.crypto.update_connection_metrics(peer_id, latency_ms, true).await;
         
-        log::debug!("Sent {} encrypted bytes to client {:?}", encrypted_data.len(), peer_id);
+        log::debug!("Sent {} encrypted bytes to client {:?}", encrypted_data_len, peer_id);
         Ok(())
     }
     

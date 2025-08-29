@@ -19,6 +19,10 @@ pub mod ble_config;
 pub mod crypto;
 pub mod bounded_queue;
 pub mod secure_gatt_server;
+pub mod tcp_transport;
+pub mod intelligent_coordinator;
+pub mod security;
+pub mod keystore;
 
 // Platform-specific BLE peripheral implementations
 #[cfg(target_os = "android")]
@@ -30,6 +34,12 @@ pub mod linux_ble;
 
 #[cfg(test)]
 mod connection_limits_test;
+
+#[cfg(test)]
+mod ble_integration_test;
+
+#[cfg(test)]
+mod multi_transport_test;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -48,6 +58,8 @@ pub use ble_peripheral::*;
 pub use enhanced_bluetooth::*;
 pub use ble_config::*;
 pub use crypto::*;
+pub use security::*;
+pub use keystore::*;
 
 /// Transport address types for different connection methods
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -57,6 +69,38 @@ pub enum TransportAddress {
     Bluetooth(String),    // Bluetooth device ID/address
     Mesh(PeerId),        // Abstract mesh routing via peer ID
 }
+
+/// Transport-specific error types
+#[derive(Debug, Clone)]
+pub enum TransportError {
+    ConnectionFailed(String),
+    Disconnected(String),
+    SendFailed(String),
+    ReceiveFailed(String),
+    InitializationFailed(String),
+    CompressionError(String),
+    Timeout,
+    InvalidAddress,
+    NotConnected,
+}
+
+impl std::fmt::Display for TransportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TransportError::ConnectionFailed(msg) => write!(f, "Connection failed: {}", msg),
+            TransportError::Disconnected(msg) => write!(f, "Disconnected: {}", msg),
+            TransportError::SendFailed(msg) => write!(f, "Send failed: {}", msg),
+            TransportError::ReceiveFailed(msg) => write!(f, "Receive failed: {}", msg),
+            TransportError::InitializationFailed(msg) => write!(f, "Initialization failed: {}", msg),
+            TransportError::CompressionError(msg) => write!(f, "Compression error: {}", msg),
+            TransportError::Timeout => write!(f, "Operation timed out"),
+            TransportError::InvalidAddress => write!(f, "Invalid transport address"),
+            TransportError::NotConnected => write!(f, "Not connected to peer"),
+        }
+    }
+}
+
+impl std::error::Error for TransportError {}
 
 /// Events that can occur on a transport
 #[derive(Debug, Clone)]

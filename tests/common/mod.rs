@@ -1,7 +1,11 @@
-use bitcraps::protocol::{PeerId, BitchatPacket};
+use bitcraps::protocol::{PeerId, BitchatPacket, BitchatKeypair, BitchatSignature, BitchatIdentity, CrapTokens, GameId, DiceRoll};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::collections::HashMap;
+
+// Re-export test harness components
+pub mod test_harness;
+pub use test_harness::*;
 
 /// Mock network for testing
 pub struct MockNetwork {

@@ -7,7 +7,7 @@ use super::{PeerId, BetType, CrapTokens};
 use serde::{Serialize, Deserialize};
 
 /// Game phase in craps
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum GamePhase {
     ComeOut,
     Point,

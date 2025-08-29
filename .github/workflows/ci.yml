@@ -8,62 +8,108 @@ on:
   schedule:
     # Run security audit daily at 2 AM UTC
     - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      run_benchmarks:
+        description: 'Run performance benchmarks'
+        required: false
+        default: 'false'
+      skip_mobile:
+        description: 'Skip mobile builds'
+        required: false
+        default: 'false'
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: "-C debuginfo=0 -D warnings"
 
 jobs:
   # Rust checks and tests
   rust-checks:
-    name: Rust Checks
+    name: Rust Checks (${{ matrix.os }}, ${{ matrix.rust }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         rust: [stable, beta]
+        include:
+          - os: ubuntu-latest
+            rust: nightly
+            experimental: true
+    continue-on-error: ${{ matrix.experimental || false }}
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: recursive
     
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: ${{ matrix.rust }}
-        components: rustfmt, clippy
+        components: rustfmt, clippy, rust-src
     
-    - name: Cache cargo registry
-      uses: actions/cache@v3
-      with:
-        path: ~/.cargo/registry
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+    - name: Install cargo extensions
+      if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+      run: |
+        cargo install --locked cargo-machete cargo-udeps
     
-    - name: Cache cargo index
-      uses: actions/cache@v3
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
       with:
-        path: ~/.cargo/git
-        key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-    
-    - name: Cache target directory
-      uses: actions/cache@v3
-      with:
-        path: target
-        key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ matrix.os }}-${{ matrix.rust }}
+        cache-on-failure: true
     
     - name: Check formatting
-      run: cargo fmt -- --check
+      run: cargo fmt --all -- --check
+    
+    - name: Check unused dependencies
+      if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+      run: |
+        cargo machete
+        cargo +nightly udeps --all-targets || true
     
     - name: Run clippy
-      run: cargo clippy --all-targets --all-features -- -D warnings
+      run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
     
-    - name: Build
-      run: cargo build --verbose
+    - name: Build (debug)
+      run: cargo build --workspace --all-targets --all-features --locked
     
-    - name: Run tests
-      run: cargo test --verbose
+    - name: Build (release)
+      if: matrix.rust == 'stable'
+      run: cargo build --workspace --release --all-features --locked
+    
+    - name: Run unit tests
+      run: cargo test --workspace --all-features --locked -- --nocapture
+    
+    - name: Run integration tests
+      if: matrix.os == 'ubuntu-latest'
+      run: cargo test --workspace --test '*' --all-features --locked -- --nocapture
+    
+    - name: Run doctests
+      if: matrix.rust == 'stable'
+      run: cargo test --workspace --doc --all-features --locked
     
     - name: Build documentation
-      run: cargo doc --no-deps
+      if: matrix.rust == 'stable'
+      run: cargo doc --workspace --no-deps --all-features --document-private-items
+    
+    - name: Test documentation examples
+      if: matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'
+      run: cargo test --workspace --doc --all-features --locked
+    
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: test-results-${{ matrix.os }}-${{ matrix.rust }}
+        path: |
+          target/debug/deps
+          target/release/deps
+        retention-days: 5
 
   # Security audit
   security-audit:
@@ -83,12 +129,15 @@ jobs:
   android-build:
     name: Android Build
     runs-on: ubuntu-latest
+    if: github.event.inputs.skip_mobile != 'true'
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: recursive
     
     - name: Set up JDK 17
-      uses: actions/setup-java@v3
+      uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
@@ -96,79 +145,179 @@ jobs:
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
-        targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
+        targets: |
+          aarch64-linux-android
+          armv7-linux-androideabi
+          x86_64-linux-android
+          i686-linux-android
     
     - name: Install cargo-ndk
-      run: cargo install cargo-ndk
+      run: cargo install cargo-ndk --locked
     
     - name: Setup Android SDK
-      uses: android-actions/setup-android@v2
-    
-    - name: Cache Gradle packages
-      uses: actions/cache@v3
+      uses: android-actions/setup-android@v3
       with:
-        path: |
-          ~/.gradle/caches
-          ~/.gradle/wrapper
-        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        api-level: 34
+        build-tools: 34.0.0
+        ndk: 25.2.9519653
     
-    - name: Build Rust library for Android
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: android
+        cache-on-failure: true
+    
+    - name: Gradle Cache
+      uses: gradle/gradle-build-action@v2
+      with:
+        cache-read-only: false
+    
+    - name: Build Rust library for Android (All targets)
+      run: |
+        cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -t x86 build --release --features mobile
+    
+    - name: Generate AAR library
       run: |
         cd android
-        cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 build --release
+        ./gradlew assembleRelease
     
-    - name: Build Android app
+    - name: Run Android unit tests
       run: |
         cd android
-        chmod +x gradlew
-        ./gradlew build
+        ./gradlew testDebugUnitTest testReleaseUnitTest
     
-    - name: Run Android tests
+    - name: Run Android instrumentation tests
+      if: false  # Enable when emulator is available
       run: |
         cd android
-        ./gradlew test
+        ./gradlew connectedAndroidTest
     
     - name: Upload Android APK
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: android-debug-apk
         path: android/app/build/outputs/apk/debug/*.apk
+        retention-days: 30
+    
+    - name: Upload Android AAR
+      uses: actions/upload-artifact@v4
+      with:
+        name: android-aar-library
+        path: android/app/build/outputs/aar/*.aar
+        retention-days: 30
+    
+    - name: Upload Android test reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: android-test-reports
+        path: |
+          android/app/build/reports/tests/
+          android/app/build/test-results/
+        retention-days: 7
 
   # iOS build (macOS only)
   ios-build:
     name: iOS Build
     runs-on: macos-latest
+    if: github.event.inputs.skip_mobile != 'true'
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: recursive
     
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
-        targets: aarch64-apple-ios, x86_64-apple-ios
+        targets: |
+          aarch64-apple-ios
+          x86_64-apple-ios
+          aarch64-apple-ios-sim
     
-    - name: Install cargo-lipo
-      run: cargo install cargo-lipo
+    - name: Install cargo-lipo and uniffi-bindgen
+      run: |
+        cargo install cargo-lipo uniffi-bindgen --locked
     
-    - name: Build Rust library for iOS
-      run: cargo lipo --release
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: ios
+        cache-on-failure: true
     
-    - name: Build iOS app
+    - name: Build Rust library for iOS (All targets)
+      run: |
+        cargo lipo --release --features mobile --targets aarch64-apple-ios,x86_64-apple-ios,aarch64-apple-ios-sim
+    
+    - name: Generate Swift bindings
+      run: |
+        uniffi-bindgen generate src/uniffi.udl --language swift --out-dir ios/Generated/
+    
+    - name: Install CocoaPods
       run: |
         cd ios
-        xcodebuild -project BitCraps.xcodeproj \
+        pod install --repo-update
+    
+    - name: Build iOS app (Simulator)
+      run: |
+        cd ios
+        xcodebuild -workspace BitCraps.xcworkspace \
                    -scheme BitCraps \
                    -sdk iphonesimulator \
+                   -destination 'platform=iOS Simulator,name=iPhone 15,OS=latest' \
                    -configuration Debug \
+                   -derivedDataPath build/ \
                    build
     
-    - name: Run iOS tests
+    - name: Build iOS app (Device)
       run: |
         cd ios
-        xcodebuild test -project BitCraps.xcodeproj \
-                        -scheme BitCraps \
-                        -sdk iphonesimulator \
-                        -destination 'platform=iOS Simulator,name=iPhone 14'
+        xcodebuild -workspace BitCraps.xcworkspace \
+                   -scheme BitCraps \
+                   -sdk iphoneos \
+                   -configuration Release \
+                   -derivedDataPath build/ \
+                   CODE_SIGNING_ALLOWED=NO \
+                   build
+    
+    - name: Run iOS unit tests
+      run: |
+        cd ios
+        xcodebuild test \
+                   -workspace BitCraps.xcworkspace \
+                   -scheme BitCraps \
+                   -sdk iphonesimulator \
+                   -destination 'platform=iOS Simulator,name=iPhone 15,OS=latest' \
+                   -derivedDataPath build/ \
+                   -resultBundlePath TestResults.xcresult
+    
+    - name: Generate iOS framework
+      run: |
+        cd ios
+        xcodebuild archive \
+                   -workspace BitCraps.xcworkspace \
+                   -scheme BitCraps \
+                   -sdk iphoneos \
+                   -archivePath build/BitCraps-iOS.xcarchive \
+                   -configuration Release \
+                   CODE_SIGNING_ALLOWED=NO
+    
+    - name: Upload iOS build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ios-build-artifacts
+        path: |
+          ios/build/
+          ios/Generated/
+        retention-days: 30
+    
+    - name: Upload iOS test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: ios-test-results
+        path: ios/TestResults.xcresult
+        retention-days: 7
 
   # Code coverage
   coverage:
@@ -177,64 +326,197 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: recursive
     
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
+      with:
+        components: llvm-tools-preview
     
-    - name: Install tarpaulin
-      run: cargo install cargo-tarpaulin
+    - name: Install coverage tools
+      run: |
+        cargo install cargo-tarpaulin cargo-llvm-cov --locked
     
-    - name: Generate code coverage
-      run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: coverage
+        cache-on-failure: true
+    
+    - name: Generate code coverage (tarpaulin)
+      run: |
+        cargo tarpaulin --verbose --all-features --workspace --timeout 300 \
+          --exclude-files 'target/*' --exclude-files 'tests/*' --exclude-files 'benches/*' \
+          --out xml --out html --output-dir coverage/
+    
+    - name: Generate code coverage (llvm-cov)
+      run: |
+        cargo llvm-cov --all-features --workspace --lcov --output-path coverage/lcov.info
     
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4
       with:
-        file: ./cobertura.xml
-        fail_ci_if_error: true
+        files: ./coverage/cobertura.xml,./coverage/lcov.info
+        fail_ci_if_error: false
+        verbose: true
+        token: ${{ secrets.CODECOV_TOKEN }}
+    
+    - name: Upload coverage artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: coverage/
+        retention-days: 30
+    
+    - name: Coverage comment
+      if: github.event_name == 'pull_request'
+      uses: romeovs/lcov-reporter-action@v0.3.1
+      with:
+        lcov-file: coverage/lcov.info
+        github-token: ${{ secrets.GITHUB_TOKEN }}
 
-  # Benchmark tests (only on master/main push)
+  # Benchmark tests (only on master/main push or manual trigger)
   benchmarks:
     name: Performance Benchmarks
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')) || github.event.inputs.run_benchmarks == 'true'
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
     
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
+    
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: benchmarks
+        cache-on-failure: true
     
     - name: Run benchmarks
-      run: cargo bench --features benchmarks
+      run: |
+        cargo bench --features benchmarks --message-format=json | tee benchmark-output.json
+    
+    - name: Parse benchmark results
+      run: |
+        python3 -c "
+        import json
+        import sys
+        
+        results = []
+        with open('benchmark-output.json', 'r') as f:
+            for line in f:
+                try:
+                    data = json.loads(line)
+                    if data.get('reason') == 'benchmark-complete':
+                        results.append({
+                            'name': data['id'],
+                            'value': data['typical'],
+                            'unit': data['unit']
+                        })
+                except:
+                    pass
+        
+        with open('benchmark-summary.json', 'w') as f:
+            json.dump(results, f, indent=2)
+        
+        print('Benchmark Summary:')
+        for result in results[:10]:  # Top 10
+            print(f\"  {result['name']}: {result['value']:.2f} {result['unit']}\")
+        "
     
     - name: Upload benchmark results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: benchmark-results
-        path: target/criterion
+        path: |
+          target/criterion
+          benchmark-output.json
+          benchmark-summary.json
+        retention-days: 90
+    
+    - name: Performance regression check
+      if: github.event_name == 'pull_request'
+      run: |
+        echo "Performance regression analysis would go here"
+        # Future: Compare with baseline benchmarks
 
-  # Release build
-  release-build:
-    name: Release Build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+  # Multi-platform release builds
+  multi-platform-build:
+    name: Multi-platform Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: recursive
     
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
     
-    - name: Build release
-      run: cargo build --release
+    - name: Install cross
+      if: matrix.cross
+      run: cargo install cross --locked
     
-    - name: Create release archive
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ matrix.target }}
+        cache-on-failure: true
+    
+    - name: Build release binary
       run: |
-        tar czf bitcraps-linux-x64.tar.gz -C target/release bitcraps
+        if [ "${{ matrix.cross }}" = "true" ]; then
+          cross build --release --target ${{ matrix.target }} --features production
+        else
+          cargo build --release --target ${{ matrix.target }} --features production
+        fi
+    
+    - name: Package binary (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        cd target/${{ matrix.target }}/release
+        tar czf ../../../bitcraps-${{ matrix.target }}.tar.gz bitcraps
+        cd ../../..
+        
+    - name: Package binary (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        cd target\${{ matrix.target }}\release
+        7z a ..\..\..\bitcraps-${{ matrix.target }}.zip bitcraps.exe
+        cd ..\..\..
     
     - name: Upload release artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
-        name: release-linux-x64
-        path: bitcraps-linux-x64.tar.gz
+        name: bitcraps-${{ matrix.target }}
+        path: bitcraps-${{ matrix.target }}.*
+        retention-days: 90

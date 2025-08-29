@@ -772,5 +772,230 @@ pub extern "system" fn Java_com_bitchat_rust_AdvertiseCallbackBridge_onStartFail
     });
 }
 
-// Additional JNI callbacks for GATT server events would go here...
-// These would handle connection events, characteristic writes, etc.
+/// Implement BlePeripheral trait for Android
+#[cfg(target_os = "android")]
+#[async_trait::async_trait]
+impl BlePeripheral for AndroidBlePeripheral {
+    async fn start_advertising(&mut self, config: &AdvertisingConfig) -> Result<()> {
+        // Initialize JNI if not already done
+        if self.java_vm.is_none() {
+            self.initialize_jni().await?;
+        }
+        
+        self.start_android_advertising(config).await
+    }
+    
+    async fn stop_advertising(&mut self) -> Result<()> {
+        self.stop_android_advertising().await
+    }
+    
+    fn is_advertising(&self) -> bool {
+        self.is_advertising.try_read().map(|guard| *guard).unwrap_or(false)
+    }
+    
+    async fn send_to_central(&mut self, peer_id: PeerId, data: &[u8]) -> Result<()> {
+        let centrals = self.connected_centrals.read().await;
+        
+        if let Some(central_address) = centrals.get(&peer_id) {
+            // Get JNI environment
+            let java_vm = self.java_vm.as_ref().ok_or_else(|| {
+                Error::Network("JavaVM not initialized".to_string())
+            })?;
+            
+            let mut env = java_vm.attach_current_thread().map_err(|e| {
+                Error::Network(format!("Failed to attach to Java thread: {}", e))
+            })?;
+            
+            let gatt_server_ref = self.gatt_server.as_ref().ok_or_else(|| {
+                Error::Network("GATT server not initialized".to_string())
+            })?;
+            
+            let tx_char_ref = self.tx_characteristic.as_ref().ok_or_else(|| {
+                Error::Network("TX characteristic not available".to_string())
+            })?;
+            
+            // Convert data to Java byte array
+            let data_array = env.byte_array_from_slice(data).map_err(|e| {
+                Error::Network(format!("Failed to create byte array: {}", e))
+            })?;
+            
+            // Update characteristic value
+            env.call_method(
+                tx_char_ref.as_obj(),
+                "setValue",
+                "([B)Z",
+                &[JValue::Object(data_array.into())]
+            ).map_err(|e| Error::Network(format!("Failed to set characteristic value: {}", e)))?;
+            
+            // Notify central about value change
+            let central_str = env.new_string(central_address).map_err(|e| {
+                Error::Network(format!("Failed to create central address string: {}", e))
+            })?;
+            
+            let notify_result = env.call_method(
+                gatt_server_ref.as_obj(),
+                "notifyCharacteristicChanged",
+                "(Landroid/bluetooth/BluetoothDevice;Landroid/bluetooth/BluetoothGattCharacteristic;Z)Z",
+                &[
+                    JValue::Object(central_str.into()),
+                    JValue::Object(tx_char_ref.as_obj()),
+                    JValue::Bool(false as jboolean) // false = notification, true = indication
+                ]
+            ).map_err(|e| Error::Network(format!("Failed to notify characteristic changed: {}", e)))?;
+            
+            let success = notify_result.z().map_err(|e| {
+                Error::Network(format!("Failed to convert notification result: {}", e))
+            })?;
+            
+            if success {
+                let mut stats = self.stats.write().await;
+                stats.bytes_sent += data.len() as u64;
+                
+                log::debug!("Sent {} bytes to central {:?}", data.len(), peer_id);
+                Ok(())
+            } else {
+                Err(Error::Network(format!("Failed to notify central {:?}", peer_id)))
+            }
+        } else {
+            Err(Error::Network(format!("Central {:?} not connected", peer_id)))
+        }
+    }
+    
+    async fn disconnect_central(&mut self, peer_id: PeerId) -> Result<()> {
+        let mut centrals = self.connected_centrals.write().await;
+        
+        if let Some(central_address) = centrals.remove(&peer_id) {
+            // Get JNI environment
+            let java_vm = self.java_vm.as_ref().ok_or_else(|| {
+                Error::Network("JavaVM not initialized".to_string())
+            })?;
+            
+            let mut env = java_vm.attach_current_thread().map_err(|e| {
+                Error::Network(format!("Failed to attach to Java thread: {}", e))
+            })?;
+            
+            let gatt_server_ref = self.gatt_server.as_ref().ok_or_else(|| {
+                Error::Network("GATT server not initialized".to_string())
+            })?;
+            
+            // Cancel connection to central (if supported)
+            let central_str = env.new_string(&central_address).map_err(|e| {
+                Error::Network(format!("Failed to create central address string: {}", e))
+            })?;
+            
+            // Note: Android doesn't typically allow peripheral to disconnect central
+            // But we can call cancelConnection if the device object is available
+            env.call_method(
+                gatt_server_ref.as_obj(),
+                "cancelConnection",
+                "(Landroid/bluetooth/BluetoothDevice;)V",
+                &[JValue::Object(central_str.into())]
+            ).map_err(|e| Error::Network(format!("Failed to cancel connection: {}", e)))?;
+            
+            // Send disconnection event
+            let _ = self.event_sender.send(PeripheralEvent::CentralDisconnected {
+                peer_id,
+                reason: "Disconnected by peripheral".to_string(),
+            });
+            
+            log::info!("Disconnected central {:?} at {}", peer_id, central_address);
+            Ok(())
+        } else {
+            Err(Error::Network(format!("Central {:?} not connected", peer_id)))
+        }
+    }
+    
+    fn connected_centrals(&self) -> Vec<PeerId> {
+        self.connected_centrals.try_read()
+            .map(|guard| guard.keys().copied().collect())
+            .unwrap_or_default()
+    }
+    
+    async fn next_event(&mut self) -> Option<PeripheralEvent> {
+        let mut receiver = self.event_receiver.lock().await;
+        receiver.recv().await
+    }
+    
+    async fn get_stats(&self) -> PeripheralStats {
+        let mut stats = self.stats.read().await.clone();
+        
+        // Update advertising duration if currently advertising
+        if let Some(start_time) = *self.advertising_start_time.read().await {
+            stats.advertising_duration += start_time.elapsed();
+        }
+        
+        stats.active_connections = self.connected_centrals.read().await.len();
+        stats
+    }
+    
+    async fn update_config(&mut self, config: &AdvertisingConfig) -> Result<()> {
+        let was_advertising = self.is_advertising();
+        
+        if was_advertising {
+            self.stop_advertising().await?;
+        }
+        
+        *self.config.write().await = config.clone();
+        
+        if was_advertising {
+            self.start_advertising(config).await?;
+        }
+        
+        Ok(())
+    }
+    
+    async fn set_recovery_config(&mut self, _config: RecoveryConfig) -> Result<()> {
+        // TODO: Store recovery configuration
+        Ok(())
+    }
+    
+    async fn recover(&mut self) -> Result<()> {
+        log::warn!("Attempting Android BLE recovery");
+        
+        // Stop advertising and clear state
+        self.stop_advertising().await?;
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+        
+        // Try to restart with current config
+        let config = self.config.read().await.clone();
+        self.start_advertising(&config).await
+    }
+    
+    async fn get_connection_state(&self, peer_id: PeerId) -> Option<ConnectionState> {
+        self.connected_centrals.read().await
+            .get(&peer_id)
+            .map(|_| ConnectionState::Connected)
+    }
+    
+    async fn force_reconnect(&mut self, peer_id: PeerId) -> Result<()> {
+        // Disconnect and wait for potential reconnection
+        self.disconnect_central(peer_id).await?;
+        Ok(())
+    }
+    
+    async fn health_check(&self) -> Result<bool> {
+        // Check if JNI components are still valid
+        if let Some(java_vm) = &self.java_vm {
+            if let Ok(_env) = java_vm.attach_current_thread() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    
+    async fn reset(&mut self) -> Result<()> {
+        log::info!("Resetting Android BLE peripheral");
+        
+        // Stop advertising and clear all connections
+        self.stop_advertising().await?;
+        self.connected_centrals.write().await.clear();
+        
+        // Reset statistics
+        *self.stats.write().await = PeripheralStats::default();
+        
+        Ok(())
+    }
+}
+
+// Additional JNI callbacks for GATT server events
+/// These would handle connection events, characteristic writes, etc.

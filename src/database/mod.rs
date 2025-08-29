@@ -11,10 +11,25 @@
 pub mod migrations;
 pub mod cli;
 pub mod repository;
+pub mod models;
+pub mod cache;
+pub mod query_builder;
 
 // Re-export commonly used types
 pub use migrations::{MigrationManager, Migration, MigrationReport};
 pub use repository::{UserRepository, GameRepository, TransactionRepository, StatsRepository};
+pub use models::*;
+pub use cache::{DatabaseCache, CacheConfig};
+pub use query_builder::{QueryBuilder, UserQueries, GameQueries};
+
+/// Generic repository trait for database access patterns
+pub trait Repository<T> {
+    type Error;
+    fn create(&self, item: &T) -> std::result::Result<(), Self::Error>;
+    fn read(&self, id: &str) -> std::result::Result<Option<T>, Self::Error>;
+    fn update(&self, id: &str, item: &T) -> std::result::Result<(), Self::Error>;
+    fn delete(&self, id: &str) -> std::result::Result<(), Self::Error>;
+}
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

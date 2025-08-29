@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, RwLock, Mutex};
+use tokio::sync::{RwLock, Mutex};
 use async_trait::async_trait;
 use btleplug::api::{
     Central, Manager as _, Peripheral as _, ScanFilter, WriteType, CentralEvent
@@ -18,7 +18,7 @@ use crate::protocol::{PeerId, BitchatPacket};
 use crate::transport::{
     Transport, TransportAddress, TransportEvent,
     crypto::{TransportCrypto, ConnectionPriority},
-    secure_gatt_server::{SecureGattServer, BITCRAPS_SERVICE_UUID as GATT_SERVICE_UUID},
+    secure_gatt_server::SecureGattServer,
     bounded_queue::{BoundedTransportEventQueue, BoundedTransportEventSender}
 };
 

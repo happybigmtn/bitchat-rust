@@ -1,0 +1,337 @@
+# BitCraps Core Node Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bitcraps-core
+  namespace: bitcraps-production
+  labels:
+    app: bitcraps
+    component: core
+    environment: production
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: bitcraps
+      component: core
+  template:
+    metadata:
+      labels:
+        app: bitcraps
+        component: core
+        environment: production
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9091"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: bitcraps-core
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+      - name: bitcraps-core
+        image: registry.example.com/bitcraps:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8334
+          name: p2p
+          protocol: TCP
+        - containerPort: 9091
+          name: metrics
+          protocol: TCP
+        - containerPort: 8080
+          name: health
+          protocol: TCP
+        env:
+        - name: RUST_LOG
+          value: "info"
+        - name: BITCRAPS_CONFIG
+          value: "/etc/bitcraps/production.toml"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: bitcraps-database-credentials
+              key: POSTGRES_PASSWORD
+        - name: TREASURY_ADDRESS
+          valueFrom:
+            secretKeyRef:
+              name: bitcraps-crypto-keys
+              key: TREASURY_ADDRESS
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: config
+          mountPath: /etc/bitcraps
+          readOnly: true
+        - name: data
+          mountPath: /data
+        - name: tls-certs
+          mountPath: /etc/ssl/certs/bitcraps
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: config
+        configMap:
+          name: bitcraps-config
+          items:
+          - key: production.toml
+            path: production.toml
+      - name: data
+        persistentVolumeClaim:
+          claimName: bitcraps-data
+      - name: tls-certs
+        secret:
+          secretName: bitcraps-tls-certs
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+      - key: "bitcraps.io/dedicated"
+        operator: "Equal"
+        value: "core"
+        effect: "NoSchedule"
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: component
+                  operator: In
+                  values:
+                  - core
+              topologyKey: kubernetes.io/hostname
+
+---
+# BitCraps Gateway Node Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bitcraps-gateway
+  namespace: bitcraps-production
+  labels:
+    app: bitcraps
+    component: gateway
+    environment: production
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: bitcraps
+      component: gateway
+  template:
+    metadata:
+      labels:
+        app: bitcraps
+        component: gateway
+        environment: production
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9091"
+    spec:
+      serviceAccountName: bitcraps-gateway
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+      - name: bitcraps-gateway
+        image: registry.example.com/bitcraps-gateway:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8335
+          name: gateway
+          protocol: TCP
+        - containerPort: 9091
+          name: metrics
+          protocol: TCP
+        - containerPort: 8080
+          name: health
+          protocol: TCP
+        env:
+        - name: RUST_LOG
+          value: "info"
+        - name: BITCRAPS_MODE
+          value: "gateway"
+        - name: BITCRAPS_CONFIG
+          value: "/etc/bitcraps/production.toml"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: config
+          mountPath: /etc/bitcraps
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: config
+        configMap:
+          name: bitcraps-config
+          items:
+          - key: production.toml
+            path: production.toml
+      nodeSelector:
+        kubernetes.io/os: linux
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: component
+                  operator: In
+                  values:
+                  - gateway
+              topologyKey: kubernetes.io/hostname
+
+---
+# BitCraps TURN Server Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bitcraps-turn
+  namespace: bitcraps-production
+  labels:
+    app: bitcraps
+    component: turn
+    environment: production
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bitcraps
+      component: turn
+  template:
+    metadata:
+      labels:
+        app: bitcraps
+        component: turn
+        environment: production
+    spec:
+      containers:
+      - name: coturn
+        image: coturn/coturn:4.6.2-alpine
+        ports:
+        - containerPort: 3478
+          name: turn-tcp
+          protocol: TCP
+        - containerPort: 3478
+          name: turn-udp
+          protocol: UDP
+        - containerPort: 5349
+          name: turns-tcp
+          protocol: TCP
+        - containerPort: 5349
+          name: turns-udp
+          protocol: UDP
+        args:
+        - "--listening-port=3478"
+        - "--tls-listening-port=5349"
+        - "--fingerprint"
+        - "--lt-cred-mech"
+        - "--realm=bitcraps.io"
+        - "--server-name=bitcraps.io"
+        - "--userdb=/var/lib/turnserver/turndb"
+        - "--log-file=/var/log/turnserver/turn.log"
+        - "--verbose"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: turn-data
+          mountPath: /var/lib/turnserver
+        - name: turn-logs
+          mountPath: /var/log/turnserver
+      volumes:
+      - name: turn-data
+        persistentVolumeClaim:
+          claimName: turn-data
+      - name: turn-logs
+        emptyDir: {}

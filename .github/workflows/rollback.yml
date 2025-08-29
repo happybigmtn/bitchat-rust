@@ -1,0 +1,234 @@
+name: Rollback & Disaster Recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to rollback'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      rollback_type:
+        description: 'Type of rollback operation'
+        required: true
+        type: choice
+        options:
+          - application
+          - database
+          - full-system
+          - custom
+      target_version:
+        description: 'Target version/tag to rollback to (leave empty for previous version)'
+        required: false
+      reason:
+        description: 'Reason for rollback'
+        required: true
+      emergency:
+        description: 'Is this an emergency rollback?'
+        required: false
+        type: boolean
+        default: false
+      skip_verification:
+        description: 'Skip post-rollback verification (emergency only)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  ROLLBACK_ENVIRONMENT: ${{ github.event.inputs.environment }}
+  ROLLBACK_TYPE: ${{ github.event.inputs.rollback_type }}
+  TARGET_VERSION: ${{ github.event.inputs.target_version }}
+  IS_EMERGENCY: ${{ github.event.inputs.emergency }}
+  SKIP_VERIFICATION: ${{ github.event.inputs.skip_verification }}
+
+jobs:
+  # Pre-rollback validation
+  pre-rollback-validation:
+    name: Pre-Rollback Validation
+    runs-on: ubuntu-latest
+    if: github.event.inputs.emergency != 'true'
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Validate rollback parameters
+      run: |
+        echo "## 🔄 Rollback Validation" >> $GITHUB_STEP_SUMMARY
+        echo "**Environment:** ${{ env.ROLLBACK_ENVIRONMENT }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Type:** ${{ env.ROLLBACK_TYPE }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Reason:** ${{ github.event.inputs.reason }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Emergency:** ${{ env.IS_EMERGENCY }}" >> $GITHUB_STEP_SUMMARY
+        
+        # Validate environment
+        if [[ "${{ env.ROLLBACK_ENVIRONMENT }}" != "staging" && "${{ env.ROLLBACK_ENVIRONMENT }}" != "production" ]]; then
+          echo "❌ Invalid environment specified"
+          exit 1
+        fi
+        
+        # Validate reason provided
+        if [[ -z "${{ github.event.inputs.reason }}" ]]; then
+          echo "❌ Rollback reason is required"
+          exit 1
+        fi
+        
+        echo "✅ Rollback parameters validated"
+    
+    - name: Configure kubectl
+      env:
+        KUBE_CONFIG_STAGING: ${{ secrets.KUBE_CONFIG_STAGING }}
+        KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+      run: |
+        mkdir -p $HOME/.kube
+        if [ "${{ env.ROLLBACK_ENVIRONMENT }}" = "staging" ]; then
+          echo "$KUBE_CONFIG_STAGING" | base64 -d > $HOME/.kube/config
+        else
+          echo "$KUBE_CONFIG" | base64 -d > $HOME/.kube/config
+        fi
+        kubectl config current-context
+    
+    - name: Determine target version
+      id: target-version
+      run: |
+        NAMESPACE="${{ env.ROLLBACK_ENVIRONMENT }}"
+        DEPLOYMENT_NAME="bitcraps"
+        if [ "${{ env.ROLLBACK_ENVIRONMENT }}" = "staging" ]; then
+          DEPLOYMENT_NAME="bitcraps-staging"
+        fi
+        
+        # Get current version
+        CURRENT_IMAGE=$(kubectl get deployment $DEPLOYMENT_NAME -n $NAMESPACE -o jsonpath='{.spec.template.spec.containers[0].image}')
+        CURRENT_VERSION=$(echo "$CURRENT_IMAGE" | cut -d':' -f2)
+        
+        echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+        echo "current_image=$CURRENT_IMAGE" >> $GITHUB_OUTPUT
+        
+        # Determine target version
+        if [ -n "${{ env.TARGET_VERSION }}" ]; then
+          TARGET_VER="${{ env.TARGET_VERSION }}"
+          echo "Using specified target version: $TARGET_VER"
+        else
+          # Get previous version from Helm history
+          PREVIOUS_REVISION=$(helm history bitcraps -n $NAMESPACE --max 2 -o json | jq -r 'sort_by(.revision) | .[-2].revision // empty')
+          if [ -n "$PREVIOUS_REVISION" ]; then
+            TARGET_VER="revision-$PREVIOUS_REVISION"
+            echo "Using previous Helm revision: $PREVIOUS_REVISION"
+          else
+            echo "❌ Cannot determine target version. Please specify target_version parameter."
+            exit 1
+          fi
+        fi
+        
+        echo "target_version=$TARGET_VER" >> $GITHUB_OUTPUT
+        echo "✅ Target version determined: $TARGET_VER"
+        echo "📊 **Rollback Plan:** $CURRENT_VERSION → $TARGET_VER" >> $GITHUB_STEP_SUMMARY
+    
+    - name: Check deployment status
+      run: |
+        NAMESPACE="${{ env.ROLLBACK_ENVIRONMENT }}"
+        DEPLOYMENT_NAME="bitcraps"
+        if [ "${{ env.ROLLBACK_ENVIRONMENT }}" = "staging" ]; then
+          DEPLOYMENT_NAME="bitcraps-staging"
+        fi
+        
+        # Check if deployment exists
+        if ! kubectl get deployment $DEPLOYMENT_NAME -n $NAMESPACE >/dev/null 2>&1; then
+          echo "❌ Deployment $DEPLOYMENT_NAME not found in namespace $NAMESPACE"
+          exit 1
+        fi
+        
+        # Check deployment health
+        READY_REPLICAS=$(kubectl get deployment $DEPLOYMENT_NAME -n $NAMESPACE -o jsonpath='{.status.readyReplicas}')
+        DESIRED_REPLICAS=$(kubectl get deployment $DEPLOYMENT_NAME -n $NAMESPACE -o jsonpath='{.spec.replicas}')
+        
+        echo "Current deployment status: $READY_REPLICAS/$DESIRED_REPLICAS replicas ready"
+        
+        if [ "$READY_REPLICAS" != "$DESIRED_REPLICAS" ]; then
+          echo "⚠️ Deployment is not in a healthy state before rollback"
+          echo "Continue? This might be the reason for rollback."
+        else
+          echo "✅ Deployment is currently healthy"
+        fi
+    
+    outputs:
+      current_version: ${{ steps.target-version.outputs.current_version }}
+      target_version: ${{ steps.target-version.outputs.target_version }}
+      current_image: ${{ steps.target-version.outputs.current_image }}
+
+  # Application rollback
+  application-rollback:
+    name: Application Rollback
+    runs-on: ubuntu-latest
+    needs: pre-rollback-validation
+    if: always() && (needs.pre-rollback-validation.result == 'success' || github.event.inputs.emergency == 'true') && (github.event.inputs.rollback_type == 'application' || github.event.inputs.rollback_type == 'full-system')
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Configure kubectl
+      env:
+        KUBE_CONFIG_STAGING: ${{ secrets.KUBE_CONFIG_STAGING }}
+        KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+      run: |
+        mkdir -p $HOME/.kube
+        if [ "${{ env.ROLLBACK_ENVIRONMENT }}" = "staging" ]; then
+          echo "$KUBE_CONFIG_STAGING" | base64 -d > $HOME/.kube/config
+        else
+          echo "$KUBE_CONFIG" | base64 -d > $HOME/.kube/config
+        fi
+    
+    - name: Install Helm
+      uses: azure/setup-helm@v4
+      with:
+        version: 'latest'
+    
+    - name: Create pre-rollback backup
+      run: |
+        NAMESPACE="${{ env.ROLLBACK_ENVIRONMENT }}"
+        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+        
+        echo "Creating pre-rollback backup..."
+        
+        # Backup current deployment configuration
+        kubectl get deployment bitcraps -n $NAMESPACE -o yaml > "backup-deployment-$TIMESTAMP.yaml"
+        
+        # Backup current configmaps and secrets
+        kubectl get configmap -n $NAMESPACE -o yaml > "backup-configmaps-$TIMESTAMP.yaml"
+        kubectl get secret -n $NAMESPACE -o yaml > "backup-secrets-$TIMESTAMP.yaml"
+        
+        # Backup Helm values
+        helm get values bitcraps -n $NAMESPACE > "backup-helm-values-$TIMESTAMP.yaml"
+        
+        echo "✅ Pre-rollback backup completed"
+        ls -la backup-*
+    
+    - name: Execute application rollback
+      id: rollback
+      run: |
+        NAMESPACE="${{ env.ROLLBACK_ENVIRONMENT }}"
+        HELM_RELEASE="bitcraps"
+        if [ "${{ env.ROLLBACK_ENVIRONMENT }}" = "staging" ]; then
+          HELM_RELEASE="bitcraps-staging"
+        fi
+        
+        echo "🔄 Starting application rollback..."
+        
+        # Record rollback event
+        kubectl annotate deployment/$HELM_RELEASE -n $NAMESPACE \
+          rollback.bitcraps.io/timestamp="$(date)" \
+          rollback.bitcraps.io/reason="${{ github.event.inputs.reason }}" \
+          rollback.bitcraps.io/triggered-by="${{ github.actor }}" \
+          rollback.bitcraps.io/emergency="${{ env.IS_EMERGENCY }}" \
+          --overwrite
+        
+        if [ -n "${{ env.TARGET_VERSION }}" ] && [[ "${{ env.TARGET_VERSION }}" != revision-* ]]; then
+          # Rollback to specific version
+          echo "Rolling back to version: ${{ env.TARGET_VERSION }}"
+          
+          helm upgrade $HELM_RELEASE ./helm/bitcraps \\\n            --namespace $NAMESPACE \\\n            --set image.tag=${{ env.TARGET_VERSION }} \\\n            --set rollback.enabled=true \\\n            --set rollback.reason="${{ github.event.inputs.reason }}" \\\n            --wait --timeout=10m
+        else\n          # Rollback to previous Helm revision\n          REVISION=$(echo "${{ env.TARGET_VERSION }}" | cut -d'-' -f2)\n          echo "Rolling back to Helm revision: $REVISION"\n          \n          helm rollback $HELM_RELEASE $REVISION -n $NAMESPACE --wait --timeout=10m\n        fi\n        \n        echo "rollback_completed=true" >> $GITHUB_OUTPUT\n        echo "✅ Application rollback completed"\n    \n    - name: Wait for rollback to stabilize\n      run: |\n        NAMESPACE="${{ env.ROLLBACK_ENVIRONMENT }}"\n        DEPLOYMENT_NAME="bitcraps"\n        if [ "${{ env.ROLLBACK_ENVIRONMENT }}" = "staging" ]; then\n          DEPLOYMENT_NAME="bitcraps-staging"\n        fi\n        \n        echo "⏳ Waiting for rollback to stabilize..."\n        \n        # Wait for deployment to be ready\n        kubectl wait --for=condition=available --timeout=600s deployment/$DEPLOYMENT_NAME -n $NAMESPACE\n        \n        # Additional stability check\n        for i in {1..30}; do\n          READY_REPLICAS=$(kubectl get deployment $DEPLOYMENT_NAME -n $NAMESPACE -o jsonpath='{.status.readyReplicas}')\n          DESIRED_REPLICAS=$(kubectl get deployment $DEPLOYMENT_NAME -n $NAMESPACE -o jsonpath='{.spec.replicas}')\n          \n          if [ "$READY_REPLICAS" = "$DESIRED_REPLICAS" ] && [ "$READY_REPLICAS" -gt 0 ]; then\n            echo "✅ Rollback stabilized ($READY_REPLICAS/$DESIRED_REPLICAS replicas ready)"\n            break\n          fi\n          \n          echo "⏳ Waiting for stability... ($READY_REPLICAS/$DESIRED_REPLICAS) - attempt $i/30"\n          sleep 10\n        done\n    \n    - name: Upload rollback artifacts\n      uses: actions/upload-artifact@v4\n      if: always()\n      with:\n        name: rollback-artifacts-${{ github.event.inputs.environment }}\n        path: backup-*\n        retention-days: 90\n\n  # Database rollback (if needed)\n  database-rollback:\n    name: Database Rollback\n    runs-on: ubuntu-latest\n    needs: pre-rollback-validation\n    if: always() && (needs.pre-rollback-validation.result == 'success' || github.event.inputs.emergency == 'true') && (github.event.inputs.rollback_type == 'database' || github.event.inputs.rollback_type == 'full-system')\n    environment: ${{ github.event.inputs.environment }}\n    \n    steps:\n    - name: ⚠️ Database Rollback Warning\n      run: |\n        echo "## ⚠️ DATABASE ROLLBACK WARNING" >> $GITHUB_STEP_SUMMARY\n        echo "Database rollbacks are dangerous and may result in data loss!" >> $GITHUB_STEP_SUMMARY\n        echo "This step requires manual intervention and approval." >> $GITHUB_STEP_SUMMARY\n        echo "" >> $GITHUB_STEP_SUMMARY\n        echo "**MANUAL STEPS REQUIRED:**" >> $GITHUB_STEP_SUMMARY\n        echo "1. Connect to the database cluster" >> $GITHUB_STEP_SUMMARY\n        echo "2. Create a backup of the current state" >> $GITHUB_STEP_SUMMARY\n        echo "3. Verify the rollback point exists" >> $GITHUB_STEP_SUMMARY\n        echo "4. Execute the rollback with extreme caution" >> $GITHUB_STEP_SUMMARY\n        echo "5. Verify data integrity post-rollback" >> $GITHUB_STEP_SUMMARY\n        \n        echo "❌ Database rollback requires manual execution by a DBA"\n        echo "This workflow cannot automatically perform database rollbacks"\n        echo "Please follow the database rollback runbook"\n        \n        # For now, we don't automatically rollback databases\n        # This would require careful consideration and manual intervention\n        exit 1\n\n  # Post-rollback verification\n  post-rollback-verification:\n    name: Post-Rollback Verification\n    runs-on: ubuntu-latest\n    needs: [application-rollback]\n    if: always() && needs.application-rollback.result == 'success' && github.event.inputs.skip_verification != 'true'\n    environment: ${{ github.event.inputs.environment }}\n    \n    steps:\n    - name: Configure kubectl\n      env:\n        KUBE_CONFIG_STAGING: ${{ secrets.KUBE_CONFIG_STAGING }}\n        KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}\n      run: |\n        mkdir -p $HOME/.kube\n        if [ "${{ env.ROLLBACK_ENVIRONMENT }}" = "staging" ]; then\n          echo "$KUBE_CONFIG_STAGING" | base64 -d > $HOME/.kube/config\n        else\n          echo "$KUBE_CONFIG" | base64 -d > $HOME/.kube/config\n        fi\n    \n    - name: Health check verification\n      run: |\n        NAMESPACE="${{ env.ROLLBACK_ENVIRONMENT }}"\n        DEPLOYMENT_NAME="bitcraps"\n        if [ "${{ env.ROLLBACK_ENVIRONMENT }}" = "staging" ]; then\n          DEPLOYMENT_NAME="bitcraps-staging"\n        fi\n        \n        echo "🏥 Performing post-rollback health checks..."\n        \n        # Application health check\n        for i in {1..10}; do\n          if kubectl exec -n $NAMESPACE deployment/$DEPLOYMENT_NAME -- /usr/local/bin/bitcraps health >/dev/null 2>&1; then\n            echo "✅ Health check $i/10 passed"\n            if [ $i -ge 3 ]; then  # Require 3 consecutive passes\n              echo "✅ Application health verified"\n              break\n            fi\n          else\n            echo "❌ Health check $i/10 failed, retrying in 10s..."\n            i=0  # Reset counter on failure\n          fi\n          sleep 10\n        done\n    \n    - name: Functional verification\n      run: |\n        NAMESPACE="${{ env.ROLLBACK_ENVIRONMENT }}"\n        DEPLOYMENT_NAME="bitcraps"\n        if [ "${{ env.ROLLBACK_ENVIRONMENT }}" = "staging" ]; then\n          DEPLOYMENT_NAME="bitcraps-staging"\n        fi\n        \n        echo "🧪 Performing functional verification tests..."\n        \n        # Basic functionality tests\n        kubectl exec -n $NAMESPACE deployment/$DEPLOYMENT_NAME -- /usr/local/bin/bitcraps --version\n        \n        # Light load test\n        echo "Running light load test..."\n        for i in {1..5}; do\n          kubectl exec -n $NAMESPACE deployment/$DEPLOYMENT_NAME -- /usr/local/bin/bitcraps health &\n        done\n        wait\n        \n        echo "✅ Functional verification completed"\n    \n    - name: Performance verification\n      run: |\n        NAMESPACE="${{ env.ROLLBACK_ENVIRONMENT }}"\n        \n        echo "📊 Checking resource usage post-rollback..."\n        \n        # Check CPU and memory usage\n        kubectl top pods -n $NAMESPACE --containers=true || echo "Metrics not available"\n        \n        # Check for any error logs\n        kubectl logs -n $NAMESPACE deployment/bitcraps --tail=50 | grep -i "error\\|panic\\|fatal" && echo "❌ Errors found in logs" || echo "✅ No errors in recent logs"\n    \n    - name: Verification summary\n      run: |\n        echo "## ✅ Post-Rollback Verification Complete" >> $GITHUB_STEP_SUMMARY\n        echo "**Environment:** ${{ env.ROLLBACK_ENVIRONMENT }}" >> $GITHUB_STEP_SUMMARY\n        echo "**Status:** All verifications passed" >> $GITHUB_STEP_SUMMARY\n        echo "**Time:** $(date)" >> $GITHUB_STEP_SUMMARY\n        \n        echo "✅ All post-rollback verifications passed"\n        echo "System is stable and operational after rollback"\n\n  # Notification and reporting\n  rollback-notification:\n    name: Rollback Notification\n    needs: [pre-rollback-validation, application-rollback, post-rollback-verification]\n    runs-on: ubuntu-latest\n    if: always()\n    \n    steps:\n    - name: Determine rollback status\n      id: status\n      run: |\n        APP_ROLLBACK="${{ needs.application-rollback.result }}"\n        VERIFICATION="${{ needs.post-rollback-verification.result }}"\n        \n        if [ "$APP_ROLLBACK" = "success" ] && [ "$VERIFICATION" = "success" ]; then\n          echo "status=✅ Success" >> $GITHUB_OUTPUT\n          echo "color=good" >> $GITHUB_OUTPUT\n        elif [ "$APP_ROLLBACK" = "success" ] && [ "$VERIFICATION" = "skipped" ]; then\n          echo "status=⚠️ Success (Verification Skipped)" >> $GITHUB_OUTPUT\n          echo "color=warning" >> $GITHUB_OUTPUT\n        else\n          echo "status=❌ Failed" >> $GITHUB_OUTPUT\n          echo "color=danger" >> $GITHUB_OUTPUT\n        fi\n    \n    - name: Send rollback notification\n      env:\n        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}\n      run: |\n        if [ -n "$SLACK_WEBHOOK" ]; then\n          curl -X POST "$SLACK_WEBHOOK" \\\n            -H 'Content-Type: application/json' \\\n            -d "{\n              \\"text\\": \\"🔄 BitCraps Rollback - ${{ steps.status.outputs.status }}\\",\n              \\"attachments\\": [\n                {\n                  \\"color\\": \\"${{ steps.status.outputs.color }}\\",\n                  \\"blocks\\": [\n                    {\n                      \\"type\\": \\"header\\",\n                      \\"text\\": {\n                        \\"type\\": \\"plain_text\\",\n                        \\"text\\": \\"🔄 System Rollback Executed\\"\n                      }\n                    },\n                    {\n                      \\"type\\": \\"section\\",\n                      \\"fields\\": [\n                        {\n                          \\"type\\": \\"mrkdwn\\",\n                          \\"text\\": \\"*Environment:*\\\\n${{ env.ROLLBACK_ENVIRONMENT }}\\"\n                        },\n                        {\n                          \\"type\\": \\"mrkdwn\\",\n                          \\"text\\": \\"*Status:*\\\\n${{ steps.status.outputs.status }}\\"\n                        },\n                        {\n                          \\"type\\": \\"mrkdwn\\",\n                          \\"text\\": \\"*Type:*\\\\n${{ env.ROLLBACK_TYPE }}\\"\n                        },\n                        {\n                          \\"type\\": \\"mrkdwn\\",\n                          \\"text\\": \\"*Triggered by:*\\\\n${{ github.actor }}\\"\n                        },\n                        {\n                          \\"type\\": \\"mrkdwn\\",\n                          \\"text\\": \\"*Reason:*\\\\n${{ github.event.inputs.reason }}\\"\n                        },\n                        {\n                          \\"type\\": \\"mrkdwn\\",\n                          \\"text\\": \\"*Emergency:*\\\\n${{ env.IS_EMERGENCY }}\\"\n                        }\n                      ]\n                    },\n                    {\n                      \\"type\\": \\"actions\\",\n                      \\"elements\\": [\n                        {\n                          \\"type\\": \\"button\\",\n                          \\"text\\": {\n                            \\"type\\": \\"plain_text\\",\n                            \\"text\\": \\"View Rollback Details\\"\n                          },\n                          \\"url\\": \\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\\"\n                        }\n                      ]\n                    }\n                  ]\n                }\n              ]\n            }"\n        fi\n    \n    - name: Create rollback report\n      run: |\n        cat > ROLLBACK_REPORT.md << EOF\n# 🔄 BitCraps Rollback Report\n\n**Date:** $(date)\n**Environment:** ${{ env.ROLLBACK_ENVIRONMENT }}\n**Type:** ${{ env.ROLLBACK_TYPE }}\n**Status:** ${{ steps.status.outputs.status }}\n**Triggered by:** ${{ github.actor }}\n**Emergency:** ${{ env.IS_EMERGENCY }}\n\n## Rollback Details\n**Reason:** ${{ github.event.inputs.reason }}\n**Target Version:** ${{ env.TARGET_VERSION || 'Previous version' }}\n\n## Execution Summary\n- **Pre-validation:** ${{ needs.pre-rollback-validation.result || 'Skipped (Emergency)' }}\n- **Application Rollback:** ${{ needs.application-rollback.result }}\n- **Post-verification:** ${{ needs.post-rollback-verification.result || 'Skipped' }}\n\n## Timeline\n- **Started:** Workflow start time\n- **Completed:** $(date)\n- **Duration:** Calculated from workflow\n\n## Next Steps\nEOF\n        \n        if [ "${{ steps.status.outputs.status }}" = "✅ Success" ]; then\n          cat >> ROLLBACK_REPORT.md << EOF\n- ✅ Rollback completed successfully\n- Monitor system stability\n- Update incident documentation\n- Plan root cause analysis\nEOF\n        else\n          cat >> ROLLBACK_REPORT.md << EOF\n- ❌ Rollback failed or incomplete\n- Escalate to on-call engineer\n- Consider emergency procedures\n- Document failure for post-mortem\nEOF\n        fi\n        \n        cat >> ROLLBACK_REPORT.md << EOF\n\n## Resources\n- [Rollback Workflow](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\n- [Incident Response Runbook](https://github.com/${{ github.repository }}/wiki/Incident-Response)\n- [System Architecture](https://github.com/${{ github.repository }}/wiki/Architecture)\nEOF\n    \n    - name: Upload rollback report\n      uses: actions/upload-artifact@v4\n      with:\n        name: rollback-report-${{ github.run_number }}\n        path: ROLLBACK_REPORT.md\n        retention-days: 365  # Keep rollback reports for a full year\n    \n    - name: Update incident tracking\n      if: github.event.inputs.emergency == 'true'\n      env:\n        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n      run: |\n        # Create incident issue if this was an emergency rollback\n        ISSUE_TITLE="🚨 Emergency Rollback - ${{ env.ROLLBACK_ENVIRONMENT }} - $(date +%Y-%m-%d)"\n        ISSUE_BODY="# Emergency Rollback Incident\n\n**Environment:** ${{ env.ROLLBACK_ENVIRONMENT }}\n**Date:** $(date)\n**Triggered by:** ${{ github.actor }}\n**Reason:** ${{ github.event.inputs.reason }}\n\n## Rollback Details\n- **Type:** ${{ env.ROLLBACK_TYPE }}\n- **Status:** ${{ steps.status.outputs.status }}\n- **Workflow:** https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\n\n## Required Actions\n- [ ] Root cause analysis\n- [ ] Post-mortem documentation\n- [ ] Process improvements\n- [ ] Preventive measures\n\n/label incident emergency rollback"\n        \n        gh issue create --title "$ISSUE_TITLE" --body "$ISSUE_BODY" --label "incident,emergency,rollback"

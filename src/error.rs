@@ -5,6 +5,9 @@ use thiserror::Error;
 /// Result type alias for BitChat operations
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Alias for backward compatibility
+pub type BitCrapsError = Error;
+
 /// BitChat error types
 #[derive(Debug, Error)]
 pub enum Error {
@@ -82,6 +85,15 @@ pub enum Error {
     
     #[error("Database error: {0}")]
     Database(String),
+    
+    #[error("Cache error: {0}")]
+    Cache(String),
+    
+    #[error("Query error: {0}")]
+    Query(String),
+    
+    #[error("Format error: {0}")]
+    Format(#[from] std::fmt::Error),
     
     // Byzantine Fault Tolerance errors
     #[error("Invalid proposal: {0}")]

@@ -1,0 +1,219 @@
+# Network Policy for BitCraps Core Nodes
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bitcraps-core-netpol
+  namespace: bitcraps-production
+spec:
+  podSelector:
+    matchLabels:
+      app: bitcraps
+      component: core
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow P2P communication from other core nodes
+  - from:
+    - podSelector:
+        matchLabels:
+          app: bitcraps
+          component: core
+    ports:
+    - protocol: TCP
+      port: 8334
+  # Allow health checks from load balancer
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 8080
+  # Allow metrics scraping from Prometheus
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: bitcraps-monitoring
+    ports:
+    - protocol: TCP
+      port: 9091
+  # Allow gateway connections
+  - from:
+    - podSelector:
+        matchLabels:
+          app: bitcraps
+          component: gateway
+    ports:
+    - protocol: TCP
+      port: 8334
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow database connections
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow P2P communication to other core nodes
+  - to:
+    - podSelector:
+        matchLabels:
+          app: bitcraps
+          component: core
+    ports:
+    - protocol: TCP
+      port: 8334
+  # Allow HTTPS for external APIs (if needed)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+# Network Policy for BitCraps Gateway Nodes
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bitcraps-gateway-netpol
+  namespace: bitcraps-production
+spec:
+  podSelector:
+    matchLabels:
+      app: bitcraps
+      component: gateway
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow external connections
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 8335
+  # Allow health checks
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 8080
+  # Allow metrics scraping
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: bitcraps-monitoring
+    ports:
+    - protocol: TCP
+      port: 9091
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow connections to core nodes
+  - to:
+    - podSelector:
+        matchLabels:
+          app: bitcraps
+          component: core
+    ports:
+    - protocol: TCP
+      port: 8334
+  # Allow TURN server connections
+  - to:
+    - podSelector:
+        matchLabels:
+          app: bitcraps
+          component: turn
+    ports:
+    - protocol: TCP
+      port: 3478
+    - protocol: UDP
+      port: 3478
+    - protocol: TCP
+      port: 5349
+    - protocol: UDP
+      port: 5349
+
+---
+# Network Policy for Database
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-netpol
+  namespace: bitcraps-production
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow connections only from BitCraps core nodes
+  - from:
+    - podSelector:
+        matchLabels:
+          app: bitcraps
+          component: core
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow connections from backup/maintenance jobs
+  - from:
+    - podSelector:
+        matchLabels:
+          app: bitcraps
+          component: backup
+    ports:
+    - protocol: TCP
+      port: 5432
+
+---
+# Network Policy for TURN Server
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: turn-netpol
+  namespace: bitcraps-production
+spec:
+  podSelector:
+    matchLabels:
+      app: bitcraps
+      component: turn
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow external TURN/STUN connections
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 3478
+    - protocol: UDP
+      port: 3478
+    - protocol: TCP
+      port: 5349
+    - protocol: UDP
+      port: 5349
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow relay connections to anywhere (TURN requirement)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 1024-65535
+    - protocol: UDP
+      port: 1024-65535

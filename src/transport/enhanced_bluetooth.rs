@@ -6,15 +6,16 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock, Mutex};
+use tokio::sync::{RwLock, Mutex};
 use async_trait::async_trait;
 
 use crate::protocol::PeerId;
 use crate::transport::{
     Transport, TransportAddress, TransportEvent, BluetoothTransport,
     BlePeripheral, BlePeripheralFactory, AdvertisingConfig, PeripheralEvent, PeripheralStats,
-    bounded_queue::{BoundedTransportEventQueue, BoundedTransportEventSender, BoundedTransportEventReceiver, QueueConfig, OverflowBehavior},
-    crypto::{TransportCrypto, ConnectionPriority, ConnectionScore}
+    bounded_queue::{BoundedTransportEventQueue, BoundedTransportEventSender, BoundedTransportEventReceiver},
+    crypto::{TransportCrypto, ConnectionPriority},
+    ble_peripheral::ConnectionState,
 };
 use crate::error::{Error, Result};
 
@@ -473,6 +474,57 @@ impl EnhancedBluetoothTransport {
                     
                     Some(PeripheralEvent::AdvertisingStopped) => {
                         log::info!("Peripheral advertising stopped");
+                    }
+                    
+                    Some(PeripheralEvent::AdvertisingFailed { error, retry_suggested, retry_delay_ms }) => {
+                        log::error!("Peripheral advertising failed: {} (retry: {}, delay: {}ms)", 
+                                   error, retry_suggested, retry_delay_ms);
+                        let _ = event_sender.send(TransportEvent::Error {
+                            peer_id: None,
+                            error: format!("BLE advertising failed: {}", error),
+                        }).await;
+                    }
+                    
+                    Some(PeripheralEvent::ConnectionStateChanged { peer_id, state }) => {
+                        match state {
+                            ConnectionState::Connected => {
+                                log::info!("Peripheral connected to peer: {:?}", peer_id);
+                                let _ = event_sender.send(TransportEvent::Connected {
+                                    peer_id,
+                                    address: TransportAddress::Bluetooth("peripheral".to_string()),
+                                }).await;
+                            }
+                            ConnectionState::Disconnected => {
+                                log::info!("Peripheral disconnected from peer: {:?}", peer_id);
+                                let _ = event_sender.send(TransportEvent::Disconnected {
+                                    peer_id,
+                                    reason: "BLE peripheral connection closed".to_string(),
+                                }).await;
+                            }
+                            ConnectionState::Connecting => {
+                                log::debug!("Peripheral connecting to peer: {:?}", peer_id);
+                            }
+                            ConnectionState::Authenticating => {
+                                log::debug!("Peripheral authenticating with peer: {:?}", peer_id);
+                            }
+                            ConnectionState::Ready => {
+                                log::debug!("Peripheral ready for communication with peer: {:?}", peer_id);
+                            }
+                            ConnectionState::Disconnecting => {
+                                log::debug!("Peripheral disconnecting from peer: {:?}", peer_id);
+                            }
+                            ConnectionState::Error(error) => {
+                                log::error!("Peripheral connection error with peer {:?}: {}", peer_id, error);
+                                let _ = event_sender.send(TransportEvent::Error {
+                                    peer_id: Some(peer_id),
+                                    error: format!("BLE peripheral connection error: {}", error),
+                                }).await;
+                            }
+                        }
+                    }
+                    
+                    Some(PeripheralEvent::PlatformEvent { platform, event_data }) => {
+                        log::debug!("Platform-specific peripheral event on {}: {:?}", platform, event_data);
                     }
                     
                     None => {

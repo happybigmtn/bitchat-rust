@@ -1,0 +1,24 @@
+# Kubernetes Namespaces for BitCraps
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bitcraps-production
+  labels:
+    environment: production
+    app: bitcraps
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bitcraps-staging
+  labels:
+    environment: staging
+    app: bitcraps
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bitcraps-monitoring
+  labels:
+    environment: shared
+    app: monitoring

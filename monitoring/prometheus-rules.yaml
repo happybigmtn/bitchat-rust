@@ -1,0 +1,331 @@
+# BitCraps Prometheus Alerting Rules
+# Comprehensive monitoring and alerting configuration
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: bitcraps-alerts
+  namespace: bitcraps-monitoring
+  labels:
+    app: bitcraps
+    component: monitoring
+spec:
+  groups:
+  # Application Health Alerts
+  - name: bitcraps.health
+    rules:
+    - alert: BitCrapsDown
+      expr: up{job="bitcraps"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: bitcraps
+      annotations:
+        summary: "BitCraps instance {{ $labels.instance }} is down"
+        description: "BitCraps instance {{ $labels.instance }} has been down for more than 1 minute."
+        runbook_url: "https://docs.bitcraps.io/runbooks/instance-down"
+    
+    - alert: BitCrapsHighErrorRate
+      expr: rate(bitcraps_http_requests_total{status=~"5.."}[5m]) / rate(bitcraps_http_requests_total[5m]) > 0.05
+      for: 2m
+      labels:
+        severity: warning
+        service: bitcraps
+      annotations:
+        summary: "High error rate on {{ $labels.instance }}"
+        description: "Error rate is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+        runbook_url: "https://docs.bitcraps.io/runbooks/high-error-rate"
+    
+    - alert: BitCrapsSlowResponse
+      expr: histogram_quantile(0.99, rate(bitcraps_http_request_duration_seconds_bucket[5m])) > 2
+      for: 5m
+      labels:
+        severity: warning
+        service: bitcraps
+      annotations:
+        summary: "Slow response times on {{ $labels.instance }}"
+        description: "99th percentile response time is {{ $value }}s on {{ $labels.instance }}"
+        runbook_url: "https://docs.bitcraps.io/runbooks/slow-response"
+
+  # Consensus System Alerts
+  - name: bitcraps.consensus
+    rules:
+    - alert: ConsensusFailure
+      expr: bitcraps_consensus_failures_total > 0
+      for: 1m
+      labels:
+        severity: critical
+        service: consensus
+      annotations:
+        summary: "Consensus failure detected on {{ $labels.instance }}"
+        description: "{{ $value }} consensus failures detected in the last minute"
+        runbook_url: "https://docs.bitcraps.io/runbooks/consensus-failure"
+    
+    - alert: ConsensusSlowFinality
+      expr: histogram_quantile(0.95, rate(bitcraps_consensus_finality_duration_seconds_bucket[5m])) > 30
+      for: 3m
+      labels:
+        severity: warning
+        service: consensus
+      annotations:
+        summary: "Slow consensus finality on {{ $labels.instance }}"
+        description: "95th percentile consensus finality time is {{ $value }}s"
+        runbook_url: "https://docs.bitcraps.io/runbooks/slow-consensus"
+    
+    - alert: LowParticipationRate
+      expr: bitcraps_consensus_participation_rate < 0.67
+      for: 5m
+      labels:
+        severity: warning
+        service: consensus
+      annotations:
+        summary: "Low consensus participation on {{ $labels.instance }}"
+        description: "Consensus participation rate is {{ $value | humanizePercentage }}"
+        runbook_url: "https://docs.bitcraps.io/runbooks/low-participation"
+
+  # Database Alerts
+  - name: bitcraps.database
+    rules:
+    - alert: DatabaseConnectionsHigh
+      expr: bitcraps_database_connections_active / bitcraps_database_connections_max > 0.8
+      for: 2m
+      labels:
+        severity: warning
+        service: database
+      annotations:
+        summary: "High database connection usage on {{ $labels.instance }}"
+        description: "Database connection usage is {{ $value | humanizePercentage }}"
+        runbook_url: "https://docs.bitcraps.io/runbooks/high-db-connections"
+    
+    - alert: DatabaseSlowQueries
+      expr: rate(bitcraps_database_query_duration_seconds_sum[5m]) / rate(bitcraps_database_query_duration_seconds_count[5m]) > 1
+      for: 3m
+      labels:
+        severity: warning
+        service: database
+      annotations:
+        summary: "Slow database queries on {{ $labels.instance }}"
+        description: "Average query time is {{ $value }}s"
+        runbook_url: "https://docs.bitcraps.io/runbooks/slow-queries"
+    
+    - alert: DatabaseLockWaits
+      expr: rate(bitcraps_database_lock_waits_total[5m]) > 10
+      for: 2m
+      labels:
+        severity: warning
+        service: database
+      annotations:
+        summary: "High database lock waits on {{ $labels.instance }}"
+        description: "{{ $value }} lock waits per second"
+        runbook_url: "https://docs.bitcraps.io/runbooks/database-locks"
+
+  # Gaming System Alerts
+  - name: bitcraps.gaming
+    rules:
+    - alert: GameStateInconsistency
+      expr: bitcraps_game_state_inconsistencies_total > 0
+      for: 0s  # Immediate alert
+      labels:
+        severity: critical
+        service: gaming
+      annotations:
+        summary: "Game state inconsistency detected on {{ $labels.instance }}"
+        description: "{{ $value }} game state inconsistencies detected"
+        runbook_url: "https://docs.bitcraps.io/runbooks/game-inconsistency"
+    
+    - alert: HighGameLatency
+      expr: histogram_quantile(0.95, rate(bitcraps_game_action_duration_seconds_bucket[5m])) > 5
+      for: 2m
+      labels:
+        severity: warning
+        service: gaming
+      annotations:
+        summary: "High game action latency on {{ $labels.instance }}"
+        description: "95th percentile game action time is {{ $value }}s"
+        runbook_url: "https://docs.bitcraps.io/runbooks/high-game-latency"
+    
+    - alert: SuspiciousWinRate
+      expr: bitcraps_player_win_rate > 0.8 or bitcraps_player_win_rate < 0.2
+      for: 10m
+      labels:
+        severity: warning
+        service: security
+      annotations:
+        summary: "Suspicious win rate detected for player {{ $labels.player_id }}"
+        description: "Win rate is {{ $value | humanizePercentage }} for player {{ $labels.player_id }}"
+        runbook_url: "https://docs.bitcraps.io/runbooks/suspicious-activity"
+
+  # Security Alerts
+  - name: bitcraps.security
+    rules:
+    - alert: FailedAuthenticationSpike
+      expr: rate(bitcraps_authentication_failures_total[5m]) > 10
+      for: 1m
+      labels:
+        severity: warning
+        service: security
+      annotations:
+        summary: "Authentication failure spike on {{ $labels.instance }}"
+        description: "{{ $value }} authentication failures per second"
+        runbook_url: "https://docs.bitcraps.io/runbooks/auth-failures"
+    
+    - alert: UnauthorizedAccessAttempt
+      expr: bitcraps_unauthorized_access_attempts_total > 0
+      for: 0s
+      labels:
+        severity: critical
+        service: security
+      annotations:
+        summary: "Unauthorized access attempt on {{ $labels.instance }}"
+        description: "{{ $value }} unauthorized access attempts detected"
+        runbook_url: "https://docs.bitcraps.io/runbooks/unauthorized-access"
+    
+    - alert: AnomalousTransactionPattern
+      expr: bitcraps_anomalous_transactions_total > 0
+      for: 0s
+      labels:
+        severity: warning
+        service: security
+      annotations:
+        summary: "Anomalous transaction pattern detected on {{ $labels.instance }}"
+        description: "{{ $value }} anomalous transactions detected"
+        runbook_url: "https://docs.bitcraps.io/runbooks/anomalous-transactions"
+
+  # Resource Utilization Alerts
+  - name: bitcraps.resources
+    rules:
+    - alert: HighCPUUsage
+      expr: rate(process_cpu_seconds_total{job="bitcraps"}[5m]) > 0.8
+      for: 5m
+      labels:
+        severity: warning
+        service: bitcraps
+      annotations:
+        summary: "High CPU usage on {{ $labels.instance }}"
+        description: "CPU usage is {{ $value | humanizePercentage }}"
+        runbook_url: "https://docs.bitcraps.io/runbooks/high-cpu"
+    
+    - alert: HighMemoryUsage
+      expr: process_resident_memory_bytes{job="bitcraps"} / node_memory_MemTotal_bytes > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        service: bitcraps
+      annotations:
+        summary: "High memory usage on {{ $labels.instance }}"
+        description: "Memory usage is {{ $value | humanizePercentage }}"
+        runbook_url: "https://docs.bitcraps.io/runbooks/high-memory"
+    
+    - alert: DiskSpaceLow
+      expr: (node_filesystem_avail_bytes{mountpoint="/data"} / node_filesystem_size_bytes{mountpoint="/data"}) < 0.1
+      for: 5m
+      labels:
+        severity: warning
+        service: system
+      annotations:
+        summary: "Low disk space on {{ $labels.instance }}"
+        description: "Disk space is {{ $value | humanizePercentage }} full"
+        runbook_url: "https://docs.bitcraps.io/runbooks/low-disk-space"
+
+  # Network and Connectivity Alerts
+  - name: bitcraps.network
+    rules:
+    - alert: P2PConnectionsLow
+      expr: bitcraps_p2p_connections_active < 3
+      for: 2m
+      labels:
+        severity: warning
+        service: network
+      annotations:
+        summary: "Low P2P connections on {{ $labels.instance }}"
+        description: "Only {{ $value }} active P2P connections"
+        runbook_url: "https://docs.bitcraps.io/runbooks/low-connections"
+    
+    - alert: NetworkPartition
+      expr: bitcraps_network_partition_detected > 0
+      for: 1m
+      labels:
+        severity: critical
+        service: network
+      annotations:
+        summary: "Network partition detected on {{ $labels.instance }}"
+        description: "Network partition detected, consensus may be affected"
+        runbook_url: "https://docs.bitcraps.io/runbooks/network-partition"
+    
+    - alert: HighNetworkLatency
+      expr: bitcraps_network_latency_seconds > 0.5
+      for: 3m
+      labels:
+        severity: warning
+        service: network
+      annotations:
+        summary: "High network latency on {{ $labels.instance }}"
+        description: "Network latency is {{ $value }}s"
+        runbook_url: "https://docs.bitcraps.io/runbooks/high-latency"
+
+  # Business Metrics Alerts
+  - name: bitcraps.business
+    rules:
+    - alert: LowActiveGames
+      expr: bitcraps_games_active < 5
+      for: 10m
+      labels:
+        severity: info
+        service: business
+      annotations:
+        summary: "Low number of active games"
+        description: "Only {{ $value }} active games across the network"
+        runbook_url: "https://docs.bitcraps.io/runbooks/low-activity"
+    
+    - alert: TreasuryBalanceLow
+      expr: bitcraps_treasury_balance_tokens < bitcraps_treasury_min_reserve_tokens
+      for: 5m
+      labels:
+        severity: warning
+        service: treasury
+      annotations:
+        summary: "Treasury balance below minimum reserve"
+        description: "Treasury balance is {{ $value }} tokens"
+        runbook_url: "https://docs.bitcraps.io/runbooks/low-treasury"
+    
+    - alert: HighHouseExposure
+      expr: bitcraps_treasury_exposure_tokens > bitcraps_treasury_max_exposure_tokens * 0.9
+      for: 2m
+      labels:
+        severity: warning
+        service: treasury
+      annotations:
+        summary: "High house exposure detected"
+        description: "House exposure is {{ $value }} tokens"
+        runbook_url: "https://docs.bitcraps.io/runbooks/high-exposure"
+
+  # SLA and Performance Targets
+  - name: bitcraps.sla
+    rules:
+    - alert: SLAAvailabilityBreach
+      expr: |
+        (
+          1 - (
+            rate(bitcraps_http_requests_total{status!~"5.."}[1h]) /
+            rate(bitcraps_http_requests_total[1h])
+          )
+        ) > 0.001  # 99.9% availability target
+      for: 5m
+      labels:
+        severity: critical
+        service: sla
+      annotations:
+        summary: "SLA availability breach detected"
+        description: "Availability is {{ $value | humanizePercentage }} (target: 99.9%)"
+        runbook_url: "https://docs.bitcraps.io/runbooks/sla-breach"
+    
+    - alert: SLALatencyBreach
+      expr: histogram_quantile(0.95, rate(bitcraps_http_request_duration_seconds_bucket[5m])) > 1
+      for: 5m
+      labels:
+        severity: warning
+        service: sla
+      annotations:
+        summary: "SLA latency target exceeded"
+        description: "95th percentile latency is {{ $value }}s (target: <1s)"
+        runbook_url: "https://docs.bitcraps.io/runbooks/sla-latency"

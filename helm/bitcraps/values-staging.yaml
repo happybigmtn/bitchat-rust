@@ -1,0 +1,274 @@
+# Staging Values for BitCraps Helm Chart
+
+# Staging deployment configuration
+replicaCount: 2
+image:
+  repository: ghcr.io/bitcraps/bitchat-rust
+  pullPolicy: Always
+  tag: "develop"
+
+# Staging service account
+serviceAccount:
+  create: true
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/bitcraps-staging-role"
+
+# Standard security context for staging
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  fsGroup: 1001
+
+securityContext:
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1001
+  allowPrivilegeEscalation: false
+
+# Staging service configuration
+service:
+  type: LoadBalancer
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+  ports:
+    http:
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+    p2p:
+      port: 8334
+      targetPort: 8334
+      protocol: TCP
+    gateway:
+      port: 8335
+      targetPort: 8335
+      protocol: TCP
+    metrics:
+      port: 9091
+      targetPort: 9091
+      protocol: TCP
+
+# Staging ingress
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-west-2:ACCOUNT_ID:certificate/STAGING_CERT_ID"
+  hosts:
+    - host: staging-api.bitcraps.io
+      paths:
+        - path: /
+          pathType: Prefix
+    - host: staging-gateway.bitcraps.io
+      paths:
+        - path: /
+          pathType: Prefix
+
+# Staging resource allocation
+resources:
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+    ephemeral-storage: 5Gi
+  requests:
+    cpu: 250m
+    memory: 512Mi
+    ephemeral-storage: 2Gi
+
+# Staging autoscaling
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 60
+  targetMemoryUtilizationPercentage: 70
+
+# Staging node selection
+nodeSelector:
+  kubernetes.io/os: linux
+  bitcraps.io/node-pool: "staging"
+
+# Staging tolerations
+tolerations:
+- key: "bitcraps.io/dedicated"
+  operator: "Equal"
+  value: "staging"
+  effect: "NoSchedule"
+
+# Staging persistence
+persistence:
+  enabled: true
+  storageClass: gp3-encrypted
+  accessMode: ReadWriteOnce
+  size: 100Gi
+  mountPath: /data
+
+# Staging health checks
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 8080
+  initialDelaySeconds: 15
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# Staging configuration
+config:
+  logLevel: debug
+  environment: staging
+  meshNetwork:
+    maxPeers: 100
+    discoveryInterval: 30
+    heartbeatInterval: 15
+    enableEncryption: true
+  consensus:
+    minParticipants: 2
+    maxParticipants: 20
+    proposalTimeout: 10
+    votingTimeout: 5
+    finalityThreshold: 0.67
+    byzantineTolerance: 0.33
+  database:
+    url: "postgresql://bitcraps:${POSTGRES_PASSWORD}@bitcraps-postgresql:5432/bitcraps_staging"
+    maxConnections: 20
+    walMode: true
+    checkpointInterval: 60
+  security:
+    tlsEnabled: false  # Disabled for easier debugging
+    enforceEncryption: false
+    powDifficulty: 8
+    enableRateLimiting: false
+  monitoring:
+    enableMetrics: true
+    metricsPort: 9091
+    enableTracing: true
+    healthCheckInterval: 30
+
+# Staging PostgreSQL
+postgresql:
+  enabled: true
+  auth:
+    existingSecret: bitcraps-database-credentials
+    secretKeys:
+      adminPasswordKey: postgres-password
+      userPasswordKey: password
+    username: bitcraps
+    database: bitcraps_staging
+  primary:
+    persistence:
+      enabled: true
+      size: 100Gi
+      storageClass: gp3-encrypted
+    resources:
+      requests:
+        memory: 1Gi
+        cpu: 500m
+      limits:
+        memory: 2Gi
+        cpu: 1000m
+
+# Staging Redis
+redis:
+  enabled: true
+  auth:
+    enabled: true
+    existingSecret: bitcraps-redis-credentials
+    existingSecretPasswordKey: password
+  master:
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: gp3-encrypted
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 100m
+      limits:
+        memory: 512Mi
+        cpu: 250m
+  replica:
+    replicaCount: 1
+
+# Staging monitoring
+monitoring:
+  enabled: true
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+      path: /metrics
+  grafana:
+    enabled: true
+    adminUser: admin
+    adminPasswordExistingSecret: bitcraps-grafana-credentials
+    adminPasswordKey: password
+    dashboards:
+      enabled: true
+
+# Staging backup
+backup:
+  enabled: true
+  schedule: "0 3 * * *"  # Daily at 3 AM
+  retention: 7  # Days
+  destination:
+    type: s3
+    bucket: bitcraps-staging-backups
+    region: us-west-2
+    credentials:
+      secretName: bitcraps-backup-credentials
+
+# Staging network policies (less restrictive)
+networkPolicy:
+  enabled: false  # Disabled for easier debugging
+
+# Staging pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Staging environment variables
+env:
+  - name: RUST_LOG
+    value: "debug"
+  - name: BITCRAPS_ENV
+    value: "staging"
+  - name: BITCRAPS_CONFIG
+    value: "/etc/bitcraps/staging.toml"
+  - name: AWS_REGION
+    value: "us-west-2"
+  - name: POD_NAME
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.name
+  - name: POD_NAMESPACE
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.namespace
+
+# Additional staging configurations
+extraLabels:
+  environment: staging
+  tier: staging
+
+# Debug features for staging
+debugFeatures:
+  enabled: true
+  logRequests: true
+  enableProfiling: true
+  metricsVerbose: true

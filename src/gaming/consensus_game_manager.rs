@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock, Mutex};
 use tokio::time::interval;
+use serde::{Serialize, Deserialize};
 use uuid;
 
 use crate::protocol::{PeerId, GameId};
@@ -90,7 +91,7 @@ pub struct ConsensusGameSession {
 }
 
 /// Game events for external handling
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GameEvent {
     GameCreated { game_id: GameId, creator: PeerId },
     PlayerJoined { game_id: GameId, player: PeerId },

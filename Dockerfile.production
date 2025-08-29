@@ -1,0 +1,90 @@
+# Multi-stage production Dockerfile for BitCraps
+# Optimized for security, performance, and minimal image size
+
+# Build stage - Use official Rust image with tools
+FROM rust:1.75-bookworm as builder
+
+# Install system dependencies for compilation
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    libsqlite3-dev \
+    libpq-dev \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for building
+RUN useradd -m -u 1001 builder
+USER builder
+WORKDIR /home/builder
+
+# Copy dependency manifests first for better caching
+COPY --chown=builder:builder Cargo.toml Cargo.lock build.rs ./
+COPY --chown=builder:builder src/bitcraps.udl ./src/
+
+# Create dummy main.rs to build dependencies
+RUN mkdir -p src && echo "fn main() {}" > src/main.rs
+
+# Build dependencies (this layer will be cached)
+RUN cargo build --release && rm -rf src target/release/deps/bitcraps*
+
+# Copy source code
+COPY --chown=builder:builder src/ ./src/
+COPY --chown=builder:builder examples/ ./examples/
+COPY --chown=builder:builder tests/ ./tests/
+COPY --chown=builder:builder benches/ ./benches/
+
+# Build the application with optimizations
+RUN cargo build --release --bin bitcraps
+
+# Strip the binary to reduce size
+RUN strip target/release/bitcraps
+
+# Runtime stage - Use distroless for minimal attack surface
+FROM gcr.io/distroless/cc-debian12:nonroot
+
+# Copy CA certificates
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+# Create application directory
+WORKDIR /app
+
+# Copy the binary from builder stage
+COPY --from=builder /home/builder/target/release/bitcraps /usr/local/bin/bitcraps
+
+# Copy configuration templates (will be overridden by ConfigMaps in K8s)
+COPY --chown=nonroot:nonroot config/ /etc/bitcraps/
+
+# Create data directory with proper permissions
+USER root
+RUN mkdir -p /data /tmp/bitcraps && \
+    chown -R nonroot:nonroot /data /tmp/bitcraps
+
+# Switch to non-root user
+USER nonroot
+
+# Set environment variables
+ENV RUST_LOG=info
+ENV BITCRAPS_DATA_DIR=/data
+ENV BITCRAPS_CONFIG=/etc/bitcraps/production.toml
+
+# Expose ports
+EXPOSE 8334 8335 8080 9091
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD ["bitcraps", "health"]
+
+# Run the application
+CMD ["bitcraps"]
+
+# Labels for metadata
+LABEL org.opencontainers.image.title="BitCraps" \
+      org.opencontainers.image.description="Decentralized P2P mesh network for secure gaming" \
+      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.vendor="BitCraps Team" \
+      org.opencontainers.image.licenses="MIT OR Apache-2.0" \
+      org.opencontainers.image.source="https://github.com/bitcraps/bitchat-rust" \
+      org.opencontainers.image.documentation="https://docs.bitcraps.io" \
+      security.scan.required="true" \
+      maintainer="team@bitcraps.io"

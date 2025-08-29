@@ -42,7 +42,7 @@ impl RealMetricsCollector {
         let system = self.system.read().await;
         
         // Get process CPU usage
-        if let Some(process) = system.process(self.process_id.into()) {
+        if let Some(process) = system.process((self.process_id as usize).into()) {
             process.cpu_usage() as f64
         } else {
             // Fallback to global CPU usage
@@ -56,7 +56,7 @@ impl RealMetricsCollector {
         
         let system = self.system.read().await;
         
-        if let Some(process) = system.process(self.process_id.into()) {
+        if let Some(process) = system.process((self.process_id as usize).into()) {
             // Convert from KB to MB
             (process.memory() as f64) / 1024.0
         } else {
@@ -199,13 +199,13 @@ pub mod compression {
     }
     
     /// LZ4 compression for real-time data
-    pub fn compress_lz4(data: &[u8]) -> Result<Vec<u8>, lz4::block::Error> {
-        lz4::block::compress(data, Some(lz4::block::CompressionMode::DEFAULT), true)
+    pub fn compress_lz4(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+        Ok(lz4_flex::compress_prepend_size(data))
     }
     
     /// LZ4 decompression
-    pub fn decompress_lz4(data: &[u8]) -> Result<Vec<u8>, lz4::block::Error> {
-        lz4::block::decompress(data, None)
+    pub fn decompress_lz4(data: &[u8]) -> Result<Vec<u8>, lz4_flex::block::DecompressError> {
+        lz4_flex::decompress_size_prepended(data)
     }
 }
 

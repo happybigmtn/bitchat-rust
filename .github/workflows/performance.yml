@@ -1,0 +1,209 @@
+name: Performance Monitoring & Benchmarks
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  schedule:
+    # Run performance benchmarks weekly on Sundays at 2 AM UTC
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      benchmark_type:
+        description: 'Type of benchmark to run'
+        required: false
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - core
+          - crypto
+          - network
+          - consensus
+          - mobile
+      comparison_baseline:
+        description: 'Baseline commit/tag for comparison'
+        required: false
+      environment:
+        description: 'Environment to run load tests against'
+        required: false
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - staging
+          - performance-test
+      duration_minutes:
+        description: 'Load test duration in minutes'
+        required: false
+        default: '10'
+
+env:
+  BENCHMARK_TYPE: ${{ github.event.inputs.benchmark_type || 'full' }}
+  COMPARISON_BASELINE: ${{ github.event.inputs.comparison_baseline }}
+  LOAD_TEST_ENV: ${{ github.event.inputs.environment || 'none' }}
+  LOAD_TEST_DURATION: ${{ github.event.inputs.duration_minutes || '10' }}
+
+jobs:
+  # Rust benchmark suite
+  rust-benchmarks:
+    name: Rust Benchmarks
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        submodules: recursive
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: benchmarks
+        cache-on-failure: true
+    
+    - name: Install benchmark tools
+      run: |
+        cargo install cargo-criterion --locked
+        sudo apt-get update
+        sudo apt-get install -y valgrind
+    
+    - name: System information
+      run: |
+        echo "## 🖥️ System Information" >> $GITHUB_STEP_SUMMARY
+        echo "**CPU:**" >> $GITHUB_STEP_SUMMARY
+        lscpu | grep -E "Model name|CPU\\(s\\)|Thread\\(s\\)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Memory:**" >> $GITHUB_STEP_SUMMARY
+        free -h >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Disk:**" >> $GITHUB_STEP_SUMMARY
+        df -h / >> $GITHUB_STEP_SUMMARY
+    
+    - name: Core benchmarks
+      if: env.BENCHMARK_TYPE == 'full' || env.BENCHMARK_TYPE == 'core'
+      run: |
+        echo "🚀 Running core benchmarks..."
+        
+        # Core functionality benchmarks
+        cargo bench --features benchmarks -- --output-format json | tee core-benchmark-output.json
+        
+        # Generate summary
+        echo "## 🎯 Core Benchmarks" >> benchmark-summary.md
+        python3 -c "
+        import json
+        import sys
+        
+        try:
+            with open('core-benchmark-output.json', 'r') as f:
+                for line in f:
+                    try:
+                        data = json.loads(line)
+                        if data.get('reason') == 'benchmark-complete':
+                            name = data['id']
+                            value = data['typical']
+                            unit = data['unit']
+                            print(f'- **{name}**: {value:.2f} {unit}')
+                    except:
+                        continue
+        except Exception as e:
+            print(f'Error processing benchmark results: {e}')
+        " >> benchmark-summary.md
+    
+    - name: Cryptography benchmarks
+      if: env.BENCHMARK_TYPE == 'full' || env.BENCHMARK_TYPE == 'crypto'
+      run: |
+        echo "🔐 Running cryptography benchmarks..."
+        
+        # Crypto-specific benchmarks
+        cargo bench --features benchmarks crypto -- --output-format json | tee crypto-benchmark-output.json
+        
+        echo "## 🔐 Cryptography Benchmarks" >> benchmark-summary.md
+        python3 -c "
+        import json
+        
+        try:
+            with open('crypto-benchmark-output.json', 'r') as f:
+                for line in f:
+                    try:
+                        data = json.loads(line)
+                        if data.get('reason') == 'benchmark-complete':
+                            name = data['id']
+                            value = data['typical']
+                            unit = data['unit']
+                            print(f'- **{name}**: {value:.2f} {unit}')
+                    except:
+                        continue
+        except Exception as e:
+            print(f'Error processing crypto benchmark results: {e}')
+        " >> benchmark-summary.md
+    
+    - name: Network benchmarks
+      if: env.BENCHMARK_TYPE == 'full' || env.BENCHMARK_TYPE == 'network'
+      run: |
+        echo "🌐 Running network benchmarks..."
+        
+        # Network protocol benchmarks
+        cargo bench --features benchmarks network -- --output-format json | tee network-benchmark-output.json
+        
+        echo "## 🌐 Network Benchmarks" >> benchmark-summary.md
+        python3 -c "
+        import json
+        
+        try:
+            with open('network-benchmark-output.json', 'r') as f:
+                for line in f:
+                    try:
+                        data = json.loads(line)
+                        if data.get('reason') == 'benchmark-complete':
+                            name = data['id']
+                            value = data['typical']
+                            unit = data['unit']
+                            print(f'- **{name}**: {value:.2f} {unit}')
+                    except:
+                        continue
+        except Exception as e:
+            print(f'Error processing network benchmark results: {e}')
+        " >> benchmark-summary.md
+    
+    - name: Consensus benchmarks
+      if: env.BENCHMARK_TYPE == 'full' || env.BENCHMARK_TYPE == 'consensus'
+      run: |
+        echo "🤝 Running consensus benchmarks..."
+        
+        # Consensus algorithm benchmarks
+        cargo bench --features benchmarks consensus -- --output-format json | tee consensus-benchmark-output.json
+        
+        echo "## 🤝 Consensus Benchmarks" >> benchmark-summary.md
+        python3 -c "
+        import json
+        
+        try:
+            with open('consensus-benchmark-output.json', 'r') as f:
+                for line in f:
+                    try:
+                        data = json.loads(line)
+                        if data.get('reason') == 'benchmark-complete':
+                            name = data['id']
+                            value = data['typical']
+                            unit = data['unit']
+                            print(f'- **{name}**: {value:.2f} {unit}')
+                    except:
+                        continue
+        except Exception as e:
+            print(f'Error processing consensus benchmark results: {e}')
+        " >> benchmark-summary.md
+    
+    - name: Memory profiling
+      run: |
+        echo "🧠 Running memory profiling..."
+        
+        # Memory usage profiling
+        cargo build --release --features profiling
+        
+        # Run memory profiler on key operations
+        valgrind --tool=massif --time-unit=ms --threshold=0.1 \\\n          --massif-out-file=massif.out \\\n          target/release/bitcraps --version || true\n        \n        # Generate memory profile summary\n        if [ -f massif.out ]; then\n          ms_print massif.out > memory-profile.txt\n          \n          echo "## 🧠 Memory Profile" >> benchmark-summary.md\n          echo "Peak memory usage:" >> benchmark-summary.md\n          grep -A1 "peak" memory-profile.txt | head -2 >> benchmark-summary.md || echo "Memory profiling data not available" >> benchmark-summary.md\n        fi\n    \n    - name: Performance regression detection\n      if: github.event_name == 'pull_request'\n      run: |\n        echo "📊 Checking for performance regressions..."\n        \n        # Check out base branch for comparison\n        git fetch origin ${{ github.base_ref }}\n        git checkout origin/${{ github.base_ref }}\n        \n        # Run baseline benchmarks\n        cargo bench --features benchmarks -- --output-format json | tee baseline-benchmark-output.json\n        \n        # Return to PR branch\n        git checkout ${{ github.sha }}\n        \n        # Compare results\n        python3 -c "\n        import json\n        import sys\n        \n        def parse_benchmark_file(filename):\n            results = {}\n            try:\n                with open(filename, 'r') as f:\n                    for line in f:\n                        try:\n                            data = json.loads(line)\n                            if data.get('reason') == 'benchmark-complete':\n                                results[data['id']] = data['typical']\n                        except:\n                            continue\n            except FileNotFoundError:\n                pass\n            return results\n        \n        baseline = parse_benchmark_file('baseline-benchmark-output.json')\n        current = parse_benchmark_file('core-benchmark-output.json')\n        \n        if not baseline:\n            print('No baseline benchmarks found')\n            sys.exit(0)\n        \n        regressions = []\n        improvements = []\n        \n        for test_name in current:\n            if test_name in baseline:\n                baseline_time = baseline[test_name]\n                current_time = current[test_name]\n                \n                change_percent = ((current_time - baseline_time) / baseline_time) * 100\n                \n                if change_percent > 10:  # More than 10% slower\n                    regressions.append((test_name, change_percent, baseline_time, current_time))\n                elif change_percent < -10:  # More than 10% faster\n                    improvements.append((test_name, change_percent, baseline_time, current_time))\n        \n        print('## 📈 Performance Comparison')\n        \n        if regressions:\n            print('### ⚠️ Performance Regressions')\n            for name, change, baseline, current in regressions:\n                print(f'- **{name}**: {change:+.1f}% slower ({baseline:.2f} → {current:.2f})')\n        \n        if improvements:\n            print('### ✅ Performance Improvements')\n            for name, change, baseline, current in improvements:\n                print(f'- **{name}**: {abs(change):.1f}% faster ({baseline:.2f} → {current:.2f})')\n        \n        if not regressions and not improvements:\n            print('No significant performance changes detected')\n        \n        if regressions:\n            print('\\n⚠️ Performance regressions detected! Please review.')\n            sys.exit(1)\n        " >> benchmark-summary.md\n    \n    - name: Generate benchmark report\n      run: |\n        echo "# 📊 BitCraps Benchmark Report" > BENCHMARK_REPORT.md\n        echo "" >> BENCHMARK_REPORT.md\n        echo "**Date:** $(date)" >> BENCHMARK_REPORT.md\n        echo "**Commit:** ${{ github.sha }}" >> BENCHMARK_REPORT.md\n        echo "**Branch:** ${{ github.ref_name }}" >> BENCHMARK_REPORT.md\n        echo "**Benchmark Type:** ${{ env.BENCHMARK_TYPE }}" >> BENCHMARK_REPORT.md\n        echo "" >> BENCHMARK_REPORT.md\n        \n        if [ -f benchmark-summary.md ]; then\n          cat benchmark-summary.md >> BENCHMARK_REPORT.md\n        fi\n        \n        echo "" >> BENCHMARK_REPORT.md\n        echo "## 🔗 Artifacts" >> BENCHMARK_REPORT.md\n        echo "- [Detailed Results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> BENCHMARK_REPORT.md\n        echo "- [Criterion Report](target/criterion/)" >> BENCHMARK_REPORT.md\n    \n    - name: Upload benchmark results\n      uses: actions/upload-artifact@v4\n      with:\n        name: benchmark-results-${{ github.run_number }}\n        path: |\n          target/criterion/\n          *-benchmark-output.json\n          benchmark-summary.md\n          BENCHMARK_REPORT.md\n          memory-profile.txt\n          massif.out\n        retention-days: 90\n    \n    - name: Comment PR with results\n      if: github.event_name == 'pull_request'\n      uses: actions/github-script@v7\n      with:\n        script: |\n          const fs = require('fs');\n          \n          let comment = '## 📊 Performance Benchmark Results\\n\\n';\n          \n          try {\n            const summary = fs.readFileSync('benchmark-summary.md', 'utf8');\n            comment += summary;\n          } catch (error) {\n            comment += 'Benchmark summary not available.';\n          }\n          \n          comment += '\\n\\n---\\n';\n          comment += `🔗 [View detailed results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`;\n          \n          github.rest.issues.createComment({\n            issue_number: context.issue.number,\n            owner: context.repo.owner,\n            repo: context.repo.repo,\n            body: comment\n          });\n\n  # Load testing (if environment specified)\n  load-testing:\n    name: Load Testing\n    runs-on: ubuntu-latest\n    if: github.event.inputs.environment != 'none' && github.event.inputs.environment != ''\n    environment: ${{ github.event.inputs.environment }}\n    \n    steps:\n    - uses: actions/checkout@v4\n    \n    - name: Install load testing tools\n      run: |\n        # Install k6 for load testing\n        sudo gpg -k\n        sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69\n        echo \"deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main\" | sudo tee /etc/apt/sources.list.d/k6.list\n        sudo apt-get update\n        sudo apt-get install k6\n        \n        # Install artillery as backup\n        npm install -g artillery\n    \n    - name: Configure kubectl\n      env:\n        KUBE_CONFIG_STAGING: ${{ secrets.KUBE_CONFIG_STAGING }}\n        KUBE_CONFIG_PERF: ${{ secrets.KUBE_CONFIG_PERF }}\n      run: |\n        mkdir -p $HOME/.kube\n        if [ "${{ env.LOAD_TEST_ENV }}" = "staging" ]; then\n          echo "$KUBE_CONFIG_STAGING" | base64 -d > $HOME/.kube/config\n        elif [ "${{ env.LOAD_TEST_ENV }}" = "performance-test" ]; then\n          echo "$KUBE_CONFIG_PERF" | base64 -d > $HOME/.kube/config\n        fi\n        kubectl config current-context\n    \n    - name: Prepare load test environment\n      run: |\n        NAMESPACE="${{ env.LOAD_TEST_ENV }}"\n        \n        # Get service endpoint\n        SERVICE_IP=$(kubectl get service bitcraps -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo \"localhost\")\n        SERVICE_PORT=$(kubectl get service bitcraps -n $NAMESPACE -o jsonpath='{.spec.ports[0].port}' 2>/dev/null || echo \"8080\")\n        \n        echo "TARGET_ENDPOINT=http://$SERVICE_IP:$SERVICE_PORT" >> $GITHUB_ENV\n        \n        # Verify service is accessible\n        echo "Testing connectivity to $SERVICE_IP:$SERVICE_PORT..."\n        kubectl exec -n $NAMESPACE deployment/bitcraps -- /usr/local/bin/bitcraps health || echo "Health check failed"\n    \n    - name: Create load test scripts\n      run: |\n        # Create k6 load test script\n        cat > load-test.js << 'EOF'\n        import http from 'k6/http';\n        import { check, sleep } from 'k6';\n        import { Rate } from 'k6/metrics';\n        \n        export let errorRate = new Rate('errors');\n        \n        export let options = {\n          stages: [\n            { duration: '2m', target: 10 }, // Ramp up\n            { duration: '${LOAD_TEST_DURATION}m', target: 50 }, // Stay at load\n            { duration: '2m', target: 0 }, // Ramp down\n          ],\n          thresholds: {\n            http_req_duration: ['p(95)<500'], // 95% of requests must complete in 500ms\n            http_req_failed: ['rate<0.01'], // Error rate must be less than 1%\n          },\n        };\n        \n        export default function() {\n          let response = http.get('${TARGET_ENDPOINT}/health');\n          let success = check(response, {\n            'status is 200': (r) => r.status === 200,\n            'response time < 200ms': (r) => r.timings.duration < 200,\n          });\n          \n          errorRate.add(!success);\n          sleep(1);\n        }\n        EOF\n        \n        # Create artillery config\n        cat > artillery-config.yml << 'EOF'\n        config:\n          target: '${TARGET_ENDPOINT}'\n          phases:\n            - duration: 300\n              arrivalRate: 10\n              name: 'Warm up'\n            - duration: ${LOAD_TEST_DURATION}0\n              arrivalRate: 50\n              name: 'Load test'\n          payload:\n            path: './load-test-data.json'\n            fields:\n              - 'userId'\n              - 'sessionId'\n        \n        scenarios:\n          - name: 'Health Check Load'\n            weight: 70\n            flow:\n              - get:\n                  url: '/health'\n                  expect:\n                    - statusCode: 200\n                    - hasProperty: 'status'\n              - think: 1\n          \n          - name: 'API Endpoint Load'\n            weight: 30\n            flow:\n              - get:\n                  url: '/api/version'\n                  expect:\n                    - statusCode: 200\n              - think: 2\n        EOF\n        \n        # Create test data\n        echo '[{"userId": "test1", "sessionId": "session1"}, {"userId": "test2", "sessionId": "session2"}]' > load-test-data.json\n    \n    - name: Execute load tests\n      id: load-test\n      run: |\n        echo "🚀 Starting load test against ${{ env.TARGET_ENDPOINT }}"\n        echo "Duration: ${{ env.LOAD_TEST_DURATION }} minutes"\n        \n        # Run k6 load test\n        echo "Running k6 load test..."\n        k6 run --out json=k6-results.json load-test.js || echo "k6 test completed with issues"\n        \n        # Run artillery load test as backup\n        echo "Running artillery load test..."\n        artillery run artillery-config.yml --output artillery-results.json || echo "Artillery test completed"\n        \n        echo "load_test_completed=true" >> $GITHUB_OUTPUT\n    \n    - name: Analyze load test results\n      run: |\n        echo "# 📊 Load Test Results" > LOAD_TEST_REPORT.md\n        echo "" >> LOAD_TEST_REPORT.md\n        echo "**Target:** ${{ env.TARGET_ENDPOINT }}" >> LOAD_TEST_REPORT.md\n        echo "**Duration:** ${{ env.LOAD_TEST_DURATION }} minutes" >> LOAD_TEST_REPORT.md\n        echo "**Date:** $(date)" >> LOAD_TEST_REPORT.md\n        echo "" >> LOAD_TEST_REPORT.md\n        \n        # Analyze k6 results\n        if [ -f k6-results.json ]; then\n          echo "## K6 Results" >> LOAD_TEST_REPORT.md\n          \n          python3 -c "\n        import json\n        \n        try:\n            with open('k6-results.json', 'r') as f:\n                results = [json.loads(line) for line in f if line.strip()]\n            \n            # Extract metrics\n            for result in results:\n                if result.get('type') == 'Point' and 'http_req_duration' in result.get('metric', ''):\n                    duration = result['data']['value']\n                    print(f'Response time: {duration:.2f}ms')\n                    break\n            \n            # Count errors\n            error_count = sum(1 for r in results if r.get('type') == 'Point' and r.get('data', {}).get('value', 0) > 0 and 'http_req_failed' in r.get('metric', ''))\n            print(f'Failed requests: {error_count}')\n            \n        except Exception as e:\n            print(f'Error analyzing k6 results: {e}')\n          " >> LOAD_TEST_REPORT.md\n        fi\n        \n        # Monitor system during load test\n        echo "" >> LOAD_TEST_REPORT.md\n        echo "## System Resource Usage" >> LOAD_TEST_REPORT.md\n        kubectl top pods -n ${{ env.LOAD_TEST_ENV }} --containers=true >> LOAD_TEST_REPORT.md || echo "Metrics not available" >> LOAD_TEST_REPORT.md\n    \n    - name: Upload load test results\n      uses: actions/upload-artifact@v4\n      with:\n        name: load-test-results-${{ github.run_number }}\n        path: |\n          k6-results.json\n          artillery-results.json\n          LOAD_TEST_REPORT.md\n          load-test.js\n          artillery-config.yml\n        retention-days: 90\n\n  # Performance summary and alerting\n  performance-summary:\n    name: Performance Summary\n    needs: [rust-benchmarks, load-testing]\n    runs-on: ubuntu-latest\n    if: always()\n    \n    steps:\n    - name: Download benchmark artifacts\n      uses: actions/download-artifact@v4\n      with:\n        path: performance-results\n      continue-on-error: true\n    \n    - name: Generate performance summary\n      run: |\n        echo "# 🚀 BitCraps Performance Summary" > PERFORMANCE_SUMMARY.md\n        echo "" >> PERFORMANCE_SUMMARY.md\n        echo "**Date:** $(date)" >> PERFORMANCE_SUMMARY.md\n        echo "**Commit:** ${{ github.sha }}" >> PERFORMANCE_SUMMARY.md\n        echo "**Trigger:** ${{ github.event_name }}" >> PERFORMANCE_SUMMARY.md\n        echo "" >> PERFORMANCE_SUMMARY.md\n        \n        echo "## Test Results" >> PERFORMANCE_SUMMARY.md\n        echo "| Component | Status | Details |" >> PERFORMANCE_SUMMARY.md\n        echo "|-----------|--------|---------|" >> PERFORMANCE_SUMMARY.md\n        echo "| Rust Benchmarks | ${{ needs.rust-benchmarks.result }} | Micro-benchmark suite |" >> PERFORMANCE_SUMMARY.md\n        echo "| Load Testing | ${{ needs.load-testing.result }} | End-to-end load testing |" >> PERFORMANCE_SUMMARY.md\n        echo "" >> PERFORMANCE_SUMMARY.md\n        \n        # Include detailed results if available\n        if [ -d performance-results ]; then\n          find performance-results -name \"*.md\" -type f | while read -r file; do\n            echo "Including results from: $file"\n            echo "" >> PERFORMANCE_SUMMARY.md\n            cat "$file" >> PERFORMANCE_SUMMARY.md\n            echo "" >> PERFORMANCE_SUMMARY.md\n          done\n        fi\n        \n        # Performance recommendations\n        echo "## 🎯 Performance Recommendations" >> PERFORMANCE_SUMMARY.md\n        echo "" >> PERFORMANCE_SUMMARY.md\n        \n        if [ "${{ needs.rust-benchmarks.result }}" = "failure" ]; then\n          echo "- ⚠️ Investigate benchmark failures" >> PERFORMANCE_SUMMARY.md\n          echo "- Review code changes for performance impact" >> PERFORMANCE_SUMMARY.md\n        fi\n        \n        if [ "${{ needs.load-testing.result }}" = "failure" ]; then\n          echo "- ⚠️ Load testing issues detected" >> PERFORMANCE_SUMMARY.md\n          echo "- Check system resources and scaling policies" >> PERFORMANCE_SUMMARY.md\n        fi\n        \n        if [ "${{ needs.rust-benchmarks.result }}" = "success" ] && [ "${{ needs.load-testing.result }}" = "success" ]; then\n          echo "- ✅ All performance tests passed" >> PERFORMANCE_SUMMARY.md\n          echo "- Monitor production metrics for validation" >> PERFORMANCE_SUMMARY.md\n        fi\n    \n    - name: Performance alerting\n      if: contains(needs.*.result, 'failure')\n      env:\n        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}\n      run: |\n        if [ -n "$SLACK_WEBHOOK" ]; then\n          curl -X POST "$SLACK_WEBHOOK" \\\n            -H 'Content-Type: application/json' \\\n            -d "{\n              \\"text\\": \\"⚡ BitCraps Performance Alert\\",\n              \\"attachments\\": [\n                {\n                  \\"color\\": \\"warning\\",\n                  \\"blocks\\": [\n                    {\n                      \\"type\\": \\"header\\",\n                      \\"text\\": {\n                        \\"type\\": \\"plain_text\\",\n                        \\"text\\": \\"⚡ Performance Test Alert\\"\n                      }\n                    },\n                    {\n                      \\"type\\": \\"section\\",\n                      \\"fields\\": [\n                        {\n                          \\"type\\": \\"mrkdwn\\",\n                          \\"text\\": \\"*Benchmarks:* ${{ needs.rust-benchmarks.result }}\\"\n                        },\n                        {\n                          \\"type\\": \\"mrkdwn\\",\n                          \\"text\\": \\"*Load Testing:* ${{ needs.load-testing.result }}\\"\n                        },\n                        {\n                          \\"type\\": \\"mrkdwn\\",\n                          \\"text\\": \\"*Commit:* ${{ github.sha }}\\"\n                        },\n                        {\n                          \\"type\\": \\"mrkdwn\\",\n                          \\"text\\": \\"*Branch:* ${{ github.ref_name }}\\"\n                        }\n                      ]\n                    },\n                    {\n                      \\"type\\": \\"actions\\",\n                      \\"elements\\": [\n                        {\n                          \\"type\\": \\"button\\",\n                          \\"text\\": {\n                            \\"type\\": \\"plain_text\\",\n                            \\"text\\": \\"View Results\\"\n                          },\n                          \\"url\\": \\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\\"\n                        }\n                      ]\n                    }\n                  ]\n                }\n              ]\n            }"\n        fi\n    \n    - name: Upload performance summary\n      uses: actions/upload-artifact@v4\n      with:\n        name: performance-summary-${{ github.run_number }}\n        path: PERFORMANCE_SUMMARY.md\n        retention-days: 90\n    \n    - name: Add performance summary to job\n      run: |\n        echo "## ⚡ Performance Test Summary" >> $GITHUB_STEP_SUMMARY\n        cat PERFORMANCE_SUMMARY.md >> $GITHUB_STEP_SUMMARY

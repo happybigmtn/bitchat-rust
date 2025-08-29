@@ -1,0 +1,368 @@
+# BitCraps Security Policies
+# Comprehensive security configuration for Kubernetes deployment
+
+---
+# Pod Security Policy (deprecated but included for older clusters)
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: bitcraps-restricted
+  namespace: bitcraps-production
+  labels:
+    app: bitcraps
+    component: security
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  supplementalGroups:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  readOnlyRootFilesystem: true
+  seLinux:
+    rule: 'RunAsAny'
+
+---
+# Pod Security Standards (PSS) - Replacement for PSP
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bitcraps-production
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+
+---
+# Security Context Constraints (OpenShift)
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: bitcraps-scc
+  labels:
+    app: bitcraps
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegedContainer: false
+allowedCapabilities: []
+defaultAddCapabilities: []
+requiredDropCapabilities:
+- ALL
+allowedVolumes:
+- configMap
+- downwardAPI
+- emptyDir
+- persistentVolumeClaim
+- projected
+- secret
+fsGroup:
+  type: MustRunAs
+  ranges:
+  - min: 1
+    max: 65535
+readOnlyRootFilesystem: true
+runAsUser:
+  type: MustRunAsNonRoot
+seLinuxContext:
+  type: RunAsAny
+supplementalGroups:
+  type: MustRunAs
+  ranges:
+  - min: 1
+    max: 65535
+volumes:
+- configMap
+- downwardAPI
+- emptyDir
+- persistentVolumeClaim
+- projected
+- secret
+users: []
+groups: []
+
+---
+# Open Policy Agent (OPA) Gatekeeper Constraints
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: bitcrapsrequiredsecuritycontext
+  labels:
+    app: bitcraps
+    component: security
+spec:
+  crd:
+    spec:
+      names:
+        kind: BitCrapsRequiredSecurityContext
+      validation:
+        properties:
+          runAsNonRoot:
+            type: boolean
+          readOnlyRootFilesystem:
+            type: boolean
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package bitcraps.security
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.runAsNonRoot
+          msg := "Container must run as non-root user"
+        }
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.readOnlyRootFilesystem
+          msg := "Container must have read-only root filesystem"
+        }
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          container.securityContext.allowPrivilegeEscalation
+          msg := "Container must not allow privilege escalation"
+        }
+
+---
+# Apply the constraint
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: BitCrapsRequiredSecurityContext
+metadata:
+  name: bitcraps-security-context
+  labels:
+    app: bitcraps
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    namespaces: ["bitcraps-production", "bitcraps-staging"]
+  parameters:
+    runAsNonRoot: true
+    readOnlyRootFilesystem: true
+
+---
+# Falco Security Rules
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco-bitcraps-rules
+  namespace: bitcraps-monitoring
+  labels:
+    app: falco
+    component: rules
+data:
+  bitcraps_rules.yaml: |
+    # BitCraps specific security rules
+    
+    - rule: BitCraps Suspicious Network Activity
+      desc: Detect suspicious network activity in BitCraps containers
+      condition: >
+        spawned_process and
+        container and
+        k8s_ns="bitcraps-production" and
+        proc.name in (nc, netcat, nmap, telnet, wget, curl) and
+        not proc.args contains "health"
+      output: >
+        Suspicious network tool executed in BitCraps container
+        (user=%user.name container=%container.name image=%container.image
+         proc=%proc.name args=%proc.args)
+      priority: WARNING
+      tags: [network, bitcraps]
+    
+    - rule: BitCraps Unexpected File Access
+      desc: Detect unexpected file access in BitCraps containers
+      condition: >
+        open_read and
+        container and
+        k8s_ns="bitcraps-production" and
+        fd.filename startswith "/etc/" and
+        not fd.filename in ("/etc/ssl/certs/ca-certificates.crt", "/etc/bitcraps/")
+      output: >
+        Unexpected file access in BitCraps container
+        (user=%user.name container=%container.name file=%fd.name)
+      priority: WARNING
+      tags: [filesystem, bitcraps]
+    
+    - rule: BitCraps Privilege Escalation Attempt
+      desc: Detect privilege escalation attempts in BitCraps containers
+      condition: >
+        spawned_process and
+        container and
+        k8s_ns="bitcraps-production" and
+        proc.name in (sudo, su, chroot, setuid) and
+        not user.name="root"
+      output: >
+        Privilege escalation attempt in BitCraps container
+        (user=%user.name container=%container.name proc=%proc.name args=%proc.args)
+      priority: CRITICAL
+      tags: [privilege_escalation, bitcraps]
+    
+    - rule: BitCraps Database Access Anomaly
+      desc: Detect anomalous database access patterns
+      condition: >
+        outbound and
+        container and
+        k8s_ns="bitcraps-production" and
+        fd.sport=5432 and
+        not (proc.name="bitcraps" or proc.name="postgres")
+      output: >
+        Anomalous database connection from BitCraps container
+        (container=%container.name proc=%proc.name dest=%fd.rip:%fd.rport)
+      priority: WARNING
+      tags: [database, bitcraps]
+
+---
+# Network Security Policies (Cilium)
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: bitcraps-production-netpol
+  namespace: bitcraps-production
+  labels:
+    app: bitcraps
+    component: security
+spec:
+  endpointSelector:
+    matchLabels:
+      app: bitcraps
+  ingress:
+  - fromEndpoints:
+    - matchLabels:
+        app: bitcraps
+    toPorts:
+    - ports:
+      - port: "8334"
+        protocol: TCP
+      - port: "8335"
+        protocol: TCP
+  - fromEndpoints:
+    - matchLabels:
+        app: load-balancer
+    toPorts:
+    - ports:
+      - port: "8080"
+        protocol: TCP
+  - fromEndpoints:
+    - matchLabels:
+        app: prometheus
+    toPorts:
+    - ports:
+      - port: "9091"
+        protocol: TCP
+  egress:
+  - toEndpoints:
+    - matchLabels:
+        app: postgres
+    toPorts:
+    - ports:
+      - port: "5432"
+        protocol: TCP
+  - toEndpoints:
+    - matchLabels:
+        app: redis
+    toPorts:
+    - ports:
+      - port: "6379"
+        protocol: TCP
+  - toFQDNs:
+    - matchName: "*.amazonaws.com"
+    - matchName: "*.github.com"
+    toPorts:
+    - ports:
+      - port: "443"
+        protocol: TCP
+  - toEndpoints: []
+    toPorts:
+    - ports:
+      - port: "53"
+        protocol: UDP
+
+---
+# Istio Security Policies
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: bitcraps-authz
+  namespace: bitcraps-production
+  labels:
+    app: bitcraps
+    component: security
+spec:
+  selector:
+    matchLabels:
+      app: bitcraps
+  rules:
+  - to:
+    - operation:
+        methods: ["GET", "POST"]
+        paths: ["/api/*"]
+    when:
+    - key: source.ip
+      notValues: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+  - to:
+    - operation:
+        methods: ["GET"]
+        paths: ["/health", "/ready", "/metrics"]
+    from:
+    - source:
+        principals: ["cluster.local/ns/istio-system/sa/istio-proxy"]
+
+---
+# Istio PeerAuthentication
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: bitcraps-mtls
+  namespace: bitcraps-production
+  labels:
+    app: bitcraps
+    component: security
+spec:
+  selector:
+    matchLabels:
+      app: bitcraps
+  mtls:
+    mode: STRICT
+
+---
+# Kustomization for environment-specific overrides
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: security-policies
+  labels:
+    app: bitcraps
+    component: security
+resources:
+- security-policies.yaml
+patchesStrategicMerge:
+- security-policies-production.yaml
+namespace: bitcraps-production
+commonLabels:
+  environment: production
+  managed-by: kustomize

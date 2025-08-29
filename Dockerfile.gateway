@@ -1,0 +1,78 @@
+# Multi-stage Dockerfile for BitCraps Gateway
+# Optimized for gateway node deployment
+
+# Build stage - Use official Rust image
+FROM rust:1.75-bookworm as builder
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    libsqlite3-dev \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for building
+RUN useradd -m -u 1001 builder
+USER builder
+WORKDIR /home/builder
+
+# Copy dependency manifests
+COPY --chown=builder:builder Cargo.toml Cargo.lock build.rs ./
+COPY --chown=builder:builder src/bitcraps.udl ./src/
+
+# Create dummy main for dependency building
+RUN mkdir -p src && echo "fn main() {}" > src/main.rs
+RUN cargo build --release && rm -rf src target/release/deps/bitcraps*
+
+# Copy source code
+COPY --chown=builder:builder src/ ./src/
+
+# Build gateway binary with specific features
+RUN cargo build --release --bin bitcraps --features "gateway"
+
+# Strip binary
+RUN strip target/release/bitcraps
+
+# Runtime stage - Use distroless
+FROM gcr.io/distroless/cc-debian12:nonroot
+
+# Copy CA certificates
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+WORKDIR /app
+
+# Copy binary
+COPY --from=builder /home/builder/target/release/bitcraps /usr/local/bin/bitcraps-gateway
+
+# Copy gateway-specific config
+COPY --chown=nonroot:nonroot config/ /etc/bitcraps/
+
+# Create data directory
+USER root
+RUN mkdir -p /data /tmp/bitcraps && \
+    chown -R nonroot:nonroot /data /tmp/bitcraps
+USER nonroot
+
+# Environment variables for gateway mode
+ENV RUST_LOG=info
+ENV BITCRAPS_MODE=gateway
+ENV BITCRAPS_DATA_DIR=/data
+ENV BITCRAPS_CONFIG=/etc/bitcraps/gateway.toml
+
+# Expose gateway ports
+EXPOSE 8335 8080 9091
+
+# Health check specific to gateway
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD ["bitcraps-gateway", "health"]
+
+# Run in gateway mode
+CMD ["bitcraps-gateway", "--mode", "gateway"]
+
+# Labels
+LABEL org.opencontainers.image.title="BitCraps Gateway" \
+      org.opencontainers.image.description="BitCraps P2P Gateway Node" \
+      org.opencontainers.image.version="0.1.0" \
+      component="gateway" \
+      maintainer="team@bitcraps.io"

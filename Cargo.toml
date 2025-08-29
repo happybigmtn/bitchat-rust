@@ -33,7 +33,7 @@ aes-gcm = "0.10.3"
 hmac = "0.12"
 pbkdf2 = "0.12"
 hkdf = "0.12"
-zeroize = { version = "1.7", features = ["derive"] }
+zeroize = { version = "1.3", features = ["derive"] }
 subtle = "2.6"
 
 # Bluetooth transport
@@ -64,7 +64,7 @@ dashmap = "6.1"
 
 # Logging and tracing
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 bitvec = "1.0"
 memmap2 = "0.9"
 
@@ -83,6 +83,10 @@ ratatui = "0.29.0"
 crossterm = "0.29.0"
 clap = { version = "4.5.45", features = ["derive", "cargo"] }
 
+# TLS support
+rustls = { version = "0.21", optional = true }
+tokio-rustls = { version = "0.24", optional = true }
+
 # Utilities
 dirs = "5.0"
 log = "0.4"
@@ -93,6 +97,14 @@ hex = "0.4"
 bincode = "1.3"
 serde_json = "1.0"
 toml = "0.8"
+tempfile = "3.8"
+
+# Economics and smart contracts
+ethers = { version = "2.0", optional = true }     # Ethereum integration  
+web3 = { version = "0.19", optional = true }       # Alternative Ethereum client
+bitcoin = { version = "0.32", optional = true }     # Bitcoin integration
+rust_decimal = "1.33"                              # High precision decimal math
+rust_decimal_macros = "1.33"                       # Decimal macros
 num_cpus = "1.16"
 serde_bytes = "0.11"
 blake3 = "1.5"
@@ -101,9 +113,11 @@ rand_chacha = "0.3"
 env_logger = "0.11"
 warp = "0.3"
 prometheus = "0.13"
+reqwest = { version = "0.12.23", features = ["json"] }
 
 [build-dependencies]
 uniffi = { version = "0.28", features = ["build"], optional = true }
+vergen = { version = "8", default-features = false, features = ["build", "git", "gitcl", "rustc"] }
 
 # Android JNI integration
 [target.'cfg(target_os = "android")'.dependencies]
@@ -116,6 +130,7 @@ ndk-context = "0.1"
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "4.0", features = ["tokio"] }
 futures-util = "0.3"
+procfs = "0.16"
 
 # iOS/macOS Core Bluetooth FFI (when available)
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
@@ -175,6 +190,7 @@ benchmarks = []
 physical_device_tests = []
 uniffi = ["dep:uniffi"]
 android = ["dep:jni", "dep:android_logger"]
+tls = ["dep:rustls", "dep:tokio-rustls"]
 
 [profile.dev]
 opt-level = 0

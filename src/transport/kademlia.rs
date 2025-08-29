@@ -8,7 +8,7 @@ use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
 use crate::protocol::PeerId;
 use crate::transport::pow_identity::ProofOfWork;
-use crate::transport::nat_traversal::{NetworkHandler, NatType, TransportMode};
+use crate::transport::nat_traversal::NetworkHandler;
 
 /// Kademlia node ID - 256-bit identifier with cryptographic validation
 /// 
@@ -1045,6 +1045,33 @@ impl KademliaNode {
                 event_sender.send(KademliaEvent::NodeDiscovered {
                     contact: responder,
                 }).ok();
+            },
+            
+            KademliaMessage::NatPing { requester, relay_addr } => {
+                // Add requester to routing table
+                routing_table.add_contact(Arc::new(requester.clone())).await;
+                
+                // Send NAT ping response
+                let response = KademliaMessage::NatPong { 
+                    responder: requester,
+                    public_addr: from, // Use the source address as public address
+                };
+                Self::send_response(query_id, response, from, udp_socket).await;
+            },
+            
+            KademliaMessage::NatPong { responder, public_addr: _ } => {
+                // Add responder to routing table
+                routing_table.add_contact(Arc::new(responder.clone())).await;
+                log::debug!("NAT pong received from {:?}", responder.id);
+            },
+            
+            KademliaMessage::HolePunch { initiator, target_addr } => {
+                // Add initiator to routing table
+                routing_table.add_contact(Arc::new(initiator.clone())).await;
+                
+                // Log hole punch attempt
+                log::debug!("Received hole punch request from {:?} for target {:?}", 
+                           initiator.id, target_addr);
             },
         }
     }

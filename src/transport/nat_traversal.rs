@@ -10,12 +10,20 @@ use std::collections::HashMap;
 use std::net::{SocketAddr, IpAddr, Ipv4Addr};
 use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, RwLock, oneshot, Mutex};
+use tokio::sync::{RwLock, Mutex};
 use tokio::net::{UdpSocket, TcpStream, TcpListener};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use serde::{Serialize, Deserialize};
+use tokio::io::AsyncWriteExt;
 use rand::Rng;
 use crate::error::{Error, Result};
+
+// Note: TLS dependencies would need to be added to Cargo.toml
+// For now, we'll use conditional compilation to avoid build errors
+#[cfg(feature = "tls")]
+use rustls::{ClientConfig, ServerName};
+#[cfg(feature = "tls")]
+use tokio_rustls::{TlsConnector, TlsAcceptor};
+#[cfg(feature = "tls")]
+use std::sync::Arc as StdArc;
 
 /// NAT type detected through STUN discovery
 #[derive(Debug, Clone, PartialEq)]

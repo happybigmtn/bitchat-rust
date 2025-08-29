@@ -23,6 +23,8 @@
 
 pub mod multi_game_framework;
 pub mod consensus_game_manager;
+pub mod game_orchestrator;
+pub mod payout_engine;
 
 pub use multi_game_framework::{
     MultiGameFramework,
@@ -57,4 +59,41 @@ pub use consensus_game_manager::{
     ConsensusGameSession,
     GameEvent,
     GameManagerStats,
+};
+
+// Re-export game orchestrator
+pub use game_orchestrator::{
+    GameOrchestrator,
+    GameAdvertisement,
+    GameDiscoveryRequest,
+    GameDiscoveryResponse,
+    GameJoinRequest,
+    GameJoinResponse,
+    GameConfig,
+    GameStateSnapshot,
+    BetRecord,
+    DiceCommit,
+    DiceReveal,
+    TurnManager,
+    OrchestratorEvent,
+    OrchestratorCommand,
+    OrchestratorConfig,
+    OrchestratorStats,
+    PlayerCapabilities,
+};
+
+// Re-export payout engine
+pub use payout_engine::{
+    PayoutEngine,
+    PayoutResult,
+    PlayerPayout,
+    WinningBet,
+    LosingBet,
+    PayoutSignature,
+    BetValidationRequest,
+    BetValidationResponse,
+    InvalidBetReason,
+    InvalidBetSeverity,
+    BetValidationRules,
+    PayoutEngineStats,
 };
