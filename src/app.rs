@@ -3,8 +3,6 @@
 //! This module provides the main application struct that coordinates all subsystems
 //! including networking, consensus, gaming, and token management.
 
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use std::time::Duration;
 
 use crate::{
