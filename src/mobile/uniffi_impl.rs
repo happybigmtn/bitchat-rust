@@ -1,10 +1,10 @@
 //! UniFFI implementation for BitCrapsNode and GameHandle
 
 use super::*;
-use std::sync::Arc;
-use serde::{Serialize, Deserialize};
-use uuid::Uuid;
+use serde::{Deserialize, Serialize};
 use sha2::Digest;
+use std::sync::Arc;
+use uuid::Uuid;
 
 /// Game configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,16 +29,18 @@ impl BitCrapsNode {
         }
 
         // Configure power management for discovery
-        self.power_manager.configure_discovery(&self.config.platform_config).await?;
+        self.power_manager
+            .configure_discovery(&self.config.platform_config)
+            .await?;
 
         // Send discovery started event
-        let _ = self.event_sender.send(GameEvent::NetworkStateChanged { 
-            new_state: NetworkState::Scanning 
+        let _ = self.event_sender.send(GameEvent::NetworkStateChanged {
+            new_state: NetworkState::Scanning,
         });
 
         // TODO: Start actual Bluetooth discovery using mesh service
         log::info!("Started Bluetooth discovery");
-        
+
         Ok(())
     }
 
@@ -54,8 +56,8 @@ impl BitCrapsNode {
         log::info!("Stopped Bluetooth discovery");
 
         // Send discovery stopped event
-        let _ = self.event_sender.send(GameEvent::NetworkStateChanged { 
-            new_state: NetworkState::Offline 
+        let _ = self.event_sender.send(GameEvent::NetworkStateChanged {
+            new_state: NetworkState::Offline,
         });
 
         Ok(())
@@ -64,11 +66,15 @@ impl BitCrapsNode {
     /// Create a new game with the given configuration
     pub async fn create_game(&self, config: GameConfig) -> Result<Arc<GameHandle>, BitCrapsError> {
         let game_id = Uuid::new_v4().to_string();
-        
+
         // Use config to create game with appropriate settings
-        tracing::info!("Creating game with config: min_bet={}, max_bet={}, player_limit={}", 
-                      config.min_bet, config.max_bet, config.player_limit);
-        
+        tracing::info!(
+            "Creating game with config: min_bet={}, max_bet={}, player_limit={}",
+            config.min_bet,
+            config.max_bet,
+            config.player_limit
+        );
+
         // Convert to orchestrator GameConfig
         let orchestrator_config = crate::gaming::GameConfig {
             game_type: "craps".to_string(),
@@ -79,11 +85,15 @@ impl BitCrapsNode {
             consensus_threshold: 0.67,
             allow_spectators: config.allow_spectators,
         };
-        
+
         // TODO: Advertise the game through orchestrator when implemented
         // The game orchestrator needs to be added to BitCrapsNode structure
-        log::info!("Game {} created with config: {:?}", game_id, orchestrator_config);
-        
+        log::info!(
+            "Game {} created with config: {:?}",
+            game_id,
+            orchestrator_config
+        );
+
         // Create game handle
         let game_handle = Arc::new(GameHandle {
             game_id: game_id.clone(),
@@ -105,7 +115,9 @@ impl BitCrapsNode {
         }
 
         // Send game created event
-        let _ = self.event_sender.send(GameEvent::GameCreated { game_id: game_id.clone() });
+        let _ = self.event_sender.send(GameEvent::GameCreated {
+            game_id: game_id.clone(),
+        });
 
         log::info!("Created game: {}", game_id);
         Ok(game_handle)
@@ -114,25 +126,26 @@ impl BitCrapsNode {
     /// Join an existing game by ID
     pub async fn join_game(&self, game_id: String) -> Result<Arc<GameHandle>, BitCrapsError> {
         // Parse game_id to GameId format
-        let parsed_game_id: Result<[u8; 16], _> = game_id.parse::<Uuid>()
+        let parsed_game_id: Result<[u8; 16], _> = game_id
+            .parse::<Uuid>()
             .map(|uuid| *uuid.as_bytes())
-            .map_err(|_| BitCrapsError::InvalidInput { 
-                reason: "Invalid game ID format".to_string() 
+            .map_err(|_| BitCrapsError::InvalidInput {
+                reason: "Invalid game ID format".to_string(),
             });
-        
+
         let orchestrator_game_id = parsed_game_id?;
-        
+
         // TODO: Implement game orchestrator joining when available
         // The game orchestrator needs to be added to BitCrapsNode structure
         log::info!("Attempting to join game: {}", game_id);
-        
+
         // For now, just log and continue
         log::debug!("Game orchestrator not available, continuing with mesh-based joining");
-        
+
         // TODO: Implement consensus manager joining when available
         // The consensus manager needs to be added to BitCrapsNode structure
         log::info!("Consensus manager not available, using mesh service directly");
-        
+
         // Create game handle for the joined game
         let game_handle = Arc::new(GameHandle {
             game_id: game_id.clone(),
@@ -154,9 +167,9 @@ impl BitCrapsNode {
         }
 
         // Send game joined event
-        let _ = self.event_sender.send(GameEvent::GameJoined { 
-            game_id: game_id.clone(), 
-            peer_id: self.get_peer_id().unwrap_or_else(|| "self".to_string())
+        let _ = self.event_sender.send(GameEvent::GameJoined {
+            game_id: game_id.clone(),
+            peer_id: self.get_peer_id().unwrap_or_else(|| "self".to_string()),
         });
 
         log::info!("Joined game: {}", game_id);
@@ -180,9 +193,9 @@ impl BitCrapsNode {
 
         if let Some(game_id) = game_id {
             // Send game left event
-            let _ = self.event_sender.send(GameEvent::GameLeft { 
-                game_id, 
-                peer_id: "self".to_string() // TODO: Use actual peer ID
+            let _ = self.event_sender.send(GameEvent::GameLeft {
+                game_id,
+                peer_id: "self".to_string(), // TODO: Use actual peer ID
             });
             log::info!("Left game");
         }
@@ -215,7 +228,9 @@ impl BitCrapsNode {
             status.clone()
         } else {
             NodeStatus {
-                state: NodeState::Error { reason: "Failed to get status".to_string() },
+                state: NodeState::Error {
+                    reason: "Failed to get status".to_string(),
+                },
                 bluetooth_enabled: false,
                 discovery_active: false,
                 current_game_id: None,
@@ -247,7 +262,7 @@ impl BitCrapsNode {
     /// Set power management mode
     pub fn set_power_mode(&self, mode: PowerMode) -> Result<(), BitCrapsError> {
         self.power_manager.set_mode(mode)?;
-        
+
         // Update status
         if let Ok(mut status) = self.status.lock() {
             status.current_power_mode = mode;
@@ -270,7 +285,7 @@ impl BitCrapsNode {
         log::info!("Configured for platform: {:?}", config.platform);
         Ok(())
     }
-    
+
     /// Get the peer ID for this node
     pub fn get_peer_id(&self) -> Option<String> {
         // In a real implementation, this would get the peer ID from the identity
@@ -307,7 +322,9 @@ impl GameHandle {
         if let Ok(state) = self.state.lock() {
             state.clone()
         } else {
-            GameState::Error { reason: "Failed to get state".to_string() }
+            GameState::Error {
+                reason: "Failed to get state".to_string(),
+            }
         }
     }
 
@@ -315,8 +332,8 @@ impl GameHandle {
     pub async fn place_bet(&self, bet_type: BetType, amount: u64) -> Result<(), BitCrapsError> {
         // Validate bet amount
         if amount == 0 {
-            return Err(BitCrapsError::InvalidInput { 
-                reason: "Bet amount must be greater than zero".to_string() 
+            return Err(BitCrapsError::InvalidInput {
+                reason: "Bet amount must be greater than zero".to_string(),
             });
         }
 
@@ -327,23 +344,29 @@ impl GameHandle {
             None
         };
 
-        let game_id = game_id.ok_or_else(|| BitCrapsError::GameLogic { 
-            reason: "No active game to place bet in".to_string() 
+        let game_id = game_id.ok_or_else(|| BitCrapsError::GameLogic {
+            reason: "No active game to place bet in".to_string(),
         })?;
 
         // Parse game_id to GameId format for consensus/orchestrator
-        let parsed_game_id: Result<[u8; 16], _> = game_id.parse::<Uuid>()
+        let parsed_game_id: Result<[u8; 16], _> = game_id
+            .parse::<Uuid>()
             .map(|uuid| *uuid.as_bytes())
-            .map_err(|_| BitCrapsError::InvalidInput { 
-                reason: "Invalid game ID format".to_string() 
+            .map_err(|_| BitCrapsError::InvalidInput {
+                reason: "Invalid game ID format".to_string(),
             });
-        
+
         let orchestrator_game_id = parsed_game_id?;
         let crap_tokens = crate::protocol::craps::CrapTokens(amount);
 
         // TODO: Place bet through consensus manager when implemented
         // The consensus manager needs to be added to BitCrapsNode structure
-        log::info!("Bet requested: type={:?}, amount={}, game={}", bet_type, amount, self.game_id);
+        log::info!(
+            "Bet requested: type={:?}, amount={}, game={}",
+            bet_type,
+            amount,
+            self.game_id
+        );
 
         // TODO: Process through orchestrator when implemented
         // The game orchestrator needs to be added to BitCrapsNode structure
@@ -352,7 +375,10 @@ impl GameHandle {
         log::info!("Placed bet: {:?} for {}", bet_type, amount);
 
         // Send bet placed event
-        let peer_id = self.node.get_peer_id().unwrap_or_else(|| "self".to_string());
+        let peer_id = self
+            .node
+            .get_peer_id()
+            .unwrap_or_else(|| "self".to_string());
         let _ = self.node.event_sender.send(GameEvent::BetPlaced {
             peer_id: peer_id.clone(),
             bet_type: bet_type.clone(),
@@ -380,25 +406,26 @@ impl GameHandle {
             None
         };
 
-        let game_id = game_id.ok_or_else(|| BitCrapsError::GameLogic { 
-            reason: "No active game to roll dice in".to_string() 
+        let game_id = game_id.ok_or_else(|| BitCrapsError::GameLogic {
+            reason: "No active game to roll dice in".to_string(),
         })?;
 
         // Parse game_id to GameId format
-        let parsed_game_id: Result<[u8; 16], _> = game_id.parse::<Uuid>()
+        let parsed_game_id: Result<[u8; 16], _> = game_id
+            .parse::<Uuid>()
             .map(|uuid| *uuid.as_bytes())
-            .map_err(|_| BitCrapsError::InvalidInput { 
-                reason: "Invalid game ID format".to_string() 
+            .map_err(|_| BitCrapsError::InvalidInput {
+                reason: "Invalid game ID format".to_string(),
             });
-        
+
         let orchestrator_game_id = parsed_game_id?;
-        
+
         // Generate dice roll using cryptographically secure RNG
-        use rand::{Rng, rngs::OsRng};
+        use rand::{rngs::OsRng, Rng};
         let mut rng = OsRng;
         let die1 = rng.gen_range(1..=6);
         let die2 = rng.gen_range(1..=6);
-        
+
         let roll = DiceRoll {
             die1,
             die2,
@@ -412,11 +439,11 @@ impl GameHandle {
         commitment_hasher.update(&[die1, die2]);
         commitment_hasher.update(&nonce);
         let commitment_hash: [u8; 32] = commitment_hasher.finalize().into();
-        
+
         // TODO: Commit through orchestrator when implemented
         // The game orchestrator needs to be added to BitCrapsNode structure
         log::info!("Dice roll commit/reveal - orchestrator not available, using direct commit");
-        
+
         // For now, just log the dice roll
         log::info!("Dice rolled: {} + {} = {}", die1, die2, die1 + die2);
 
@@ -433,24 +460,25 @@ impl GameHandle {
         let total = die1 + die2;
         if let Ok(mut state) = self.state.lock() {
             match &*state {
-                GameState::ComeOut => {
-                    match total {
-                        7 | 11 => *state = GameState::Resolved,
-                        2 | 3 | 12 => *state = GameState::Resolved,
-                        point => *state = GameState::Point { point },
-                    }
+                GameState::ComeOut => match total {
+                    7 | 11 => *state = GameState::Resolved,
+                    2 | 3 | 12 => *state = GameState::Resolved,
+                    point => *state = GameState::Point { point },
                 },
                 GameState::Point { point } => {
                     if total == *point || total == 7 {
                         *state = GameState::Resolved;
                     }
-                },
-                _ => {},
+                }
+                _ => {}
             }
         }
 
         // Send dice rolled event
-        let _ = self.node.event_sender.send(GameEvent::DiceRolled { roll: roll.clone() });
+        let _ = self
+            .node
+            .event_sender
+            .send(GameEvent::DiceRolled { roll: roll.clone() });
 
         // Add to game history
         if let Ok(mut history) = self.history.lock() {

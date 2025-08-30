@@ -8,9 +8,9 @@
 
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Rate limiting configuration for different operations
 #[derive(Debug, Clone)]
@@ -34,12 +34,12 @@ pub struct RateLimitConfig {
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
-            default_rpm: 60,        // 1 request per second default
-            game_join_rpm: 10,      // 10 game joins per minute
-            dice_roll_rpm: 30,      // 30 dice rolls per minute
-            network_message_rpm: 300, // 300 messages per minute
-            bet_placement_rpm: 60,   // 60 bets per minute
-            burst_multiplier: 1.5,   // Allow 50% burst
+            default_rpm: 60,                            // 1 request per second default
+            game_join_rpm: 10,                          // 10 game joins per minute
+            dice_roll_rpm: 30,                          // 30 dice rolls per minute
+            network_message_rpm: 300,                   // 300 messages per minute
+            bet_placement_rpm: 60,                      // 60 bets per minute
+            burst_multiplier: 1.5,                      // Allow 50% burst
             cleanup_interval: Duration::from_secs(300), // Cleanup every 5 minutes
         }
     }
@@ -48,8 +48,13 @@ impl Default for RateLimitConfig {
 /// Result of rate limit check
 #[derive(Debug, Clone)]
 pub enum RateLimitResult {
-    Allowed { remaining: u32 },
-    Blocked { retry_after: Duration, current_count: u32 },
+    Allowed {
+        remaining: u32,
+    },
+    Blocked {
+        retry_after: Duration,
+        current_count: u32,
+    },
 }
 
 impl RateLimitResult {
@@ -80,7 +85,7 @@ impl RateLimitResult {
             RateLimitResult::Allowed { remaining } => {
                 // This is an approximation since we don't store the limit in the result
                 100 - remaining // Assume limit was around 100
-            },
+            }
             RateLimitResult::Blocked { current_count, .. } => *current_count,
         }
     }
@@ -138,7 +143,7 @@ impl TokenBucket {
     fn refill(&mut self) {
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_refill).as_secs_f64();
-        
+
         if elapsed > 0.0 {
             let tokens_to_add = elapsed * self.refill_rate;
             self.tokens = (self.tokens + tokens_to_add).min(self.capacity as f64);
@@ -182,10 +187,10 @@ impl RateLimiter {
 
         let result = {
             let mut buckets = self.buckets.write().unwrap();
-            let bucket = buckets.entry(key).or_insert_with(|| {
-                TokenBucket::new(rpm, self.config.burst_multiplier)
-            });
-            
+            let bucket = buckets
+                .entry(key)
+                .or_insert_with(|| TokenBucket::new(rpm, self.config.burst_multiplier));
+
             bucket.check_and_consume(1)
         };
 
@@ -198,7 +203,12 @@ impl RateLimiter {
     }
 
     /// Check rate limit for multiple tokens at once (for bulk operations)
-    pub fn check_rate_limit_bulk(&self, ip: IpAddr, operation: &str, tokens: u32) -> RateLimitResult {
+    pub fn check_rate_limit_bulk(
+        &self,
+        ip: IpAddr,
+        operation: &str,
+        tokens: u32,
+    ) -> RateLimitResult {
         self.cleanup_if_needed();
 
         let key = (ip, operation.to_string());
@@ -206,10 +216,10 @@ impl RateLimiter {
 
         let result = {
             let mut buckets = self.buckets.write().unwrap();
-            let bucket = buckets.entry(key).or_insert_with(|| {
-                TokenBucket::new(rpm, self.config.burst_multiplier)
-            });
-            
+            let bucket = buckets
+                .entry(key)
+                .or_insert_with(|| TokenBucket::new(rpm, self.config.burst_multiplier));
+
             bucket.check_and_consume(tokens)
         };
 
@@ -245,17 +255,17 @@ impl RateLimiter {
     /// Force cleanup of expired buckets
     pub fn cleanup_expired_buckets(&self) {
         let ttl = Duration::from_secs(3600); // 1 hour TTL for buckets
-        
+
         let mut buckets = self.buckets.write().unwrap();
         let initial_count = buckets.len();
-        
+
         buckets.retain(|_, bucket| !bucket.is_expired(ttl));
-        
+
         let removed_count = initial_count - buckets.len();
         if removed_count > 0 {
             log::debug!("Cleaned up {} expired rate limit buckets", removed_count);
         }
-        
+
         *self.last_cleanup.write().unwrap() = Instant::now();
     }
 
@@ -293,18 +303,18 @@ impl RateLimiter {
     /// Block an IP temporarily by consuming all their tokens
     pub fn temporary_block(&self, ip: IpAddr, duration: Duration) {
         let operations = ["game_join", "dice_roll", "network_message", "bet_placement"];
-        
+
         let mut buckets = self.buckets.write().unwrap();
-        
+
         for operation in &operations {
             let key = (ip, operation.to_string());
             if let Some(bucket) = buckets.get_mut(&key) {
                 bucket.tokens = 0.0; // Consume all tokens
-                // Set last refill to future time to extend the block
+                                     // Set last refill to future time to extend the block
                 bucket.last_refill = Instant::now() + duration;
             }
         }
-        
+
         log::warn!("Temporarily blocked IP {} for {:?}", ip, duration);
     }
 }
@@ -333,11 +343,11 @@ mod tests {
     #[test]
     fn test_token_bucket_basic() {
         let mut bucket = TokenBucket::new(60, 1.0); // 1 request per second, no burst
-        
+
         // Should allow initial request
         let result = bucket.check_and_consume(1);
         assert!(result.is_allowed());
-        
+
         // Should block rapid subsequent request
         let result = bucket.check_and_consume(1);
         assert!(result.is_blocked());
@@ -346,15 +356,15 @@ mod tests {
     #[test]
     fn test_token_bucket_refill() {
         let mut bucket = TokenBucket::new(60, 1.0); // 1 request per second
-        
+
         // Consume all tokens
         let result = bucket.check_and_consume(1);
         assert!(result.is_allowed());
-        
+
         // Should be blocked immediately
         let result = bucket.check_and_consume(1);
         assert!(result.is_blocked());
-        
+
         // Wait for refill and try again
         thread::sleep(Duration::from_secs(2));
         let result = bucket.check_and_consume(1);
@@ -366,14 +376,14 @@ mod tests {
         let limiter = create_test_limiter();
         let ip1 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
         let ip2 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2));
-        
+
         // Each IP should have independent limits
         let result1 = limiter.check_rate_limit(ip1, "game_join");
         let result2 = limiter.check_rate_limit(ip2, "game_join");
-        
+
         assert!(result1.is_allowed());
         assert!(result2.is_allowed());
-        
+
         assert_eq!(limiter.get_bucket_count(), 2);
     }
 
@@ -381,14 +391,14 @@ mod tests {
     fn test_rate_limiter_per_operation() {
         let limiter = create_test_limiter();
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
+
         // Same IP, different operations should have independent limits
         let result1 = limiter.check_rate_limit(ip, "game_join");
         let result2 = limiter.check_rate_limit(ip, "dice_roll");
-        
+
         assert!(result1.is_allowed());
         assert!(result2.is_allowed());
-        
+
         assert_eq!(limiter.get_bucket_count(), 2);
     }
 
@@ -396,11 +406,11 @@ mod tests {
     fn test_bulk_token_consumption() {
         let limiter = create_test_limiter();
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
+
         // Request multiple tokens at once
         let result = limiter.check_rate_limit_bulk(ip, "network_message", 5);
         assert!(result.is_allowed());
-        
+
         // Should have fewer tokens remaining
         if let RateLimitResult::Allowed { remaining } = result {
             assert!(remaining < 100); // Assuming burst capacity is around 100
@@ -411,9 +421,9 @@ mod tests {
     fn test_violation_counting() {
         let limiter = create_test_limiter();
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
+
         let initial_violations = limiter.get_violation_count();
-        
+
         // Consume all tokens to trigger violations
         for _ in 0..100 {
             let result = limiter.check_rate_limit(ip, "game_join");
@@ -421,7 +431,7 @@ mod tests {
                 break;
             }
         }
-        
+
         let final_violations = limiter.get_violation_count();
         assert!(final_violations > initial_violations);
     }
@@ -430,16 +440,16 @@ mod tests {
     fn test_bucket_cleanup() {
         let limiter = create_test_limiter();
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
+
         // Create some buckets
         let _ = limiter.check_rate_limit(ip, "game_join");
         let _ = limiter.check_rate_limit(ip, "dice_roll");
-        
+
         assert_eq!(limiter.get_bucket_count(), 2);
-        
+
         // Force cleanup
         limiter.cleanup_expired_buckets();
-        
+
         // Buckets should still exist (not old enough)
         assert_eq!(limiter.get_bucket_count(), 2);
     }
@@ -448,16 +458,16 @@ mod tests {
     fn test_ip_reset() {
         let limiter = create_test_limiter();
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
+
         // Create buckets for IP
         let _ = limiter.check_rate_limit(ip, "game_join");
         let _ = limiter.check_rate_limit(ip, "dice_roll");
-        
+
         assert_eq!(limiter.get_bucket_count(), 2);
-        
+
         // Reset IP limits
         limiter.reset_ip_limits(ip);
-        
+
         assert_eq!(limiter.get_bucket_count(), 0);
     }
 
@@ -465,14 +475,14 @@ mod tests {
     fn test_temporary_block() {
         let limiter = create_test_limiter();
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
+
         // Should work initially
         let result = limiter.check_rate_limit(ip, "game_join");
         assert!(result.is_allowed());
-        
+
         // Block the IP
         limiter.temporary_block(ip, Duration::from_secs(60));
-        
+
         // Should now be blocked
         let result = limiter.check_rate_limit(ip, "game_join");
         assert!(result.is_blocked());
@@ -482,10 +492,10 @@ mod tests {
     fn test_rate_limit_stats() {
         let limiter = create_test_limiter();
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
+
         // Create some activity
         let _ = limiter.check_rate_limit(ip, "game_join");
-        
+
         let stats = limiter.get_stats();
         assert_eq!(stats.active_buckets, 1);
         assert!(stats.config.game_join_rpm > 0);

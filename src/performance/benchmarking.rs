@@ -3,13 +3,13 @@
 //! This module provides detailed performance analysis and benchmarking
 //! for all aspects of the BitCraps system.
 
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::RwLock;
 use tokio::time::interval;
-use serde::{Deserialize, Serialize};
-use rayon::prelude::*;
 
 use crate::error::Result;
 
@@ -219,11 +219,11 @@ impl PerformanceBenchmarker {
             config,
         }
     }
-    
+
     /// Start continuous performance monitoring
     pub async fn start_monitoring(&self) -> Result<()> {
         *self.is_monitoring.write().await = true;
-        
+
         // Start monitoring tasks
         self.start_network_monitoring().await;
         self.start_consensus_monitoring().await;
@@ -231,27 +231,27 @@ impl PerformanceBenchmarker {
         self.start_memory_monitoring().await;
         self.start_game_monitoring().await;
         self.start_system_monitoring().await;
-        
+
         log::info!("Performance monitoring started");
         Ok(())
     }
-    
+
     /// Stop performance monitoring
     pub async fn stop_monitoring(&self) {
         *self.is_monitoring.write().await = false;
         log::info!("Performance monitoring stopped");
     }
-    
+
     /// Run comprehensive benchmark suite
     pub async fn run_benchmark_suite(&self) -> Result<BenchmarkResults> {
         log::info!("Starting comprehensive benchmark suite");
-        
+
         let start_time = SystemTime::now();
-        
+
         // Warmup phase
         log::info!("Warmup phase starting");
         tokio::time::sleep(self.config.warmup_duration).await;
-        
+
         // Run all benchmarks in parallel
         let (network_bench, consensus_bench, crypto_bench, memory_bench, game_bench, system_bench) = tokio::join!(
             self.benchmark_network(),
@@ -261,9 +261,9 @@ impl PerformanceBenchmarker {
             self.benchmark_game(),
             self.benchmark_system()
         );
-        
+
         let duration = start_time.elapsed().unwrap_or(Duration::ZERO);
-        
+
         // Calculate overall score
         let overall_score = self.calculate_overall_score(
             &network_bench,
@@ -273,10 +273,17 @@ impl PerformanceBenchmarker {
             &game_bench,
             &system_bench,
         );
-        
+
         let performance_grade = Self::score_to_grade(overall_score);
-        let recommendations = self.generate_recommendations(&network_bench, &consensus_bench, &crypto_bench, &memory_bench, &game_bench, &system_bench);
-        
+        let recommendations = self.generate_recommendations(
+            &network_bench,
+            &consensus_bench,
+            &crypto_bench,
+            &memory_bench,
+            &game_bench,
+            &system_bench,
+        );
+
         let results = BenchmarkResults {
             timestamp: start_time,
             duration,
@@ -290,45 +297,52 @@ impl PerformanceBenchmarker {
             performance_grade,
             recommendations,
         };
-        
-        log::info!("Benchmark suite completed with score: {:.1}% ({})", overall_score, performance_grade.as_str());
-        
+
+        log::info!(
+            "Benchmark suite completed with score: {:.1}% ({})",
+            overall_score,
+            performance_grade.as_str()
+        );
+
         Ok(results)
     }
-    
+
     /// Benchmark network performance
     async fn benchmark_network(&self) -> NetworkMetrics {
         log::info!("Running network performance benchmark");
-        
+
         let mut metrics = NetworkMetrics::default();
-        
+
         // Simulate network operations
         let start = Instant::now();
-        
+
         // Simulate throughput test
         let throughput_samples = (0..1000).collect::<Vec<_>>();
         let throughput_start = Instant::now();
-        
+
         throughput_samples.par_iter().for_each(|_| {
             // Simulate network operation
             std::thread::sleep(Duration::from_micros(10));
         });
-        
+
         let throughput_duration = throughput_start.elapsed();
-        metrics.throughput_mbps = (1000.0 * 1024.0) / (throughput_duration.as_secs_f64() * 1024.0 * 1024.0);
-        
+        metrics.throughput_mbps =
+            (1000.0 * 1024.0) / (throughput_duration.as_secs_f64() * 1024.0 * 1024.0);
+
         // Simulate latency measurements
-        let mut latency_samples: Vec<Duration> = (0..100).map(|_| {
-            let start = Instant::now();
-            std::thread::sleep(Duration::from_micros(rand::random::<u64>() % 1000 + 100));
-            start.elapsed()
-        }).collect();
-        
+        let mut latency_samples: Vec<Duration> = (0..100)
+            .map(|_| {
+                let start = Instant::now();
+                std::thread::sleep(Duration::from_micros(rand::random::<u64>() % 1000 + 100));
+                start.elapsed()
+            })
+            .collect();
+
         latency_samples.sort();
         metrics.latency_p50 = latency_samples[50];
         metrics.latency_p95 = latency_samples[95];
         metrics.latency_p99 = latency_samples[99];
-        
+
         // Other simulated metrics
         metrics.packet_loss_rate = rand::random::<f64>() % 0.05; // 0-5%
         metrics.jitter = Duration::from_micros(rand::random::<u64>() % 1000);
@@ -339,29 +353,34 @@ impl PerformanceBenchmarker {
         metrics.route_convergence_time = Duration::from_millis(500);
         metrics.mesh_stability = 0.95;
         metrics.last_updated = Some(SystemTime::now());
-        
-        log::info!("Network benchmark completed: {:.2} Mbps throughput", metrics.throughput_mbps);
+
+        log::info!(
+            "Network benchmark completed: {:.2} Mbps throughput",
+            metrics.throughput_mbps
+        );
         metrics
     }
-    
+
     /// Benchmark consensus performance
     async fn benchmark_consensus(&self) -> ConsensusMetrics {
         log::info!("Running consensus performance benchmark");
-        
+
         let mut metrics = ConsensusMetrics::default();
-        
+
         // Simulate consensus operations
-        let mut consensus_samples: Vec<Duration> = (0..100).map(|_| {
-            let start = Instant::now();
-            // Simulate consensus round
-            std::thread::sleep(Duration::from_millis(rand::random::<u64>() % 100 + 50));
-            start.elapsed()
-        }).collect();
-        
+        let mut consensus_samples: Vec<Duration> = (0..100)
+            .map(|_| {
+                let start = Instant::now();
+                // Simulate consensus round
+                std::thread::sleep(Duration::from_millis(rand::random::<u64>() % 100 + 50));
+                start.elapsed()
+            })
+            .collect();
+
         consensus_samples.sort();
         metrics.consensus_latency_p50 = consensus_samples[50];
         metrics.consensus_latency_p95 = consensus_samples[95];
-        
+
         metrics.consensus_success_rate = 0.98; // 98% success rate
         metrics.byzantine_resilience = 0.33; // 33% Byzantine tolerance
         metrics.vote_aggregation_time = Duration::from_millis(20);
@@ -372,53 +391,62 @@ impl PerformanceBenchmarker {
         metrics.finality_time = Duration::from_millis(200);
         metrics.fork_resolution_time = Duration::from_millis(500);
         metrics.last_updated = Some(SystemTime::now());
-        
-        log::info!("Consensus benchmark completed: {:.0} TPS", metrics.transactions_per_second);
+
+        log::info!(
+            "Consensus benchmark completed: {:.0} TPS",
+            metrics.transactions_per_second
+        );
         metrics
     }
-    
+
     /// Benchmark cryptographic performance
     async fn benchmark_crypto(&self) -> CryptoMetrics {
         log::info!("Running cryptographic performance benchmark");
-        
+
         let mut metrics = CryptoMetrics::default();
-        
+
         // Benchmark signature operations
         let sig_start = Instant::now();
         let sig_count = 1000;
-        
+
         (0..sig_count).collect::<Vec<_>>().par_iter().for_each(|_| {
             // Simulate signature operation
             std::thread::sleep(Duration::from_micros(100));
         });
-        
+
         let sig_duration = sig_start.elapsed();
         metrics.signature_ops_per_second = sig_count as f64 / sig_duration.as_secs_f64();
-        
+
         // Benchmark verification operations
         let verify_start = Instant::now();
         let verify_count = 2000;
-        
-        (0..verify_count).collect::<Vec<_>>().par_iter().for_each(|_| {
-            // Simulate verification operation
-            std::thread::sleep(Duration::from_micros(50));
-        });
-        
+
+        (0..verify_count)
+            .collect::<Vec<_>>()
+            .par_iter()
+            .for_each(|_| {
+                // Simulate verification operation
+                std::thread::sleep(Duration::from_micros(50));
+            });
+
         let verify_duration = verify_start.elapsed();
         metrics.verification_ops_per_second = verify_count as f64 / verify_duration.as_secs_f64();
-        
+
         // Benchmark hash operations
         let hash_start = Instant::now();
         let hash_count = 10000;
-        
-        (0..hash_count).collect::<Vec<_>>().par_iter().for_each(|_| {
-            // Simulate hash operation
-            std::thread::sleep(Duration::from_nanos(10));
-        });
-        
+
+        (0..hash_count)
+            .collect::<Vec<_>>()
+            .par_iter()
+            .for_each(|_| {
+                // Simulate hash operation
+                std::thread::sleep(Duration::from_nanos(10));
+            });
+
         let hash_duration = hash_start.elapsed();
         metrics.hash_ops_per_second = hash_count as f64 / hash_duration.as_secs_f64();
-        
+
         // Other crypto metrics
         metrics.encryption_ops_per_second = 5000.0;
         metrics.key_generation_time = Duration::from_millis(10);
@@ -427,32 +455,35 @@ impl PerformanceBenchmarker {
         metrics.simd_acceleration_speedup = 4.0; // 4x speedup with SIMD
         metrics.memory_usage_mb = 50.0;
         metrics.last_updated = Some(SystemTime::now());
-        
-        log::info!("Crypto benchmark completed: {:.0} sig/sec, {:.0} verify/sec", 
-                   metrics.signature_ops_per_second, metrics.verification_ops_per_second);
+
+        log::info!(
+            "Crypto benchmark completed: {:.0} sig/sec, {:.0} verify/sec",
+            metrics.signature_ops_per_second,
+            metrics.verification_ops_per_second
+        );
         metrics
     }
-    
+
     /// Benchmark memory performance
     async fn benchmark_memory(&self) -> MemoryMetrics {
         log::info!("Running memory performance benchmark");
-        
+
         let mut metrics = MemoryMetrics::default();
-        
+
         // Simulate memory operations
         let allocation_start = Instant::now();
         let mut allocations = Vec::new();
-        
+
         for _ in 0..1000 {
             let data = vec![0u8; 1024]; // 1KB allocation
             allocations.push(data);
         }
-        
+
         let allocation_duration = allocation_start.elapsed();
-        
+
         // Clear allocations to simulate deallocation
         allocations.clear();
-        
+
         metrics.total_memory_mb = 1024.0; // Simulated
         metrics.used_memory_mb = 512.0;
         metrics.available_memory_mb = 512.0;
@@ -464,29 +495,35 @@ impl PerformanceBenchmarker {
         metrics.cache_miss_rate = 0.15; // 15% miss rate
         metrics.memory_fragmentation = 0.1; // 10% fragmentation
         metrics.last_updated = Some(SystemTime::now());
-        
-        log::info!("Memory benchmark completed: {:.1} MB/s allocation rate", metrics.allocation_rate_mb_per_sec);
+
+        log::info!(
+            "Memory benchmark completed: {:.1} MB/s allocation rate",
+            metrics.allocation_rate_mb_per_sec
+        );
         metrics
     }
-    
+
     /// Benchmark game performance
     async fn benchmark_game(&self) -> GameMetrics {
         log::info!("Running game performance benchmark");
-        
+
         let mut metrics = GameMetrics::default();
-        
+
         // Simulate game operations
         let game_start = Instant::now();
         let game_count = 100;
-        
-        (0..game_count).collect::<Vec<_>>().par_iter().for_each(|_| {
-            // Simulate game execution
-            std::thread::sleep(Duration::from_millis(10));
-        });
-        
+
+        (0..game_count)
+            .collect::<Vec<_>>()
+            .par_iter()
+            .for_each(|_| {
+                // Simulate game execution
+                std::thread::sleep(Duration::from_millis(10));
+            });
+
         let game_duration = game_start.elapsed();
         metrics.games_per_second = game_count as f64 / game_duration.as_secs_f64();
-        
+
         metrics.average_game_duration = Duration::from_secs(120); // 2 minutes
         metrics.dice_roll_latency = Duration::from_millis(5);
         metrics.bet_processing_time = Duration::from_millis(10);
@@ -497,17 +534,20 @@ impl PerformanceBenchmarker {
         metrics.fairness_entropy = 0.99; // High entropy = fair
         metrics.ui_response_time = Duration::from_millis(50);
         metrics.last_updated = Some(SystemTime::now());
-        
-        log::info!("Game benchmark completed: {:.1} games/sec", metrics.games_per_second);
+
+        log::info!(
+            "Game benchmark completed: {:.1} games/sec",
+            metrics.games_per_second
+        );
         metrics
     }
-    
+
     /// Benchmark system resources
     async fn benchmark_system(&self) -> SystemMetrics {
         log::info!("Running system resource benchmark");
-        
+
         let mut metrics = SystemMetrics::default();
-        
+
         // Simulate system metric collection
         metrics.cpu_usage_percent = 45.0;
         metrics.cpu_cores = num_cpus::get();
@@ -521,197 +561,233 @@ impl PerformanceBenchmarker {
         metrics.battery_percent = Some(78.0);
         metrics.power_consumption_watts = Some(45.0);
         metrics.last_updated = Some(SystemTime::now());
-        
-        log::info!("System benchmark completed: {:.1}% CPU, {} cores", metrics.cpu_usage_percent, metrics.cpu_cores);
+
+        log::info!(
+            "System benchmark completed: {:.1}% CPU, {} cores",
+            metrics.cpu_usage_percent,
+            metrics.cpu_cores
+        );
         metrics
     }
-    
+
     /// Start network monitoring task
     async fn start_network_monitoring(&self) {
         let network_metrics = self.network_metrics.clone();
         let history = self.history.clone();
         let is_monitoring = self.is_monitoring.clone();
         let interval_duration = self.config.monitoring_interval;
-        
+
         tokio::spawn(async move {
             let mut interval = interval(interval_duration);
-            
+
             while *is_monitoring.read().await {
                 interval.tick().await;
-                
+
                 // Update network metrics
                 let mut metrics = network_metrics.write().await;
                 // In a real implementation, collect actual network metrics
                 metrics.last_updated = Some(SystemTime::now());
-                
+
                 // Add to history
                 let mut hist = history.write().await;
                 hist.add_network_metrics(SystemTime::now(), metrics.clone());
             }
         });
     }
-    
+
     /// Start consensus monitoring task
     async fn start_consensus_monitoring(&self) {
         let consensus_metrics = self.consensus_metrics.clone();
         let is_monitoring = self.is_monitoring.clone();
         let interval_duration = self.config.monitoring_interval;
-        
+
         tokio::spawn(async move {
             let mut interval = interval(interval_duration);
-            
+
             while *is_monitoring.read().await {
                 interval.tick().await;
-                
+
                 let mut metrics = consensus_metrics.write().await;
                 metrics.last_updated = Some(SystemTime::now());
             }
         });
     }
-    
+
     /// Start crypto monitoring task
     async fn start_crypto_monitoring(&self) {
         let crypto_metrics = self.crypto_metrics.clone();
         let is_monitoring = self.is_monitoring.clone();
         let interval_duration = self.config.monitoring_interval;
-        
+
         tokio::spawn(async move {
             let mut interval = interval(interval_duration);
-            
+
             while *is_monitoring.read().await {
                 interval.tick().await;
-                
+
                 let mut metrics = crypto_metrics.write().await;
                 metrics.last_updated = Some(SystemTime::now());
             }
         });
     }
-    
+
     /// Start memory monitoring task
     async fn start_memory_monitoring(&self) {
         let memory_metrics = self.memory_metrics.clone();
         let is_monitoring = self.is_monitoring.clone();
         let interval_duration = self.config.monitoring_interval;
-        
+
         tokio::spawn(async move {
             let mut interval = interval(interval_duration);
-            
+
             while *is_monitoring.read().await {
                 interval.tick().await;
-                
+
                 let mut metrics = memory_metrics.write().await;
                 metrics.last_updated = Some(SystemTime::now());
             }
         });
     }
-    
+
     /// Start game monitoring task
     async fn start_game_monitoring(&self) {
         let game_metrics = self.game_metrics.clone();
         let is_monitoring = self.is_monitoring.clone();
         let interval_duration = self.config.monitoring_interval;
-        
+
         tokio::spawn(async move {
             let mut interval = interval(interval_duration);
-            
+
             while *is_monitoring.read().await {
                 interval.tick().await;
-                
+
                 let mut metrics = game_metrics.write().await;
                 metrics.last_updated = Some(SystemTime::now());
             }
         });
     }
-    
+
     /// Start system monitoring task
     async fn start_system_monitoring(&self) {
         let system_metrics = self.system_metrics.clone();
         let is_monitoring = self.is_monitoring.clone();
         let interval_duration = self.config.monitoring_interval;
-        
+
         tokio::spawn(async move {
             let mut interval = interval(interval_duration);
-            
+
             while *is_monitoring.read().await {
                 interval.tick().await;
-                
+
                 let mut metrics = system_metrics.write().await;
                 metrics.last_updated = Some(SystemTime::now());
             }
         });
     }
-    
+
     /// Calculate overall performance score
-    fn calculate_overall_score(&self, network: &NetworkMetrics, consensus: &ConsensusMetrics, crypto: &CryptoMetrics, memory: &MemoryMetrics, game: &GameMetrics, system: &SystemMetrics) -> f64 {
+    fn calculate_overall_score(
+        &self,
+        network: &NetworkMetrics,
+        consensus: &ConsensusMetrics,
+        crypto: &CryptoMetrics,
+        memory: &MemoryMetrics,
+        game: &GameMetrics,
+        system: &SystemMetrics,
+    ) -> f64 {
         let network_score = self.score_network_metrics(network);
         let consensus_score = self.score_consensus_metrics(consensus);
         let crypto_score = self.score_crypto_metrics(crypto);
         let memory_score = self.score_memory_metrics(memory);
         let game_score = self.score_game_metrics(game);
         let system_score = self.score_system_metrics(system);
-        
+
         // Weighted average
-        let total_score = network_score * 0.25 + consensus_score * 0.20 + crypto_score * 0.15 + memory_score * 0.15 + game_score * 0.15 + system_score * 0.10;
-        
+        let total_score = network_score * 0.25
+            + consensus_score * 0.20
+            + crypto_score * 0.15
+            + memory_score * 0.15
+            + game_score * 0.15
+            + system_score * 0.10;
+
         total_score * 100.0 // Convert to percentage
     }
-    
+
     /// Score network metrics (0.0-1.0)
     fn score_network_metrics(&self, metrics: &NetworkMetrics) -> f64 {
         let throughput_score = (metrics.throughput_mbps / 100.0).min(1.0);
         let latency_score = (1.0 - (metrics.latency_p95.as_millis() as f64 / 1000.0)).max(0.0);
         let reliability_score = 1.0 - metrics.packet_loss_rate;
-        
+
         (throughput_score + latency_score + reliability_score) / 3.0
     }
-    
+
     /// Score consensus metrics (0.0-1.0)
     fn score_consensus_metrics(&self, metrics: &ConsensusMetrics) -> f64 {
-        let latency_score = (1.0 - (metrics.consensus_latency_p95.as_millis() as f64 / 1000.0)).max(0.0);
+        let latency_score =
+            (1.0 - (metrics.consensus_latency_p95.as_millis() as f64 / 1000.0)).max(0.0);
         let success_score = metrics.consensus_success_rate;
         let throughput_score = (metrics.transactions_per_second / 10000.0).min(1.0);
-        
+
         (latency_score + success_score + throughput_score) / 3.0
     }
-    
+
     /// Score crypto metrics (0.0-1.0)
     fn score_crypto_metrics(&self, metrics: &CryptoMetrics) -> f64 {
         let sig_score = (metrics.signature_ops_per_second / 10000.0).min(1.0);
         let verify_score = (metrics.verification_ops_per_second / 20000.0).min(1.0);
         let hash_score = (metrics.hash_ops_per_second / 100000.0).min(1.0);
-        
+
         (sig_score + verify_score + hash_score) / 3.0
     }
-    
+
     /// Score memory metrics (0.0-1.0)
     fn score_memory_metrics(&self, metrics: &MemoryMetrics) -> f64 {
-        let utilization_score = if metrics.memory_utilization < 0.8 { 1.0 } else { 1.0 - (metrics.memory_utilization - 0.8) / 0.2 };
+        let utilization_score = if metrics.memory_utilization < 0.8 {
+            1.0
+        } else {
+            1.0 - (metrics.memory_utilization - 0.8) / 0.2
+        };
         let cache_score = metrics.cache_hit_rate;
         let fragmentation_score = 1.0 - metrics.memory_fragmentation;
-        
+
         (utilization_score + cache_score + fragmentation_score) / 3.0
     }
-    
+
     /// Score game metrics (0.0-1.0)
     fn score_game_metrics(&self, metrics: &GameMetrics) -> f64 {
         let throughput_score = (metrics.games_per_second / 100.0).min(1.0);
         let latency_score = (1.0 - (metrics.ui_response_time.as_millis() as f64 / 100.0)).max(0.0);
         let fairness_score = metrics.fairness_entropy;
-        
+
         (throughput_score + latency_score + fairness_score) / 3.0
     }
-    
+
     /// Score system metrics (0.0-1.0)
     fn score_system_metrics(&self, metrics: &SystemMetrics) -> f64 {
-        let cpu_score = if metrics.cpu_usage_percent < 80.0 { 1.0 } else { 1.0 - (metrics.cpu_usage_percent - 80.0) / 20.0 };
-        let disk_score = if metrics.disk_usage_percent < 90.0 { 1.0 } else { 1.0 - (metrics.disk_usage_percent - 90.0) / 10.0 };
+        let cpu_score = if metrics.cpu_usage_percent < 80.0 {
+            1.0
+        } else {
+            1.0 - (metrics.cpu_usage_percent - 80.0) / 20.0
+        };
+        let disk_score = if metrics.disk_usage_percent < 90.0 {
+            1.0
+        } else {
+            1.0 - (metrics.disk_usage_percent - 90.0) / 10.0
+        };
         let temp_score = if let Some(temp) = metrics.temperature_celsius {
-            if temp < 70.0 { 1.0 } else { 1.0 - (temp - 70.0) / 30.0 }
-        } else { 1.0 };
-        
+            if temp < 70.0 {
+                1.0
+            } else {
+                1.0 - (temp - 70.0) / 30.0
+            }
+        } else {
+            1.0
+        };
+
         (cpu_score + disk_score + temp_score) / 3.0
     }
-    
+
     /// Convert score to performance grade
     fn score_to_grade(score: f64) -> PerformanceGrade {
         match score {
@@ -722,51 +798,68 @@ impl PerformanceBenchmarker {
             _ => PerformanceGrade::Critical,
         }
     }
-    
+
     /// Generate performance recommendations
-    fn generate_recommendations(&self, network: &NetworkMetrics, consensus: &ConsensusMetrics, crypto: &CryptoMetrics, memory: &MemoryMetrics, game: &GameMetrics, system: &SystemMetrics) -> Vec<String> {
+    fn generate_recommendations(
+        &self,
+        network: &NetworkMetrics,
+        consensus: &ConsensusMetrics,
+        crypto: &CryptoMetrics,
+        memory: &MemoryMetrics,
+        game: &GameMetrics,
+        system: &SystemMetrics,
+    ) -> Vec<String> {
         let mut recommendations = Vec::new();
-        
+
         // Network recommendations
         if network.throughput_mbps < 10.0 {
-            recommendations.push("Consider optimizing network protocols for higher throughput".to_string());
+            recommendations
+                .push("Consider optimizing network protocols for higher throughput".to_string());
         }
         if network.latency_p95.as_millis() > 500 {
-            recommendations.push("High latency detected - check network routing and connection quality".to_string());
+            recommendations.push(
+                "High latency detected - check network routing and connection quality".to_string(),
+            );
         }
-        
+
         // Consensus recommendations
         if consensus.consensus_success_rate < 0.95 {
-            recommendations.push("Low consensus success rate - investigate Byzantine fault tolerance".to_string());
+            recommendations.push(
+                "Low consensus success rate - investigate Byzantine fault tolerance".to_string(),
+            );
         }
-        
+
         // Crypto recommendations
         if crypto.signature_ops_per_second < 1000.0 {
-            recommendations.push("Enable SIMD acceleration for cryptographic operations".to_string());
+            recommendations
+                .push("Enable SIMD acceleration for cryptographic operations".to_string());
         }
-        
+
         // Memory recommendations
         if memory.memory_utilization > 0.9 {
             recommendations.push("High memory usage - consider increasing available memory or optimizing allocations".to_string());
         }
-        
+
         // Game recommendations
         if game.ui_response_time.as_millis() > 100 {
-            recommendations.push("UI response time is high - optimize rendering pipeline".to_string());
+            recommendations
+                .push("UI response time is high - optimize rendering pipeline".to_string());
         }
-        
+
         // System recommendations
         if system.cpu_usage_percent > 85.0 {
-            recommendations.push("High CPU usage detected - consider load balancing or optimization".to_string());
+            recommendations.push(
+                "High CPU usage detected - consider load balancing or optimization".to_string(),
+            );
         }
-        
+
         if recommendations.is_empty() {
             recommendations.push("Performance is within acceptable ranges".to_string());
         }
-        
+
         recommendations
     }
-    
+
     /// Get current metrics snapshot
     pub async fn get_current_metrics(&self) -> BenchmarkResults {
         let network = self.network_metrics.read().await.clone();
@@ -775,11 +868,13 @@ impl PerformanceBenchmarker {
         let memory = self.memory_metrics.read().await.clone();
         let game = self.game_metrics.read().await.clone();
         let system = self.system_metrics.read().await.clone();
-        
-        let overall_score = self.calculate_overall_score(&network, &consensus, &crypto, &memory, &game, &system);
+
+        let overall_score =
+            self.calculate_overall_score(&network, &consensus, &crypto, &memory, &game, &system);
         let performance_grade = Self::score_to_grade(overall_score);
-        let recommendations = self.generate_recommendations(&network, &consensus, &crypto, &memory, &game, &system);
-        
+        let recommendations =
+            self.generate_recommendations(&network, &consensus, &crypto, &memory, &game, &system);
+
         BenchmarkResults {
             timestamp: SystemTime::now(),
             duration: Duration::ZERO,
@@ -808,7 +903,7 @@ impl PerformanceHistory {
             max_history_size: max_size,
         }
     }
-    
+
     fn add_network_metrics(&mut self, timestamp: SystemTime, metrics: NetworkMetrics) {
         self.network_history.push_back((timestamp, metrics));
         if self.network_history.len() > self.max_history_size {
@@ -832,16 +927,16 @@ impl PerformanceGrade {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_benchmarker_creation() {
         let config = BenchmarkConfig::default();
         let benchmarker = PerformanceBenchmarker::new(config);
-        
+
         let metrics = benchmarker.get_current_metrics().await;
         assert!(metrics.overall_score >= 0.0 && metrics.overall_score <= 100.0);
     }
-    
+
     #[tokio::test]
     async fn test_benchmark_suite() {
         let config = BenchmarkConfig {
@@ -850,14 +945,17 @@ mod tests {
             ..Default::default()
         };
         let benchmarker = PerformanceBenchmarker::new(config);
-        
-        let results = benchmarker.run_benchmark_suite().await.expect("Benchmark should complete");
-        
+
+        let results = benchmarker
+            .run_benchmark_suite()
+            .await
+            .expect("Benchmark should complete");
+
         assert!(results.overall_score >= 0.0);
         assert!(!results.recommendations.is_empty());
         assert!(results.duration > Duration::ZERO);
     }
-    
+
     #[tokio::test]
     async fn test_monitoring() {
         let config = BenchmarkConfig {
@@ -865,39 +963,57 @@ mod tests {
             ..Default::default()
         };
         let benchmarker = PerformanceBenchmarker::new(config);
-        
-        benchmarker.start_monitoring().await.expect("Monitoring should start");
-        
+
+        benchmarker
+            .start_monitoring()
+            .await
+            .expect("Monitoring should start");
+
         tokio::time::sleep(Duration::from_millis(50)).await;
-        
+
         benchmarker.stop_monitoring().await;
-        
+
         let is_monitoring = *benchmarker.is_monitoring.read().await;
         assert!(!is_monitoring);
     }
-    
+
     #[test]
     fn test_score_calculation() {
         let benchmarker = PerformanceBenchmarker::new(BenchmarkConfig::default());
-        
+
         let network = NetworkMetrics {
             throughput_mbps: 50.0,
             latency_p95: Duration::from_millis(100),
             packet_loss_rate: 0.01,
             ..Default::default()
         };
-        
+
         let score = benchmarker.score_network_metrics(&network);
         assert!(score > 0.0 && score <= 1.0);
     }
-    
+
     #[test]
     fn test_performance_grade() {
         assert_eq!(PerformanceGrade::Excellent.as_str(), "Excellent");
-        assert_eq!(PerformanceBenchmarker::score_to_grade(95.0), PerformanceGrade::Excellent);
-        assert_eq!(PerformanceBenchmarker::score_to_grade(85.0), PerformanceGrade::Good);
-        assert_eq!(PerformanceBenchmarker::score_to_grade(75.0), PerformanceGrade::Fair);
-        assert_eq!(PerformanceBenchmarker::score_to_grade(65.0), PerformanceGrade::Poor);
-        assert_eq!(PerformanceBenchmarker::score_to_grade(50.0), PerformanceGrade::Critical);
+        assert_eq!(
+            PerformanceBenchmarker::score_to_grade(95.0),
+            PerformanceGrade::Excellent
+        );
+        assert_eq!(
+            PerformanceBenchmarker::score_to_grade(85.0),
+            PerformanceGrade::Good
+        );
+        assert_eq!(
+            PerformanceBenchmarker::score_to_grade(75.0),
+            PerformanceGrade::Fair
+        );
+        assert_eq!(
+            PerformanceBenchmarker::score_to_grade(65.0),
+            PerformanceGrade::Poor
+        );
+        assert_eq!(
+            PerformanceBenchmarker::score_to_grade(50.0),
+            PerformanceGrade::Critical
+        );
     }
 }

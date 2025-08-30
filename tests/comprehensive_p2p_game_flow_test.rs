@@ -11,41 +11,37 @@
 //! 5. Test mobile performance optimizations
 //! 6. Verify cross-platform compatibility
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::collections::HashMap;
-use tokio::sync::{RwLock, Mutex};
+use tokio::sync::{Mutex, RwLock};
 use tokio::time::timeout;
 
 use bitcraps::{
-    protocol::{
-        PeerId, GameId, BetType, DiceRoll, CrapTokens,
-        craps::{CrapsGame, GamePhase},
-        consensus::engine::ConsensusEngine,
-        runtime::{GameRuntime, PlayerManager},
-        p2p_messages::{P2PMessage, GameMessage, ConsensusMessage},
-        efficient_consensus::EfficientConsensusEngine,
-    },
-    transport::{
-        TransportCoordinator, BluetoothTransport, TransportAddress,
-        ble_peripheral::BlePeripheral,
-        android_ble::AndroidBleTransport,
-        ios_ble::IosBleTransport,
-    },
-    mesh::{MeshService, MeshPeer},
-    discovery::{BluetoothDiscovery, DiscoveredPeer},
     coordinator::{MultiTransportCoordinator, NetworkMonitor},
-    crypto::{BitchatKeypair, BitchatIdentity, GameCrypto},
-    session::{SessionManager, BitchatSession},
-    token::{TokenLedger, Account, TransactionType},
-    mobile::{
-        performance::MobilePerformanceOptimizer,
-        battery_optimization::BatteryOptimizationManager,
-        network_optimizer::NetworkOptimizer,
-        ble_optimizer::BleOptimizer,
-    },
+    crypto::{BitchatIdentity, BitchatKeypair, GameCrypto},
+    discovery::{BluetoothDiscovery, DiscoveredPeer},
     gaming::consensus_game_manager::ConsensusGameManager,
-    monitoring::{NetworkMetrics, HealthCheck},
+    mesh::{MeshPeer, MeshService},
+    mobile::{
+        battery_optimization::BatteryOptimizationManager, ble_optimizer::BleOptimizer,
+        network_optimizer::NetworkOptimizer, performance::MobilePerformanceOptimizer,
+    },
+    monitoring::{HealthCheck, NetworkMetrics},
+    protocol::{
+        consensus::engine::ConsensusEngine,
+        craps::{CrapsGame, GamePhase},
+        efficient_consensus::EfficientConsensusEngine,
+        p2p_messages::{ConsensusMessage, GameMessage, P2PMessage},
+        runtime::{GameRuntime, PlayerManager},
+        BetType, CrapTokens, DiceRoll, GameId, PeerId,
+    },
+    session::{BitchatSession, SessionManager},
+    token::{Account, TokenLedger, TransactionType},
+    transport::{
+        android_ble::AndroidBleTransport, ble_peripheral::BlePeripheral, ios_ble::IosBleTransport,
+        BluetoothTransport, TransportAddress, TransportCoordinator,
+    },
     Error, Result,
 };
 
@@ -97,7 +93,7 @@ impl MockTransport {
         // Simulate network conditions
         let latency = *self.latency_ms.read().await;
         let packet_loss = *self.packet_loss.read().await;
-        
+
         // Simulate packet loss
         if fastrand::f64() < packet_loss {
             return Ok(()); // Message dropped
@@ -180,33 +176,45 @@ impl TestNode {
     pub async fn start_game(&self, game_id: GameId, min_players: u32) -> Result<()> {
         let mut game_manager = self.game_manager.write().await;
         game_manager.create_game(game_id, min_players).await?;
-        
+
         // Initialize token accounts for game
         let mut ledger = self.token_ledger.write().await;
         ledger.create_account(self.id, CrapTokens(1000))?; // Give initial tokens
-        
+
         Ok(())
     }
 
     pub async fn join_game(&self, game_id: GameId, host: PeerId) -> Result<()> {
         let mut game_manager = self.game_manager.write().await;
         game_manager.join_game(game_id, host).await?;
-        
+
         // Initialize token account
         let mut ledger = self.token_ledger.write().await;
         ledger.create_account(self.id, CrapTokens(1000))?;
-        
+
         Ok(())
     }
 
-    pub async fn place_bet(&self, game_id: GameId, bet_type: BetType, amount: CrapTokens) -> Result<()> {
+    pub async fn place_bet(
+        &self,
+        game_id: GameId,
+        bet_type: BetType,
+        amount: CrapTokens,
+    ) -> Result<()> {
         let mut game_runtime = self.game_runtime.write().await;
-        game_runtime.place_bet(game_id, self.id, bet_type, amount).await?;
-        
+        game_runtime
+            .place_bet(game_id, self.id, bet_type, amount)
+            .await?;
+
         // Deduct from token account
         let mut ledger = self.token_ledger.write().await;
-        ledger.transfer(self.id, bitcraps::TREASURY_ADDRESS, amount, TransactionType::Bet)?;
-        
+        ledger.transfer(
+            self.id,
+            bitcraps::TREASURY_ADDRESS,
+            amount,
+            TransactionType::Bet,
+        )?;
+
         Ok(())
     }
 
@@ -218,7 +226,7 @@ impl TestNode {
 
     pub async fn process_messages(&self) -> Result<()> {
         let messages = self.transport.receive_messages().await;
-        
+
         for (from, message) in messages {
             match message {
                 P2PMessage::Game(game_msg) => {
@@ -235,7 +243,7 @@ impl TestNode {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -245,9 +253,15 @@ impl TestNode {
                 let mut game_manager = self.game_manager.write().await;
                 game_manager.handle_join_request(from, game_id).await?;
             }
-            GameMessage::BetPlaced { game_id, bet_type, amount } => {
+            GameMessage::BetPlaced {
+                game_id,
+                bet_type,
+                amount,
+            } => {
                 let mut game_runtime = self.game_runtime.write().await;
-                game_runtime.handle_bet(game_id, from, bet_type, amount).await?;
+                game_runtime
+                    .handle_bet(game_id, from, bet_type, amount)
+                    .await?;
             }
             GameMessage::DiceRolled { game_id, roll } => {
                 let mut game_runtime = self.game_runtime.write().await;
@@ -258,7 +272,11 @@ impl TestNode {
         Ok(())
     }
 
-    async fn handle_consensus_message(&self, from: PeerId, message: ConsensusMessage) -> Result<()> {
+    async fn handle_consensus_message(
+        &self,
+        from: PeerId,
+        message: ConsensusMessage,
+    ) -> Result<()> {
         let mut consensus = self.consensus_engine.write().await;
         consensus.handle_message(from, message).await?;
         Ok(())
@@ -297,7 +315,7 @@ pub struct PerformanceMetrics {
 impl GameFlowTest {
     pub async fn new(num_players: usize) -> Result<Self> {
         let mut nodes = Vec::new();
-        
+
         for i in 0..num_players {
             let node = Arc::new(TestNode::new(format!("Player_{}", i + 1)).await?);
             nodes.push(node);
@@ -326,7 +344,8 @@ impl GameFlowTest {
 
         // Step 1: Host creates game
         let host = &self.nodes[0];
-        host.start_game(self.game_id, self.nodes.len() as u32).await?;
+        host.start_game(self.game_id, self.nodes.len() as u32)
+            .await?;
         println!("✅ Host created game {}", hex::encode(self.game_id));
 
         // Step 2: Other players join
@@ -337,7 +356,8 @@ impl GameFlowTest {
         println!("✅ All players joined the game");
 
         // Step 3: Process join messages and establish consensus
-        for _ in 0..5 { // Allow multiple rounds of message processing
+        for _ in 0..5 {
+            // Allow multiple rounds of message processing
             for node in &self.nodes {
                 node.process_messages().await?;
             }
@@ -347,7 +367,9 @@ impl GameFlowTest {
         // Step 4: Place bets (Pass Line bets)
         for (i, player) in self.nodes.iter().enumerate() {
             let bet_amount = CrapTokens(100 + i as u64 * 50); // Varying bet amounts
-            player.place_bet(self.game_id, BetType::PassLine, bet_amount).await?;
+            player
+                .place_bet(self.game_id, BetType::PassLine, bet_amount)
+                .await?;
         }
         println!("✅ All players placed bets");
 
@@ -386,21 +408,24 @@ impl GameFlowTest {
             assert_eq!(state.phase, first_state.phase, "Game phase inconsistency");
             assert_eq!(state.point, first_state.point, "Point inconsistency");
         }
-        
-        println!("✅ Game state consistency verified across all {} nodes", self.nodes.len());
+
+        println!(
+            "✅ Game state consistency verified across all {} nodes",
+            self.nodes.len()
+        );
 
         // Step 9: Continue game if point is established
         if first_state.phase == GamePhase::Point {
             println!("🎯 Point established: {:?}", first_state.point);
-            
+
             // Additional rolls until resolution
             let mut roll_count = 0;
             let max_rolls = 20; // Prevent infinite loops
-            
+
             while roll_count < max_rolls {
                 let roll = host.roll_dice(self.game_id).await?;
                 println!("🎲 Roll {}: {:?}", roll_count + 1, roll);
-                
+
                 // Process messages
                 for _ in 0..3 {
                     for node in &self.nodes {
@@ -408,7 +433,7 @@ impl GameFlowTest {
                     }
                     tokio::time::sleep(Duration::from_millis(50)).await;
                 }
-                
+
                 // Check if game ended
                 if let Some(state) = host.get_game_state(self.game_id).await? {
                     if state.phase == GamePhase::Ended {
@@ -416,7 +441,7 @@ impl GameFlowTest {
                         break;
                     }
                 }
-                
+
                 roll_count += 1;
             }
         }
@@ -438,40 +463,50 @@ impl GameFlowTest {
 
         // Test BLE discovery simulation
         let mut discovered_peers = Vec::new();
-        
+
         for node in &self.nodes {
             // Simulate BLE advertising
             let peer_info = DiscoveredPeer {
                 peer_id: node.id,
                 address: TransportAddress::BluetoothLE([0u8; 6]), // Mock BLE address
-                signal_strength: -50, // Good signal strength
+                signal_strength: -50,                             // Good signal strength
                 advertised_services: vec![uuid::Uuid::new_v4()],
                 last_seen: std::time::SystemTime::now(),
             };
             discovered_peers.push(peer_info);
         }
 
-        println!("✅ BLE discovery simulated for {} peers", discovered_peers.len());
+        println!(
+            "✅ BLE discovery simulated for {} peers",
+            discovered_peers.len()
+        );
 
         // Test BLE optimization features
         for node in &self.nodes {
             // Test battery optimization
             let battery_manager = BatteryOptimizationManager::new();
             let optimization_level = battery_manager.get_optimization_level().await;
-            println!("🔋 Node {} battery optimization: {:?}", 
-                hex::encode(&node.id[..4]), optimization_level);
+            println!(
+                "🔋 Node {} battery optimization: {:?}",
+                hex::encode(&node.id[..4]),
+                optimization_level
+            );
 
             // Test BLE optimizer
             let ble_optimizer = BleOptimizer::new();
             let optimized_params = ble_optimizer.optimize_for_battery().await?;
-            println!("📡 BLE parameters optimized for battery: interval={}ms", 
-                optimized_params.advertising_interval_ms);
+            println!(
+                "📡 BLE parameters optimized for battery: interval={}ms",
+                optimized_params.advertising_interval_ms
+            );
 
             // Test network optimizer
             let network_optimizer = NetworkOptimizer::new();
             let network_params = network_optimizer.optimize_for_mobile().await?;
-            println!("🌐 Network optimized for mobile: max_connections={}", 
-                network_params.max_connections);
+            println!(
+                "🌐 Network optimized for mobile: max_connections={}",
+                network_params.max_connections
+            );
         }
 
         println!("✅ BLE integration test completed successfully!");
@@ -502,20 +537,27 @@ impl GameFlowTest {
 
         // Test consensus security against Byzantine faults
         let byzantine_node_count = (self.nodes.len() - 1) / 3; // Up to 33% Byzantine nodes
-        println!("🛡️  Testing Byzantine fault tolerance with {} Byzantine nodes out of {}", 
-            byzantine_node_count, self.nodes.len());
+        println!(
+            "🛡️  Testing Byzantine fault tolerance with {} Byzantine nodes out of {}",
+            byzantine_node_count,
+            self.nodes.len()
+        );
 
         // Simulate Byzantine behavior by introducing message delays/corruptions
         for i in 0..byzantine_node_count {
             if i < self.nodes.len() {
                 // Introduce network issues for Byzantine nodes
-                self.nodes[i].transport.set_network_conditions(500, 0.1).await; // High latency, packet loss
+                self.nodes[i]
+                    .transport
+                    .set_network_conditions(500, 0.1)
+                    .await; // High latency, packet loss
             }
         }
 
         // Run consensus with Byzantine nodes
         let host = &self.nodes[0];
-        host.start_game(GameId::generate(), self.nodes.len() as u32).await?;
+        host.start_game(GameId::generate(), self.nodes.len() as u32)
+            .await?;
 
         // Process messages with Byzantine conditions
         for round in 0..10 {
@@ -540,15 +582,19 @@ impl GameFlowTest {
         // Test memory optimization
         for node in &self.nodes {
             let optimizer = &node.mobile_optimizer;
-            
+
             // Test memory management
             let memory_before = optimizer.get_memory_usage().await;
             optimizer.optimize_memory().await?;
             let memory_after = optimizer.get_memory_usage().await;
-            
-            println!("💾 Node {} memory: {:.2}MB -> {:.2}MB", 
-                hex::encode(&node.id[..4]), memory_before, memory_after);
-            
+
+            println!(
+                "💾 Node {} memory: {:.2}MB -> {:.2}MB",
+                hex::encode(&node.id[..4]),
+                memory_before,
+                memory_after
+            );
+
             metrics.memory_usage_mb = memory_after;
         }
 
@@ -557,31 +603,39 @@ impl GameFlowTest {
             let optimizer = &node.mobile_optimizer;
             let cpu_usage = optimizer.get_cpu_usage().await;
             optimizer.optimize_cpu().await?;
-            
-            println!("⚡ Node {} CPU usage: {:.1}%", 
-                hex::encode(&node.id[..4]), cpu_usage);
-            
+
+            println!(
+                "⚡ Node {} CPU usage: {:.1}%",
+                hex::encode(&node.id[..4]),
+                cpu_usage
+            );
+
             metrics.cpu_usage_percent = cpu_usage;
         }
 
         // Test network throughput
         let message_count = 1000;
         let throughput_start = Instant::now();
-        
+
         for i in 0..message_count {
             let sender = &self.nodes[i % self.nodes.len()];
             let receiver_idx = (i + 1) % self.nodes.len();
             let receiver = &self.nodes[receiver_idx];
-            
+
             let test_message = P2PMessage::Game(GameMessage::Ping);
-            sender.transport.send_message(receiver.id, test_message).await?;
+            sender
+                .transport
+                .send_message(receiver.id, test_message)
+                .await?;
         }
 
         let throughput_duration = throughput_start.elapsed();
         metrics.throughput_msg_per_sec = message_count as f64 / throughput_duration.as_secs_f64();
-        
-        println!("🚀 Network throughput: {:.2} messages/second", 
-            metrics.throughput_msg_per_sec);
+
+        println!(
+            "🚀 Network throughput: {:.2} messages/second",
+            metrics.throughput_msg_per_sec
+        );
 
         // Test battery estimation
         let test_duration = start_time.elapsed();
@@ -589,9 +643,13 @@ impl GameFlowTest {
             let optimizer = &node.mobile_optimizer;
             let battery_drain = optimizer.estimate_battery_drain(test_duration).await;
             metrics.battery_drain_estimate = battery_drain;
-            
-            println!("🔋 Node {} estimated battery drain: {:.2}% over {:?}", 
-                hex::encode(&node.id[..4]), battery_drain, test_duration);
+
+            println!(
+                "🔋 Node {} estimated battery drain: {:.2}% over {:?}",
+                hex::encode(&node.id[..4]),
+                battery_drain,
+                test_duration
+            );
         }
 
         println!("✅ Mobile performance optimization test completed successfully!");
@@ -611,7 +669,7 @@ impl GameFlowTest {
 
         for (platform_name, _transport) in platforms {
             println!("🔧 Testing {} platform compatibility", platform_name);
-            
+
             // Test platform-specific features
             match platform_name {
                 "Android" => {
@@ -646,8 +704,10 @@ impl GameFlowTest {
         let deserialized: P2PMessage = bincode::deserialize(&serialized)?;
 
         match (test_message, deserialized) {
-            (P2PMessage::Game(GameMessage::BetPlaced { amount: a1, .. }), 
-             P2PMessage::Game(GameMessage::BetPlaced { amount: a2, .. })) => {
+            (
+                P2PMessage::Game(GameMessage::BetPlaced { amount: a1, .. }),
+                P2PMessage::Game(GameMessage::BetPlaced { amount: a2, .. }),
+            ) => {
                 assert_eq!(a1, a2, "Message serialization failed");
             }
             _ => panic!("Message deserialization failed"),
@@ -673,9 +733,11 @@ impl GameFlowTest {
                             peer_id: node.id,
                             services: vec![uuid::Uuid::new_v4()],
                             timestamp: std::time::SystemTime::now(),
-                        }
+                        },
                     );
-                    node.transport.send_message(other_node.id, discovery_msg).await?;
+                    node.transport
+                        .send_message(other_node.id, discovery_msg)
+                        .await?;
                     message_count += 1;
                 }
             }
@@ -691,26 +753,30 @@ impl GameFlowTest {
 
         // Test 2: Game message flow
         let game_messages = vec![
-            GameMessage::CreateGame { 
-                game_id: self.game_id, 
-                min_players: self.nodes.len() as u32 
+            GameMessage::CreateGame {
+                game_id: self.game_id,
+                min_players: self.nodes.len() as u32,
             },
-            GameMessage::JoinRequest { game_id: self.game_id },
-            GameMessage::BetPlaced { 
-                game_id: self.game_id, 
-                bet_type: BetType::PassLine, 
-                amount: CrapTokens(100) 
+            GameMessage::JoinRequest {
+                game_id: self.game_id,
             },
-            GameMessage::DiceRolled { 
-                game_id: self.game_id, 
-                roll: DiceRoll::new(3, 4) 
+            GameMessage::BetPlaced {
+                game_id: self.game_id,
+                bet_type: BetType::PassLine,
+                amount: CrapTokens(100),
+            },
+            GameMessage::DiceRolled {
+                game_id: self.game_id,
+                roll: DiceRoll::new(3, 4),
             },
         ];
 
         for msg in game_messages {
             let host = &self.nodes[0];
             for other_node in &self.nodes[1..] {
-                host.transport.send_message(other_node.id, P2PMessage::Game(msg.clone())).await?;
+                host.transport
+                    .send_message(other_node.id, P2PMessage::Game(msg.clone()))
+                    .await?;
                 message_count += 1;
             }
         }
@@ -736,7 +802,9 @@ impl GameFlowTest {
         for msg in consensus_messages {
             let host = &self.nodes[0];
             for other_node in &self.nodes[1..] {
-                host.transport.send_message(other_node.id, P2PMessage::Consensus(msg.clone())).await?;
+                host.transport
+                    .send_message(other_node.id, P2PMessage::Consensus(msg.clone()))
+                    .await?;
                 message_count += 1;
             }
         }
@@ -772,8 +840,11 @@ impl GameFlowTest {
     /// Complete system integration test
     pub async fn run_comprehensive_test(&self) -> Result<()> {
         println!("🚀 Running comprehensive BitCraps integration test suite...");
-        println!("📈 Test configuration: {} nodes, Game ID: {}", 
-            self.nodes.len(), hex::encode(self.game_id));
+        println!(
+            "📈 Test configuration: {} nodes, Game ID: {}",
+            self.nodes.len(),
+            hex::encode(self.game_id)
+        );
 
         let total_start = Instant::now();
 
@@ -786,7 +857,7 @@ impl GameFlowTest {
         self.test_protocol_message_flow().await?;
 
         let total_duration = total_start.elapsed();
-        
+
         // Print final performance report
         let metrics = self.performance_metrics.lock().await;
         println!("\n📊 COMPREHENSIVE TEST RESULTS:");
@@ -794,10 +865,16 @@ impl GameFlowTest {
         println!("⏱️  Total test duration: {:?}", total_duration);
         println!("📨 Total messages processed: {}", metrics.total_messages);
         println!("🔄 Average latency: {:.2}ms", metrics.average_latency_ms);
-        println!("🚀 Message throughput: {:.2} msg/sec", metrics.throughput_msg_per_sec);
+        println!(
+            "🚀 Message throughput: {:.2} msg/sec",
+            metrics.throughput_msg_per_sec
+        );
         println!("💾 Memory usage: {:.2}MB", metrics.memory_usage_mb);
         println!("⚡ CPU usage: {:.1}%", metrics.cpu_usage_percent);
-        println!("🔋 Battery drain estimate: {:.2}%", metrics.battery_drain_estimate);
+        println!(
+            "🔋 Battery drain estimate: {:.2}%",
+            metrics.battery_drain_estimate
+        );
         println!("👥 Nodes tested: {}", self.nodes.len());
         println!("🎲 Games completed: 1");
         println!("✅ All tests passed successfully!");
@@ -818,7 +895,7 @@ async fn test_comprehensive_p2p_game_flow() -> Result<()> {
 
     // Create test with 4 players (minimum for meaningful consensus testing)
     let test = GameFlowTest::new(4).await?;
-    
+
     // Run the comprehensive test suite
     test.run_comprehensive_test().await?;
 
@@ -842,33 +919,36 @@ async fn test_network_partition_recovery() -> Result<()> {
     println!("🌐 Testing network partition recovery...");
 
     let test = GameFlowTest::new(6).await?;
-    
+
     // Start game normally
     test.test_complete_game_flow().await?;
-    
+
     // Simulate network partition (split nodes into two groups)
     let partition_point = test.nodes.len() / 2;
-    
+
     // Group 1: First half of nodes
     for i in 0..partition_point {
         for j in partition_point..test.nodes.len() {
             // Simulate partition by setting very high packet loss
-            test.nodes[i].transport.set_network_conditions(1000, 0.9).await;
+            test.nodes[i]
+                .transport
+                .set_network_conditions(1000, 0.9)
+                .await;
         }
     }
-    
+
     println!("🔀 Network partition simulated");
-    
+
     // Try to continue game during partition
     tokio::time::sleep(Duration::from_secs(2)).await;
-    
+
     // Restore network (remove partition)
     for node in &test.nodes {
         node.transport.set_network_conditions(50, 0.0).await;
     }
-    
+
     println!("🔗 Network partition recovered");
-    
+
     // Continue game flow
     for _ in 0..5 {
         for node in &test.nodes {

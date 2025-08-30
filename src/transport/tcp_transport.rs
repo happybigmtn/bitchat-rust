@@ -7,14 +7,14 @@
 //! - Health monitoring and circuit breaker pattern
 //! - Support for 8+ concurrent connections
 
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, RwLock, Mutex, Semaphore};
-use tokio::net::{TcpStream, TcpListener};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use async_trait::async_trait;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
 
 use crate::error::{Error, Result};
 use crate::protocol::PeerId;
@@ -24,9 +24,12 @@ use crate::transport::{Transport, TransportAddress, TransportEvent};
 #[cfg(feature = "tls")]
 use rustls::{ClientConfig, ServerConfig};
 #[cfg(feature = "tls")]
-use tokio_rustls::{TlsConnector, TlsAcceptor, client::TlsStream as ClientTlsStream, server::TlsStream as ServerTlsStream};
-#[cfg(feature = "tls")]
 use std::sync::Arc as StdArc;
+#[cfg(feature = "tls")]
+use tokio_rustls::{
+    client::TlsStream as ClientTlsStream, server::TlsStream as ServerTlsStream, TlsAcceptor,
+    TlsConnector,
+};
 
 /// TCP transport configuration
 #[derive(Debug, Clone)]
@@ -126,8 +129,8 @@ struct CircuitBreaker {
 
 #[derive(Debug, PartialEq)]
 enum CircuitState {
-    Closed,  // Normal operation
-    Open,    // Circuit open, rejecting connections
+    Closed,   // Normal operation
+    Open,     // Circuit open, rejecting connections
     HalfOpen, // Testing if service recovered
 }
 
@@ -170,7 +173,7 @@ impl CircuitBreaker {
     fn record_failure(&mut self) {
         self.failure_count += 1;
         self.last_failure = Some(Instant::now());
-        
+
         if self.failure_count >= self.failure_threshold {
             self.state = CircuitState::Open;
         }
@@ -187,7 +190,7 @@ pub struct TcpTransport {
     event_receiver: Arc<Mutex<mpsc::UnboundedReceiver<TransportEvent>>>,
     connection_semaphore: Arc<Semaphore>,
     circuit_breakers: Arc<RwLock<HashMap<SocketAddr, CircuitBreaker>>>,
-    
+
     #[cfg(feature = "tls")]
     tls_connector: Option<TlsConnector>,
     #[cfg(feature = "tls")]
@@ -209,7 +212,7 @@ impl TcpTransport {
             event_receiver: Arc::new(Mutex::new(event_receiver)),
             connection_semaphore,
             circuit_breakers: Arc::new(RwLock::new(HashMap::new())),
-            
+
             #[cfg(feature = "tls")]
             tls_connector: None,
             #[cfg(feature = "tls")]
@@ -225,15 +228,15 @@ impl TcpTransport {
         server_config: Option<ServerConfig>,
     ) -> Self {
         let mut transport = Self::new(config);
-        
+
         if let Some(client_cfg) = client_config {
             transport.tls_connector = Some(TlsConnector::from(StdArc::new(client_cfg)));
         }
-        
+
         if let Some(server_cfg) = server_config {
             transport.tls_acceptor = Some(TlsAcceptor::from(StdArc::new(server_cfg)));
         }
-        
+
         transport
     }
 
@@ -242,19 +245,19 @@ impl TcpTransport {
         let connections = self.connections.clone();
         let config = self.config.clone();
         let event_sender = self.event_sender.clone();
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
-            
+
             loop {
                 interval.tick().await;
-                
+
                 let mut to_remove = Vec::new();
                 let now = Instant::now();
-                
+
                 {
                     let mut connections_guard = connections.write().await;
-                    
+
                     for (peer_id, conn) in connections_guard.iter_mut() {
                         // Check connection timeout
                         if now.duration_since(conn.last_activity) > config.keepalive_interval * 2 {
@@ -262,31 +265,33 @@ impl TcpTransport {
                             to_remove.push(*peer_id);
                             continue;
                         }
-                        
+
                         // Check error rate
                         if conn.message_count > 0 {
                             let error_rate = conn.error_count as f64 / conn.message_count as f64;
-                            if error_rate > 0.1 { // 10% error rate threshold
+                            if error_rate > 0.1 {
+                                // 10% error rate threshold
                                 if conn.health == ConnectionHealth::Healthy {
                                     conn.health = ConnectionHealth::Degraded;
                                 }
                             }
                         }
-                        
+
                         // Send keepalive for healthy connections
-                        if conn.health == ConnectionHealth::Healthy && 
-                           now.duration_since(conn.last_activity) > config.keepalive_interval {
+                        if conn.health == ConnectionHealth::Healthy
+                            && now.duration_since(conn.last_activity) > config.keepalive_interval
+                        {
                             // In a real implementation, send keepalive message
                             println!("Sending keepalive to peer: {:?}", peer_id);
                         }
                     }
-                    
+
                     // Remove failed connections
                     for peer_id in &to_remove {
                         connections_guard.remove(peer_id);
                     }
                 }
-                
+
                 // Send disconnection events
                 for peer_id in to_remove {
                     let _ = event_sender.send(TransportEvent::Disconnected {
@@ -303,16 +308,22 @@ impl TcpTransport {
         // Check circuit breaker
         {
             let mut breakers = self.circuit_breakers.write().await;
-            let breaker = breakers.entry(address)
+            let breaker = breakers
+                .entry(address)
                 .or_insert_with(|| CircuitBreaker::new(5, Duration::from_secs(60)));
-            
+
             if !breaker.can_connect() {
-                return Err(Error::Network(format!("Circuit breaker open for {}", address)));
+                return Err(Error::Network(format!(
+                    "Circuit breaker open for {}",
+                    address
+                )));
             }
         }
-        
+
         // Attempt connection
-        match tokio::time::timeout(self.config.connection_timeout, TcpStream::connect(address)).await {
+        match tokio::time::timeout(self.config.connection_timeout, TcpStream::connect(address))
+            .await
+        {
             Ok(Ok(stream)) => {
                 // Record success
                 let mut breakers = self.circuit_breakers.write().await;
@@ -341,33 +352,44 @@ impl TcpTransport {
     }
 
     /// Create TLS connection if enabled
-    async fn establish_connection(&self, address: SocketAddr, is_client: bool) -> Result<ConnectionStream> {
+    async fn establish_connection(
+        &self,
+        address: SocketAddr,
+        is_client: bool,
+    ) -> Result<ConnectionStream> {
         let tcp_stream = self.connect_with_circuit_breaker(address).await?;
-        
+
         #[cfg(feature = "tls")]
         {
             if self.config.enable_tls {
                 if is_client {
                     if let Some(connector) = &self.tls_connector {
-                        let domain = rustls::ServerName::try_from(address.ip().to_string().as_str())
-                            .map_err(|e| Error::Network(format!("Invalid TLS server name: {}", e)))?;
-                        
-                        let tls_stream = connector.connect(domain, tcp_stream).await
+                        let domain =
+                            rustls::ServerName::try_from(address.ip().to_string().as_str())
+                                .map_err(|e| {
+                                    Error::Network(format!("Invalid TLS server name: {}", e))
+                                })?;
+
+                        let tls_stream = connector
+                            .connect(domain, tcp_stream)
+                            .await
                             .map_err(|e| Error::Network(format!("TLS handshake failed: {}", e)))?;
-                        
+
                         return Ok(ConnectionStream::TlsClient(tls_stream));
                     }
                 } else {
                     if let Some(acceptor) = &self.tls_acceptor {
-                        let tls_stream = acceptor.accept(tcp_stream).await
+                        let tls_stream = acceptor
+                            .accept(tcp_stream)
+                            .await
                             .map_err(|e| Error::Network(format!("TLS accept failed: {}", e)))?;
-                        
+
                         return Ok(ConnectionStream::TlsServer(tls_stream));
                     }
                 }
             }
         }
-        
+
         Ok(ConnectionStream::Plain(tcp_stream))
     }
 
@@ -382,30 +404,41 @@ impl TcpTransport {
         }
 
         let connections = self.connections.read().await;
-        
+
         if let Some(mut connection) = connections.get(&peer_id) {
             // Use existing connection
             self.send_via_connection(&mut connection, data).await
         } else {
             drop(connections);
-            Err(Error::Network(format!("No connection to peer {:?}", peer_id)))
+            Err(Error::Network(format!(
+                "No connection to peer {:?}",
+                peer_id
+            )))
         }
     }
 
     /// Send data via existing connection
-    async fn send_via_connection(&self, connection: &mut &TcpConnection, data: Vec<u8>) -> Result<()> {
+    async fn send_via_connection(
+        &self,
+        connection: &mut &TcpConnection,
+        data: Vec<u8>,
+    ) -> Result<()> {
         // Create message with length prefix
         let mut message = Vec::new();
         message.extend_from_slice(&(data.len() as u32).to_be_bytes());
         message.extend_from_slice(&data);
-        
+
         // This is a simplified version - in reality we'd need mutable access to the stream
-        println!("Sending {} bytes to peer {:?}", data.len(), connection.peer_id);
-        
+        println!(
+            "Sending {} bytes to peer {:?}",
+            data.len(),
+            connection.peer_id
+        );
+
         // Update connection stats
         // connection.message_count += 1;
         // connection.last_activity = Instant::now();
-        
+
         Ok(())
     }
 
@@ -415,10 +448,10 @@ impl TcpTransport {
         let event_sender = self.event_sender.clone();
         let semaphore = self.connection_semaphore.clone();
         let config = self.config.clone();
-        
+
         #[cfg(feature = "tls")]
         let tls_acceptor = self.tls_acceptor.clone();
-        
+
         tokio::spawn(async move {
             loop {
                 match listener.accept().await {
@@ -431,25 +464,27 @@ impl TcpTransport {
                                 continue;
                             }
                         };
-                        
+
                         let connections = connections.clone();
                         let event_sender = event_sender.clone();
                         let config = config.clone();
-                        
+
                         #[cfg(feature = "tls")]
                         let tls_acceptor = tls_acceptor.clone();
-                        
+
                         // Handle connection in separate task
                         tokio::spawn(async move {
                             let _permit = permit; // Keep permit alive
-                            
+
                             let connection_stream = {
                                 #[cfg(feature = "tls")]
                                 {
                                     if config.enable_tls {
                                         if let Some(acceptor) = tls_acceptor {
                                             match acceptor.accept(stream).await {
-                                                Ok(tls_stream) => ConnectionStream::TlsServer(tls_stream),
+                                                Ok(tls_stream) => {
+                                                    ConnectionStream::TlsServer(tls_stream)
+                                                }
                                                 Err(e) => {
                                                     println!("TLS handshake failed: {}", e);
                                                     return;
@@ -467,10 +502,10 @@ impl TcpTransport {
                                     ConnectionStream::Plain(stream)
                                 }
                             };
-                            
+
                             // Generate peer ID (in practice, would be negotiated)
                             let peer_id = PeerId::from([0u8; 32]); // Generate proper peer ID
-                            
+
                             let tcp_connection = TcpConnection {
                                 peer_id,
                                 address: addr,
@@ -481,20 +516,23 @@ impl TcpTransport {
                                 error_count: 0,
                                 created_at: Instant::now(),
                             };
-                            
+
                             // Store connection
                             {
                                 let mut connections_guard = connections.write().await;
                                 connections_guard.insert(peer_id, tcp_connection);
                             }
-                            
+
                             // Send connection event
                             let _ = event_sender.send(TransportEvent::Connected {
                                 peer_id,
                                 address: TransportAddress::Tcp(addr),
                             });
-                            
-                            println!("Accepted TCP connection from: {} (peer: {:?})", addr, peer_id);
+
+                            println!(
+                                "Accepted TCP connection from: {} (peer: {:?})",
+                                addr, peer_id
+                            );
                         });
                     }
                     Err(e) => {
@@ -510,23 +548,27 @@ impl TcpTransport {
     pub async fn connection_stats(&self) -> TcpTransportStats {
         let connections = self.connections.read().await;
         let circuit_breakers = self.circuit_breakers.read().await;
-        
-        let healthy_count = connections.values()
+
+        let healthy_count = connections
+            .values()
             .filter(|conn| conn.health == ConnectionHealth::Healthy)
             .count();
-        
-        let degraded_count = connections.values()
+
+        let degraded_count = connections
+            .values()
             .filter(|conn| conn.health == ConnectionHealth::Degraded)
             .count();
-        
-        let failed_count = connections.values()
+
+        let failed_count = connections
+            .values()
             .filter(|conn| conn.health == ConnectionHealth::Failed)
             .count();
-        
-        let circuit_open_count = circuit_breakers.values()
+
+        let circuit_open_count = circuit_breakers
+            .values()
             .filter(|breaker| breaker.state == CircuitState::Open)
             .count();
-        
+
         TcpTransportStats {
             total_connections: connections.len(),
             healthy_connections: healthy_count,
@@ -541,36 +583,48 @@ impl TcpTransport {
 
 #[async_trait]
 impl Transport for TcpTransport {
-    async fn listen(&mut self, address: TransportAddress) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    async fn listen(
+        &mut self,
+        address: TransportAddress,
+    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
         if let TransportAddress::Tcp(addr) = address {
             let listener = TcpListener::bind(addr).await?;
             self.local_address = Some(listener.local_addr()?);
-            
-            println!("TCP transport listening on: {}", self.local_address.unwrap());
-            
+
+            println!(
+                "TCP transport listening on: {}",
+                self.local_address.unwrap()
+            );
+
             // Start accept loop
             self.accept_loop(listener).await;
-            
+
             // Start health monitor
             self.start_health_monitor().await;
-            
+
             Ok(())
         } else {
             Err(Error::Network("Invalid address type for TCP transport".to_string()).into())
         }
     }
 
-    async fn connect(&mut self, address: TransportAddress) -> std::result::Result<PeerId, Box<dyn std::error::Error>> {
+    async fn connect(
+        &mut self,
+        address: TransportAddress,
+    ) -> std::result::Result<PeerId, Box<dyn std::error::Error>> {
         if let TransportAddress::Tcp(addr) = address {
             // Acquire connection permit
-            let _permit = self.connection_semaphore.acquire().await
+            let _permit = self
+                .connection_semaphore
+                .acquire()
+                .await
                 .map_err(|e| Error::Network(format!("Semaphore acquire failed: {}", e)))?;
-            
+
             let connection_stream = self.establish_connection(addr, true).await?;
-            
+
             // Generate peer ID (in practice, would be negotiated)
             let peer_id = PeerId::from([0u8; 32]); // Generate proper peer ID
-            
+
             let tcp_connection = TcpConnection {
                 peer_id,
                 address: addr,
@@ -581,47 +635,54 @@ impl Transport for TcpTransport {
                 error_count: 0,
                 created_at: Instant::now(),
             };
-            
+
             // Store connection
             {
                 let mut connections = self.connections.write().await;
                 connections.insert(peer_id, tcp_connection);
             }
-            
+
             // Send connection event
             let _ = self.event_sender.send(TransportEvent::Connected {
                 peer_id,
                 address: TransportAddress::Tcp(addr),
             });
-            
+
             println!("Connected to TCP peer: {} (peer: {:?})", addr, peer_id);
-            
+
             Ok(peer_id)
         } else {
             Err(Error::Network("Invalid address type for TCP transport".to_string()).into())
         }
     }
 
-    async fn send(&mut self, peer_id: PeerId, data: Vec<u8>) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    async fn send(
+        &mut self,
+        peer_id: PeerId,
+        data: Vec<u8>,
+    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
         match self.send_reliable(peer_id, data).await {
             Ok(_) => Ok(()),
             Err(e) => Err(e.into()),
         }
     }
 
-    async fn disconnect(&mut self, peer_id: PeerId) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    async fn disconnect(
+        &mut self,
+        peer_id: PeerId,
+    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
         let mut connections = self.connections.write().await;
-        
+
         if let Some(_connection) = connections.remove(&peer_id) {
             // Send disconnection event
             let _ = self.event_sender.send(TransportEvent::Disconnected {
                 peer_id,
                 reason: "User requested disconnect".to_string(),
             });
-            
+
             println!("Disconnected from peer: {:?}", peer_id);
         }
-        
+
         Ok(())
     }
 
@@ -658,41 +719,41 @@ pub struct TcpTransportStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_tcp_transport_creation() {
         let config = TcpTransportConfig::default();
         let transport = TcpTransport::new(config);
-        
+
         let stats = transport.connection_stats().await;
         assert_eq!(stats.total_connections, 0);
         assert_eq!(stats.max_connections, 100);
     }
-    
+
     #[tokio::test]
     async fn test_circuit_breaker() {
         let mut breaker = CircuitBreaker::new(3, Duration::from_secs(60));
-        
+
         // Initially closed
         assert!(breaker.can_connect());
         assert_eq!(breaker.state, CircuitState::Closed);
-        
+
         // Record failures
         breaker.record_failure();
         breaker.record_failure();
         assert!(breaker.can_connect());
-        
+
         // Third failure opens circuit
         breaker.record_failure();
         assert!(!breaker.can_connect());
         assert_eq!(breaker.state, CircuitState::Open);
-        
+
         // Success closes circuit
         breaker.record_success();
         assert!(breaker.can_connect());
         assert_eq!(breaker.state, CircuitState::Closed);
     }
-    
+
     #[tokio::test]
     async fn test_connection_limits() {
         let config = TcpTransportConfig {
@@ -700,14 +761,14 @@ mod tests {
             ..Default::default()
         };
         let transport = TcpTransport::new(config);
-        
+
         // Test semaphore limits
         let permit1 = transport.connection_semaphore.try_acquire().unwrap();
         let permit2 = transport.connection_semaphore.try_acquire().unwrap();
-        
+
         // Third should fail
         assert!(transport.connection_semaphore.try_acquire().is_err());
-        
+
         // Release and try again
         drop(permit1);
         let _permit3 = transport.connection_semaphore.try_acquire().unwrap();

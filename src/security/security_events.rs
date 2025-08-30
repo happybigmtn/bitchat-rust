@@ -6,10 +6,10 @@
 //! - Event correlation and analysis
 //! - Integration with external monitoring systems
 
+use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Serialize, Deserialize};
 
 /// Security event severity levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -51,42 +51,42 @@ pub enum SecurityEvent {
         field: String,
         error: String,
     },
-    
+
     /// Authentication events
     AuthenticationFailed {
         client_ip: IpAddr,
         reason: String,
         attempts: u32,
     },
-    
+
     /// Rate limiting events
     RateLimitExceeded {
         client_ip: IpAddr,
         operation: String,
         attempts: u32,
     },
-    
+
     /// DoS protection events
     DosAttempt {
         client_ip: IpAddr,
         operation: String,
         reason: String,
     },
-    
+
     /// Network security events
     SuspiciousNetworkActivity {
         client_ip: IpAddr,
         activity_type: String,
         details: String,
     },
-    
+
     /// Cryptographic events
     CryptographicFailure {
         operation: String,
         error: String,
         context: Option<String>,
     },
-    
+
     /// Game integrity events
     GameIntegrityViolation {
         game_id: [u8; 16],
@@ -94,65 +94,65 @@ pub enum SecurityEvent {
         violation_type: String,
         details: String,
     },
-    
+
     /// Consensus security events
     ConsensusViolation {
         peer_id: [u8; 32],
         violation_type: String,
         severity: String,
     },
-    
+
     /// Message size violations
     OversizedMessage {
         client_ip: IpAddr,
         size: usize,
         max_size: usize,
     },
-    
+
     /// Timing attack detection
     TimingAttackDetected {
         client_ip: IpAddr,
         operation: String,
         suspicious_timing: String,
     },
-    
+
     /// Successful validations (for monitoring)
     ValidatedGameJoin {
         game_id: [u8; 16],
         player_id: [u8; 32],
         buy_in: u64,
     },
-    
+
     ValidatedDiceRoll {
         game_id: [u8; 16],
         player_id: [u8; 32],
     },
-    
+
     /// IP blocking events
     IpBlocked {
         ip: IpAddr,
         duration_seconds: u64,
         reason: String,
     },
-    
+
     IpUnblocked {
         ip: IpAddr,
         reason: String,
     },
-    
+
     /// System security events
     SecuritySystemError {
         component: String,
         error: String,
     },
-    
+
     /// Memory exhaustion attacks
     MemoryExhaustionAttempt {
         client_ip: IpAddr,
         operation: String,
         memory_requested: usize,
     },
-    
+
     /// Replay attack detection
     ReplayAttackDetected {
         client_ip: IpAddr,
@@ -207,11 +207,11 @@ impl SecurityEvent {
     pub fn is_malicious(&self) -> bool {
         matches!(
             self,
-            SecurityEvent::DosAttempt { .. } |
-            SecurityEvent::TimingAttackDetected { .. } |
-            SecurityEvent::GameIntegrityViolation { .. } |
-            SecurityEvent::MemoryExhaustionAttempt { .. } |
-            SecurityEvent::ReplayAttackDetected { .. }
+            SecurityEvent::DosAttempt { .. }
+                | SecurityEvent::TimingAttackDetected { .. }
+                | SecurityEvent::GameIntegrityViolation { .. }
+                | SecurityEvent::MemoryExhaustionAttempt { .. }
+                | SecurityEvent::ReplayAttackDetected { .. }
         )
     }
 }
@@ -293,9 +293,9 @@ impl SecurityEventLogger {
 
     /// Log multiple related events with correlation ID
     pub fn log_correlated_events(
-        &self, 
-        events: Vec<(SecurityEvent, SecurityLevel)>, 
-        correlation_id: String
+        &self,
+        events: Vec<(SecurityEvent, SecurityLevel)>,
+        correlation_id: String,
     ) {
         for (event, level) in events {
             let event_id = self.event_counter.fetch_add(1, Ordering::Relaxed);
@@ -318,10 +318,10 @@ impl SecurityEventLogger {
 
     /// Get total count of events by level
     pub fn get_event_count(&self) -> u64 {
-        self.info_events.load(Ordering::Relaxed) +
-        self.warning_events.load(Ordering::Relaxed) +
-        self.high_events.load(Ordering::Relaxed) +
-        self.critical_events.load(Ordering::Relaxed)
+        self.info_events.load(Ordering::Relaxed)
+            + self.warning_events.load(Ordering::Relaxed)
+            + self.high_events.load(Ordering::Relaxed)
+            + self.critical_events.load(Ordering::Relaxed)
     }
 
     /// Get event statistics
@@ -355,17 +355,17 @@ impl SecurityEventLogger {
         match &mut event {
             SecurityEvent::ValidatedGameJoin { player_id, .. } => {
                 *player_id = [0u8; 32]; // Zero out player ID
-            },
+            }
             SecurityEvent::ValidatedDiceRoll { player_id, .. } => {
                 *player_id = [0u8; 32]; // Zero out player ID
-            },
+            }
             SecurityEvent::GameIntegrityViolation { player_id, .. } => {
                 *player_id = [0u8; 32]; // Zero out player ID
-            },
+            }
             SecurityEvent::ConsensusViolation { peer_id, .. } => {
                 *peer_id = [0u8; 32]; // Zero out peer ID
-            },
-            _ => {}, // Other events don't contain sensitive data
+            }
+            _ => {} // Other events don't contain sensitive data
         }
 
         event
@@ -412,7 +412,7 @@ impl SecurityEventLogger {
                 "CRITICAL SECURITY ALERT: {} - This requires immediate attention!",
                 event.event_type()
             );
-            
+
             // Here you could integrate with:
             // - Email alerts
             // - Slack/Discord notifications
@@ -458,7 +458,7 @@ mod tests {
         assert!(SecurityLevel::Critical > SecurityLevel::High);
         assert!(SecurityLevel::High > SecurityLevel::Warning);
         assert!(SecurityLevel::Warning > SecurityLevel::Info);
-        
+
         assert_eq!(SecurityLevel::Info.as_str(), "INFO");
         assert_eq!(SecurityLevel::Critical.as_str(), "CRITICAL");
         assert_eq!(SecurityLevel::High.as_u8(), 2);
@@ -467,24 +467,24 @@ mod tests {
     #[test]
     fn test_security_event_client_ip() {
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
+
         let event = SecurityEvent::ValidationFailed {
             client_ip: ip,
             operation: "test".to_string(),
             field: "amount".to_string(),
             error: "too large".to_string(),
         };
-        
+
         assert_eq!(event.client_ip(), Some(ip));
         assert_eq!(event.event_type(), "validation_failed");
         assert!(!event.is_malicious());
-        
+
         let malicious_event = SecurityEvent::DosAttempt {
             client_ip: ip,
             operation: "flood".to_string(),
             reason: "too many requests".to_string(),
         };
-        
+
         assert!(malicious_event.is_malicious());
     }
 
@@ -492,16 +492,16 @@ mod tests {
     fn test_event_logger() {
         let mut logger = SecurityEventLogger::new(true, false);
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
+
         let event = SecurityEvent::ValidationFailed {
             client_ip: ip,
             operation: "test".to_string(),
             field: "amount".to_string(),
             error: "too large".to_string(),
         };
-        
+
         logger.log_security_event(event, SecurityLevel::Warning);
-        
+
         let stats = logger.get_event_stats();
         assert_eq!(stats.total_events, 1);
         assert_eq!(stats.warning_events, 1);
@@ -511,32 +511,32 @@ mod tests {
     #[test]
     fn test_sensitive_data_sanitization() {
         let mut logger = SecurityEventLogger::new(true, false); // Don't log sensitive data
-        
+
         let event = SecurityEvent::ValidatedGameJoin {
             game_id: [1u8; 16],
             player_id: [2u8; 32],
             buy_in: 1000,
         };
-        
+
         let sanitized = logger.sanitize_event_if_needed(event);
-        
+
         if let SecurityEvent::ValidatedGameJoin { player_id, .. } = sanitized {
             assert_eq!(player_id, [0u8; 32]); // Should be zeroed out
         } else {
             panic!("Event type should not change");
         }
-        
+
         // Test with sensitive logging enabled
         logger.set_log_sensitive(true);
-        
+
         let event = SecurityEvent::ValidatedGameJoin {
             game_id: [1u8; 16],
             player_id: [2u8; 32],
             buy_in: 1000,
         };
-        
+
         let not_sanitized = logger.sanitize_event_if_needed(event);
-        
+
         if let SecurityEvent::ValidatedGameJoin { player_id, .. } = not_sanitized {
             assert_eq!(player_id, [2u8; 32]); // Should be preserved
         } else {
@@ -548,23 +548,29 @@ mod tests {
     fn test_correlated_events() {
         let logger = SecurityEventLogger::new(true, true);
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
+
         let events = vec![
-            (SecurityEvent::ValidationFailed {
-                client_ip: ip,
-                operation: "test1".to_string(),
-                field: "amount".to_string(),
-                error: "too large".to_string(),
-            }, SecurityLevel::Warning),
-            (SecurityEvent::RateLimitExceeded {
-                client_ip: ip,
-                operation: "test1".to_string(),
-                attempts: 10,
-            }, SecurityLevel::High),
+            (
+                SecurityEvent::ValidationFailed {
+                    client_ip: ip,
+                    operation: "test1".to_string(),
+                    field: "amount".to_string(),
+                    error: "too large".to_string(),
+                },
+                SecurityLevel::Warning,
+            ),
+            (
+                SecurityEvent::RateLimitExceeded {
+                    client_ip: ip,
+                    operation: "test1".to_string(),
+                    attempts: 10,
+                },
+                SecurityLevel::High,
+            ),
         ];
-        
+
         logger.log_correlated_events(events, "correlation-123".to_string());
-        
+
         let stats = logger.get_event_stats();
         assert_eq!(stats.total_events, 2);
         assert_eq!(stats.warning_events, 1);
@@ -580,10 +586,10 @@ mod tests {
             high_events: 8,
             critical_events: 2,
         };
-        
+
         assert_eq!(stats.high_severity_percentage(), 10.0);
         assert!(stats.indicates_attack());
-        
+
         stats.high_events = 2;
         stats.critical_events = 0;
         assert!(!stats.indicates_attack());
@@ -592,18 +598,18 @@ mod tests {
     #[test]
     fn test_logger_enable_disable() {
         let mut logger = SecurityEventLogger::new(false, false);
-        
+
         let event = SecurityEvent::ValidationFailed {
             client_ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
             operation: "test".to_string(),
             field: "amount".to_string(),
             error: "too large".to_string(),
         };
-        
+
         // Should not log when disabled
         logger.log_security_event(event.clone(), SecurityLevel::Warning);
         assert_eq!(logger.get_event_count(), 0);
-        
+
         // Enable and log
         logger.set_enabled(true);
         logger.log_security_event(event, SecurityLevel::Warning);

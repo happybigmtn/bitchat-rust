@@ -1,11 +1,11 @@
 //! Adaptive compression for network messages
 
-use std::io::Write;
-use lz4_flex::{compress_prepend_size, decompress_size_prepended};
-use flate2::write::{ZlibEncoder, ZlibDecoder};
-use flate2::Compression;
-use serde::{Serialize, Deserialize};
 use crate::error::Result;
+use flate2::write::{ZlibDecoder, ZlibEncoder};
+use flate2::Compression;
+use lz4_flex::{compress_prepend_size, decompress_size_prepended};
+use serde::{Deserialize, Serialize};
+use std::io::Write;
 
 /// Compression algorithm selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,68 +68,66 @@ impl PayloadAnalyzer {
         if data.len() < 100 {
             return PayloadType::SmallMessage;
         }
-        
+
         // Calculate entropy to detect data type
         let entropy = Self::calculate_entropy(data);
-        
+
         // High entropy suggests already compressed or random data
         if entropy > 7.5 {
             return PayloadType::BinaryData;
         }
-        
+
         // Check for text patterns (ASCII printable characters)
-        let text_chars = data.iter()
-            .filter(|&&b| (32..=126).contains(&b))
-            .count();
+        let text_chars = data.iter().filter(|&&b| (32..=126).contains(&b)).count();
         let text_ratio = text_chars as f64 / data.len() as f64;
-        
+
         if text_ratio > 0.8 {
             return PayloadType::JsonText;
         }
-        
+
         // Check for repeated patterns
         if Self::has_repeated_patterns(data) {
             return PayloadType::RepeatedStructure;
         }
-        
+
         PayloadType::BinaryData
     }
-    
+
     /// Calculate Shannon entropy
     fn calculate_entropy(data: &[u8]) -> f64 {
         let mut freq = [0u64; 256];
-        
+
         for &byte in data {
             freq[byte as usize] += 1;
         }
-        
+
         let len = data.len() as f64;
         let mut entropy = 0.0;
-        
+
         for &count in &freq {
             if count > 0 {
                 let p = count as f64 / len;
                 entropy -= p * p.log2();
             }
         }
-        
+
         entropy
     }
-    
+
     /// Check for repeated patterns
     fn has_repeated_patterns(data: &[u8]) -> bool {
         if data.len() < 32 {
             return false;
         }
-        
+
         // Simple check: look for repeated 4-byte sequences
         let mut pattern_count = 0;
         let chunk_size = 4;
         let sample_size = data.len().min(256);
-        
+
         for i in 0..sample_size.saturating_sub(chunk_size * 2) {
             let pattern = &data[i..i + chunk_size];
-            
+
             for j in (i + chunk_size)..sample_size.saturating_sub(chunk_size) {
                 if &data[j..j + chunk_size] == pattern {
                     pattern_count += 1;
@@ -139,7 +137,7 @@ impl PayloadAnalyzer {
                 }
             }
         }
-        
+
         false
     }
 }
@@ -162,29 +160,29 @@ impl AdaptiveCompression {
             stats: CompressionStats::default(),
         }
     }
-    
+
     /// Compress data with adaptive algorithm selection
     pub fn compress_adaptive(&mut self, data: &[u8]) -> Result<CompressedPayload> {
         let analysis = PayloadAnalyzer::analyze(data);
-        
+
         let algorithm = match analysis {
             PayloadType::SmallMessage => CompressionAlgorithm::None,
             PayloadType::BinaryData => CompressionAlgorithm::None,
             PayloadType::JsonText => CompressionAlgorithm::Zlib,
             PayloadType::RepeatedStructure => CompressionAlgorithm::Lz4,
         };
-        
+
         self.compress_with_algorithm(data, algorithm)
     }
-    
+
     /// Compress with specific algorithm
     pub fn compress_with_algorithm(
-        &mut self, 
-        data: &[u8], 
-        algorithm: CompressionAlgorithm
+        &mut self,
+        data: &[u8],
+        algorithm: CompressionAlgorithm,
     ) -> Result<CompressedPayload> {
         let original_size = data.len();
-        
+
         let compressed_data = match algorithm {
             CompressionAlgorithm::None => {
                 self.stats.none_count += 1;
@@ -197,69 +195,74 @@ impl AdaptiveCompression {
             CompressionAlgorithm::Zlib => {
                 self.stats.zlib_count += 1;
                 let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-                encoder.write_all(data)
+                encoder
+                    .write_all(data)
                     .map_err(|e| crate::error::Error::Serialization(e.to_string()))?;
-                encoder.finish()
+                encoder
+                    .finish()
                     .map_err(|e| crate::error::Error::Serialization(e.to_string()))?
             }
             CompressionAlgorithm::Zstd => {
                 // Future: Add zstd support
-                return Err(crate::error::Error::Protocol("Zstd not yet implemented".to_string()));
+                return Err(crate::error::Error::Protocol(
+                    "Zstd not yet implemented".to_string(),
+                ));
             }
         };
-        
+
         // Update statistics
         self.stats.total_compressed += 1;
         self.stats.bytes_before += original_size as u64;
         self.stats.bytes_after += compressed_data.len() as u64;
-        
+
         if self.stats.bytes_before > 0 {
-            self.stats.average_ratio = 
+            self.stats.average_ratio =
                 self.stats.bytes_after as f64 / self.stats.bytes_before as f64;
         }
-        
+
         Ok(CompressedPayload {
             algorithm,
             original_size,
             data: compressed_data,
         })
     }
-    
+
     /// Decompress payload
     pub fn decompress(&mut self, payload: &CompressedPayload) -> Result<Vec<u8>> {
         let decompressed = match payload.algorithm {
-            CompressionAlgorithm::None => {
-                payload.data.clone()
-            }
-            CompressionAlgorithm::Lz4 => {
-                decompress_size_prepended(&payload.data)
-                    .map_err(|e| crate::error::Error::Serialization(e.to_string()))?
-            }
+            CompressionAlgorithm::None => payload.data.clone(),
+            CompressionAlgorithm::Lz4 => decompress_size_prepended(&payload.data)
+                .map_err(|e| crate::error::Error::Serialization(e.to_string()))?,
             CompressionAlgorithm::Zlib => {
                 let mut decoder = ZlibDecoder::new(Vec::new());
-                decoder.write_all(&payload.data)
+                decoder
+                    .write_all(&payload.data)
                     .map_err(|e| crate::error::Error::Serialization(e.to_string()))?;
-                decoder.finish()
+                decoder
+                    .finish()
                     .map_err(|e| crate::error::Error::Serialization(e.to_string()))?
             }
             CompressionAlgorithm::Zstd => {
-                return Err(crate::error::Error::Protocol("Zstd not yet implemented".to_string()));
+                return Err(crate::error::Error::Protocol(
+                    "Zstd not yet implemented".to_string(),
+                ));
             }
         };
-        
+
         // Verify size
         if decompressed.len() != payload.original_size {
-            return Err(crate::error::Error::Protocol(
-                format!("Decompression size mismatch: expected {}, got {}", 
-                    payload.original_size, decompressed.len())
-            ));
+            return Err(crate::error::Error::Protocol(format!(
+                "Decompression size mismatch: expected {}, got {}",
+                payload.original_size,
+                decompressed.len()
+            )));
         }
-        
+
         self.stats.total_decompressed += 1;
-        
+
         Ok(decompressed)
     }
-    
+
     /// Get compression ratio for algorithm
     pub fn test_compression_ratio(&self, data: &[u8], algorithm: CompressionAlgorithm) -> f64 {
         let compressed = match algorithm {
@@ -275,21 +278,21 @@ impl AdaptiveCompression {
                     Err(_) => return 1.0,
                 }
             }
-            CompressionAlgorithm::Zstd => return 1.0,  // Not implemented
+            CompressionAlgorithm::Zstd => return 1.0, // Not implemented
         };
-        
+
         compressed.len() as f64 / data.len() as f64
     }
-    
+
     /// Choose best algorithm for data
     pub fn choose_best_algorithm(&self, data: &[u8]) -> CompressionAlgorithm {
         if data.len() < 100 {
             return CompressionAlgorithm::None;
         }
-        
+
         let lz4_ratio = self.test_compression_ratio(data, CompressionAlgorithm::Lz4);
         let zlib_ratio = self.test_compression_ratio(data, CompressionAlgorithm::Zlib);
-        
+
         // Choose algorithm with best ratio, but prefer LZ4 for speed if ratios are close
         if lz4_ratio < 0.9 && (lz4_ratio - zlib_ratio).abs() < 0.1 {
             CompressionAlgorithm::Lz4
@@ -301,12 +304,12 @@ impl AdaptiveCompression {
             CompressionAlgorithm::None
         }
     }
-    
+
     /// Get compression statistics
     pub fn get_stats(&self) -> CompressionStats {
         self.stats.clone()
     }
-    
+
     /// Reset statistics
     pub fn reset_stats(&mut self) {
         self.stats = CompressionStats::default();
@@ -316,76 +319,88 @@ impl AdaptiveCompression {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_payload_analysis() {
         // Small message
         let small = b"hello";
         assert_eq!(PayloadAnalyzer::analyze(small), PayloadType::SmallMessage);
-        
+
         // Text data
         let text = b"This is a longer text message that should be detected as text content for compression";
         let text_extended = text.repeat(3);
-        assert_eq!(PayloadAnalyzer::analyze(&text_extended), PayloadType::JsonText);
-        
+        assert_eq!(
+            PayloadAnalyzer::analyze(&text_extended),
+            PayloadType::JsonText
+        );
+
         // Binary data (random)
         let binary = vec![255, 0, 128, 64, 32, 16, 8, 4, 2, 1];
         let binary_extended = binary.repeat(20);
-        assert_eq!(PayloadAnalyzer::analyze(&binary_extended), PayloadType::BinaryData);
-        
+        assert_eq!(
+            PayloadAnalyzer::analyze(&binary_extended),
+            PayloadType::BinaryData
+        );
+
         // Repeated structure
         let repeated = b"AAAABBBBCCCCDDDD";
         let repeated_extended = repeated.repeat(10);
-        assert_eq!(PayloadAnalyzer::analyze(&repeated_extended), PayloadType::RepeatedStructure);
+        assert_eq!(
+            PayloadAnalyzer::analyze(&repeated_extended),
+            PayloadType::RepeatedStructure
+        );
     }
-    
+
     #[test]
     fn test_compression_roundtrip() {
         let mut compressor = AdaptiveCompression::new();
-        
+
         let original = b"This is test data that will be compressed and decompressed";
         let original_extended = original.repeat(10);
-        
+
         // Test LZ4
-        let compressed = compressor.compress_with_algorithm(&original_extended, CompressionAlgorithm::Lz4)
+        let compressed = compressor
+            .compress_with_algorithm(&original_extended, CompressionAlgorithm::Lz4)
             .unwrap();
         assert!(compressed.data.len() < original_extended.len());
-        
+
         let decompressed = compressor.decompress(&compressed).unwrap();
         assert_eq!(decompressed, original_extended);
-        
+
         // Test Zlib
-        let compressed = compressor.compress_with_algorithm(&original_extended, CompressionAlgorithm::Zlib)
+        let compressed = compressor
+            .compress_with_algorithm(&original_extended, CompressionAlgorithm::Zlib)
             .unwrap();
         assert!(compressed.data.len() < original_extended.len());
-        
+
         let decompressed = compressor.decompress(&compressed).unwrap();
         assert_eq!(decompressed, original_extended);
-        
+
         // Test None
-        let compressed = compressor.compress_with_algorithm(&original_extended, CompressionAlgorithm::None)
+        let compressed = compressor
+            .compress_with_algorithm(&original_extended, CompressionAlgorithm::None)
             .unwrap();
         assert_eq!(compressed.data.len(), original_extended.len());
-        
+
         let decompressed = compressor.decompress(&compressed).unwrap();
         assert_eq!(decompressed, original_extended);
     }
-    
+
     #[test]
     fn test_adaptive_compression() {
         let mut compressor = AdaptiveCompression::new();
-        
+
         // Small message - should not compress
         let small = b"small";
         let compressed = compressor.compress_adaptive(small).unwrap();
         assert_eq!(compressed.algorithm, CompressionAlgorithm::None);
-        
+
         // Text data - should use Zlib
         let text = b"This is a text message that repeats. This is a text message that repeats.";
         let text_extended = text.repeat(5);
         let compressed = compressor.compress_adaptive(&text_extended).unwrap();
         assert_eq!(compressed.algorithm, CompressionAlgorithm::Zlib);
-        
+
         // Check compression actually worked
         assert!(compressed.data.len() < text_extended.len());
     }

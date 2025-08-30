@@ -3,15 +3,15 @@
 //! This module implements sophisticated routing algorithms optimized
 //! for mobile mesh networks with dynamic topology changes.
 
-use std::collections::{HashMap, VecDeque, BinaryHeap};
-use std::cmp::Ordering;
-use std::time::{Duration, Instant};
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 
-use crate::protocol::PeerId;
 use crate::error::Result;
+use crate::protocol::PeerId;
 
 /// Advanced routing table with multiple algorithms
 pub struct AdvancedRoutingTable {
@@ -119,7 +119,7 @@ pub struct NodeCapabilities {
 /// Mobility information
 #[derive(Debug, Clone, Default)]
 struct MobilityInfo {
-    velocity: Option<f64>, // m/s
+    velocity: Option<f64>,  // m/s
     direction: Option<f64>, // radians
     mobility_pattern: MobilityPattern,
     predicted_location: Option<(Location, Instant)>,
@@ -250,11 +250,16 @@ impl AdvancedRoutingTable {
             config,
         }
     }
-    
+
     /// Update topology with new node information
-    pub async fn update_node(&self, peer_id: PeerId, location: Option<Location>, capabilities: NodeCapabilities) -> Result<()> {
+    pub async fn update_node(
+        &self,
+        peer_id: PeerId,
+        location: Option<Location>,
+        capabilities: NodeCapabilities,
+    ) -> Result<()> {
         let mut topology = self.topology.write().await;
-        
+
         let node_info = NodeInfo {
             peer_id,
             location,
@@ -263,23 +268,30 @@ impl AdvancedRoutingTable {
             energy_level: None,
             last_seen: Instant::now(),
         };
-        
+
         topology.nodes.insert(peer_id, node_info);
         topology.last_updated = Instant::now();
-        
+
         // Trigger route recalculation
         self.recalculate_routes().await?;
-        
+
         Ok(())
     }
-    
+
     /// Update link information
-    pub async fn update_link(&self, from: PeerId, to: PeerId, latency: Duration, bandwidth: f64, packet_loss: f64) -> Result<()> {
+    pub async fn update_link(
+        &self,
+        from: PeerId,
+        to: PeerId,
+        latency: Duration,
+        bandwidth: f64,
+        packet_loss: f64,
+    ) -> Result<()> {
         let mut topology = self.topology.write().await;
-        
+
         // Calculate dynamic weight based on multiple factors
         let weight = self.calculate_link_weight(latency, bandwidth, packet_loss);
-        
+
         let edge_info = EdgeInfo {
             from,
             to,
@@ -291,23 +303,27 @@ impl AdvancedRoutingTable {
             last_measured: Instant::now(),
             measurements: VecDeque::new(),
         };
-        
+
         topology.edges.insert((from, to), edge_info);
-        
+
         // Update adjacency list
         topology.adjacency_list.entry(from).or_default().push(to);
         topology.adjacency_list.entry(to).or_default().push(from); // Bidirectional
-        
+
         topology.last_updated = Instant::now();
-        
+
         // Trigger route recalculation
         self.recalculate_routes().await?;
-        
+
         Ok(())
     }
-    
+
     /// Find best route using multiple algorithms
-    pub async fn find_best_route(&self, destination: PeerId, criteria: RoutingCriteria) -> Option<PathInfo> {
+    pub async fn find_best_route(
+        &self,
+        destination: PeerId,
+        criteria: RoutingCriteria,
+    ) -> Option<PathInfo> {
         match criteria.algorithm {
             RoutingAlgorithm::Dijkstra => self.find_shortest_path(destination).await,
             RoutingAlgorithm::LoadBalanced => self.find_load_balanced_path(destination).await,
@@ -316,70 +332,79 @@ impl AdvancedRoutingTable {
             RoutingAlgorithm::Hybrid => self.find_hybrid_path(destination, criteria).await,
         }
     }
-    
+
     /// Find shortest path using Dijkstra's algorithm
     async fn find_shortest_path(&self, destination: PeerId) -> Option<PathInfo> {
         let shortest_paths = self.shortest_paths.read().await;
         shortest_paths.get(&destination).cloned()
     }
-    
+
     /// Find load-balanced path
     async fn find_load_balanced_path(&self, destination: PeerId) -> Option<PathInfo> {
         let load_balanced_paths = self.load_balanced_paths.read().await;
-        
+
         if let Some(paths) = load_balanced_paths.get(&destination) {
             // Select path with lowest congestion
-            paths.iter()
-                .min_by(|a, b| a.congestion.partial_cmp(&b.congestion).unwrap_or(Ordering::Equal))
+            paths
+                .iter()
+                .min_by(|a, b| {
+                    a.congestion
+                        .partial_cmp(&b.congestion)
+                        .unwrap_or(Ordering::Equal)
+                })
                 .cloned()
         } else {
             None
         }
     }
-    
+
     /// Find geographic path using location information
     async fn find_geographic_path(&self, destination: PeerId) -> Option<PathInfo> {
         if !self.config.enable_geographic {
             return None;
         }
-        
+
         let geographic_routes = self.geographic_routes.read().await;
         let topology = self.topology.read().await;
-        
+
         if let Some(route) = geographic_routes.get(&destination) {
             // Convert geographic route to PathInfo
-            if topology.nodes.contains_key(&destination) && topology.nodes.contains_key(&route.next_hop) {
+            if topology.nodes.contains_key(&destination)
+                && topology.nodes.contains_key(&route.next_hop)
+            {
                 return Some(PathInfo {
                     destination,
                     next_hop: route.next_hop,
                     path: vec![route.next_hop, destination], // Simplified
                     cost: route.distance_remaining,
                     latency: Duration::from_millis(100), // Estimated
-                    bandwidth: 1.0, // Default
-                    reliability: 0.8, // Default
-                    congestion: 0.1, // Default
+                    bandwidth: 1.0,                      // Default
+                    reliability: 0.8,                    // Default
+                    congestion: 0.1,                     // Default
                     last_updated: route.last_updated,
                     hop_count: 2, // Simplified
                 });
             }
         }
-        
+
         None
     }
-    
+
     /// Find ACO-optimized path
     async fn find_aco_path(&self, destination: PeerId) -> Option<PathInfo> {
         if !self.config.enable_aco {
             return None;
         }
-        
+
         let aco_routes = self.aco_routes.read().await;
-        
+
         if let Some(aco_route) = aco_routes.get(&destination) {
             // Select best path based on pheromone levels and quality
-            if let Some(best_path) = aco_route.paths.iter()
-                .max_by(|a, b| (a.pheromone * a.quality).partial_cmp(&(b.pheromone * b.quality)).unwrap_or(Ordering::Equal))
-            {
+            if let Some(best_path) = aco_route.paths.iter().max_by(|a, b| {
+                (a.pheromone * a.quality)
+                    .partial_cmp(&(b.pheromone * b.quality))
+                    .unwrap_or(Ordering::Equal)
+            }) {
                 return Some(PathInfo {
                     destination,
                     next_hop: *best_path.path.first()?,
@@ -394,137 +419,152 @@ impl AdvancedRoutingTable {
                 });
             }
         }
-        
+
         None
     }
-    
+
     /// Find hybrid path combining multiple algorithms
-    async fn find_hybrid_path(&self, destination: PeerId, criteria: RoutingCriteria) -> Option<PathInfo> {
+    async fn find_hybrid_path(
+        &self,
+        destination: PeerId,
+        criteria: RoutingCriteria,
+    ) -> Option<PathInfo> {
         // Get paths from different algorithms
         let dijkstra_path = self.find_shortest_path(destination).await;
         let load_balanced_path = self.find_load_balanced_path(destination).await;
         let geographic_path = self.find_geographic_path(destination).await;
         let aco_path = self.find_aco_path(destination).await;
-        
+
         // Collect all valid paths
         let mut paths = Vec::new();
-        if let Some(path) = dijkstra_path { paths.push(path); }
-        if let Some(path) = load_balanced_path { paths.push(path); }
-        if let Some(path) = geographic_path { paths.push(path); }
-        if let Some(path) = aco_path { paths.push(path); }
-        
+        if let Some(path) = dijkstra_path {
+            paths.push(path);
+        }
+        if let Some(path) = load_balanced_path {
+            paths.push(path);
+        }
+        if let Some(path) = geographic_path {
+            paths.push(path);
+        }
+        if let Some(path) = aco_path {
+            paths.push(path);
+        }
+
         if paths.is_empty() {
             return None;
         }
-        
+
         // Score paths based on criteria
-        paths.into_iter()
-            .max_by(|a, b| {
-                let score_a = self.score_path(a, &criteria);
-                let score_b = self.score_path(b, &criteria);
-                score_a.partial_cmp(&score_b).unwrap_or(Ordering::Equal)
-            })
+        paths.into_iter().max_by(|a, b| {
+            let score_a = self.score_path(a, &criteria);
+            let score_b = self.score_path(b, &criteria);
+            score_a.partial_cmp(&score_b).unwrap_or(Ordering::Equal)
+        })
     }
-    
+
     /// Score a path based on routing criteria
     fn score_path(&self, path: &PathInfo, criteria: &RoutingCriteria) -> f64 {
         let mut score = 0.0;
-        
+
         // Latency component (lower is better)
         score += criteria.latency_weight * (1.0 / (path.latency.as_millis() as f64 + 1.0));
-        
+
         // Bandwidth component (higher is better)
         score += criteria.bandwidth_weight * path.bandwidth;
-        
+
         // Reliability component (higher is better)
         score += criteria.reliability_weight * path.reliability;
-        
+
         // Congestion component (lower is better)
         score += criteria.congestion_weight * (1.0 - path.congestion);
-        
+
         // Hop count component (lower is better)
         score += criteria.hop_count_weight * (1.0 / (path.hop_count as f64 + 1.0));
-        
+
         score
     }
-    
+
     /// Recalculate all routes
     async fn recalculate_routes(&self) -> Result<()> {
         // Run Dijkstra for all destinations
         self.run_dijkstra().await?;
-        
+
         // Update load-balanced paths
         self.update_load_balanced_paths().await?;
-        
+
         // Update geographic routes
         if self.config.enable_geographic {
             self.update_geographic_routes().await?;
         }
-        
+
         // Update ACO routes
         if self.config.enable_aco {
             self.update_aco_routes().await?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Run Dijkstra's algorithm for shortest paths
     async fn run_dijkstra(&self) -> Result<()> {
         let topology = self.topology.read().await;
         let mut shortest_paths = self.shortest_paths.write().await;
-        
+
         // For each node, calculate shortest paths to all other nodes
         for &source in topology.nodes.keys() {
             let paths = self.dijkstra_single_source(&topology, source).await;
-            
+
             for (destination, path_info) in paths {
                 if source != destination {
                     shortest_paths.insert(destination, path_info);
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Single-source Dijkstra implementation
-    async fn dijkstra_single_source(&self, topology: &NetworkTopology, source: PeerId) -> HashMap<PeerId, PathInfo> {
+    async fn dijkstra_single_source(
+        &self,
+        topology: &NetworkTopology,
+        source: PeerId,
+    ) -> HashMap<PeerId, PathInfo> {
         let mut distances: HashMap<PeerId, f64> = HashMap::new();
         let mut previous: HashMap<PeerId, Option<PeerId>> = HashMap::new();
         let mut heap = BinaryHeap::new();
-        
+
         // Initialize
         for &node in topology.nodes.keys() {
             distances.insert(node, f64::INFINITY);
             previous.insert(node, None);
         }
-        
+
         distances.insert(source, 0.0);
         heap.push(DijkstraNode {
             peer_id: source,
             cost: 0.0,
             path: vec![source],
         });
-        
+
         while let Some(current) = heap.pop() {
             if current.cost > distances[&current.peer_id] {
                 continue;
             }
-            
+
             // Check neighbors
             if let Some(neighbors) = topology.adjacency_list.get(&current.peer_id) {
                 for &neighbor in neighbors {
                     if let Some(edge) = topology.edges.get(&(current.peer_id, neighbor)) {
                         let alt = distances[&current.peer_id] + edge.weight;
-                        
+
                         if alt < distances[&neighbor] {
                             distances.insert(neighbor, alt);
                             previous.insert(neighbor, Some(current.peer_id));
-                            
+
                             let mut new_path = current.path.clone();
                             new_path.push(neighbor);
-                            
+
                             heap.push(DijkstraNode {
                                 peer_id: neighbor,
                                 cost: alt,
@@ -535,7 +575,7 @@ impl AdvancedRoutingTable {
                 }
             }
         }
-        
+
         // Build result
         let mut result = HashMap::new();
         for (&destination, &distance) in &distances {
@@ -548,9 +588,9 @@ impl AdvancedRoutingTable {
                         path: path.clone(),
                         cost: distance,
                         latency: Duration::from_millis((distance * 50.0) as u64), // Estimate
-                        bandwidth: 1.0, // Default
-                        reliability: 0.9, // Default
-                        congestion: 0.1, // Default
+                        bandwidth: 1.0,                                           // Default
+                        reliability: 0.9,                                         // Default
+                        congestion: 0.1,                                          // Default
                         last_updated: Instant::now(),
                         hop_count: path.len() as u8 - 1,
                     };
@@ -558,15 +598,20 @@ impl AdvancedRoutingTable {
                 }
             }
         }
-        
+
         result
     }
-    
+
     /// Reconstruct path from Dijkstra results
-    fn reconstruct_path(&self, previous: &HashMap<PeerId, Option<PeerId>>, source: PeerId, destination: PeerId) -> Vec<PeerId> {
+    fn reconstruct_path(
+        &self,
+        previous: &HashMap<PeerId, Option<PeerId>>,
+        source: PeerId,
+        destination: PeerId,
+    ) -> Vec<PeerId> {
         let mut path = Vec::new();
         let mut current = destination;
-        
+
         while let Some(&Some(prev)) = previous.get(&current) {
             path.push(current);
             current = prev;
@@ -574,47 +619,47 @@ impl AdvancedRoutingTable {
                 break;
             }
         }
-        
+
         path.push(source);
         path.reverse();
         path
     }
-    
+
     /// Update load-balanced paths
     async fn update_load_balanced_paths(&self) -> Result<()> {
         // Implementation would analyze current traffic and create alternative paths
         // For now, use shortest paths as baseline
         let shortest_paths = self.shortest_paths.read().await;
         let mut load_balanced_paths = self.load_balanced_paths.write().await;
-        
+
         for (destination, path) in shortest_paths.iter() {
             load_balanced_paths.insert(*destination, vec![path.clone()]);
         }
-        
+
         Ok(())
     }
-    
+
     /// Update geographic routes
     async fn update_geographic_routes(&self) -> Result<()> {
         // Geographic routing implementation would go here
         Ok(())
     }
-    
+
     /// Update ACO routes
     async fn update_aco_routes(&self) -> Result<()> {
         // Ant Colony Optimization implementation would go here
         Ok(())
     }
-    
+
     /// Calculate dynamic link weight
     fn calculate_link_weight(&self, latency: Duration, bandwidth: f64, packet_loss: f64) -> f64 {
         let latency_ms = latency.as_millis() as f64;
         let bandwidth_factor = 1.0 / (bandwidth + 0.1); // Avoid division by zero
         let loss_factor = 1.0 + packet_loss * 10.0; // Penalize packet loss
-        
+
         latency_ms * bandwidth_factor * loss_factor
     }
-    
+
     /// Get routing statistics
     pub async fn get_metrics(&self) -> RoutingMetrics {
         let metrics = self.metrics.read().await;
@@ -637,28 +682,28 @@ impl Location {
     /// Calculate distance to another location in meters
     pub fn distance_to(&self, other: &Location) -> f64 {
         let r = 6371000.0; // Earth's radius in meters
-        
+
         let lat1 = self.latitude.to_radians();
         let lat2 = other.latitude.to_radians();
         let delta_lat = (other.latitude - self.latitude).to_radians();
         let delta_lon = (other.longitude - self.longitude).to_radians();
-        
-        let a = (delta_lat / 2.0).sin().powi(2) +
-                lat1.cos() * lat2.cos() * (delta_lon / 2.0).sin().powi(2);
+
+        let a = (delta_lat / 2.0).sin().powi(2)
+            + lat1.cos() * lat2.cos() * (delta_lon / 2.0).sin().powi(2);
         let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
-        
+
         r * c
     }
-    
+
     /// Calculate bearing to another location in radians
     pub fn bearing_to(&self, other: &Location) -> f64 {
         let lat1 = self.latitude.to_radians();
         let lat2 = other.latitude.to_radians();
         let delta_lon = (other.longitude - self.longitude).to_radians();
-        
+
         let y = delta_lon.sin() * lat2.cos();
         let x = lat1.cos() * lat2.sin() - lat1.sin() * lat2.cos() * delta_lon.cos();
-        
+
         y.atan2(x)
     }
 }
@@ -702,21 +747,21 @@ impl Default for RoutingCriteria {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_routing_table_creation() {
         let config = RoutingConfig::default();
         let routing_table = AdvancedRoutingTable::new(config);
-        
+
         let metrics = routing_table.get_metrics().await;
         assert_eq!(metrics.total_routes, 0);
     }
-    
+
     #[tokio::test]
     async fn test_topology_update() {
         let config = RoutingConfig::default();
         let routing_table = AdvancedRoutingTable::new(config);
-        
+
         let peer_id = [1u8; 32];
         let location = Location {
             latitude: 37.7749,
@@ -725,14 +770,16 @@ mod tests {
             accuracy: 10.0,
         };
         let capabilities = NodeCapabilities::default();
-        
-        routing_table.update_node(peer_id, Some(location), capabilities).await
+
+        routing_table
+            .update_node(peer_id, Some(location), capabilities)
+            .await
             .expect("Node update should succeed");
-        
+
         let topology = routing_table.topology.read().await;
         assert!(topology.nodes.contains_key(&peer_id));
     }
-    
+
     #[test]
     fn test_location_distance() {
         let sf = Location {
@@ -741,20 +788,20 @@ mod tests {
             altitude: None,
             accuracy: 10.0,
         };
-        
+
         let ny = Location {
             latitude: 40.7128,
             longitude: -74.0060,
             altitude: None,
             accuracy: 10.0,
         };
-        
+
         let distance = sf.distance_to(&ny);
-        
+
         // Distance between SF and NY is approximately 4,135 km
         assert!((distance - 4_135_000.0).abs() < 50_000.0); // Allow 50km error
     }
-    
+
     #[test]
     fn test_routing_criteria_scoring() {
         let criteria = RoutingCriteria::default();
@@ -770,11 +817,11 @@ mod tests {
             last_updated: Instant::now(),
             hop_count: 2,
         };
-        
+
         let config = RoutingConfig::default();
         let routing_table = AdvancedRoutingTable::new(config);
         let score = routing_table.score_path(&path, &criteria);
-        
+
         assert!(score > 0.0);
     }
 }

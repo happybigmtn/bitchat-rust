@@ -6,7 +6,7 @@ use tokio::time::{interval, Duration};
 use crate::protocol::PeerId;
 
 /// Network health monitor
-/// 
+///
 /// Feynman: Like having doctors constantly checking the pulse of
 /// the network. They monitor vital signs (latency, connectivity),
 /// diagnose problems (network splits), and prescribe treatments
@@ -101,10 +101,10 @@ impl AnomalyDetector {
             threshold_multiplier,
         }
     }
-    
+
     pub async fn check(&self, current_metrics: &HealthMetrics) -> Option<Anomaly> {
         let baseline = self.baseline_metrics.read().await;
-        
+
         // Check for latency anomalies
         if current_metrics.average_latency > baseline.average_latency * self.threshold_multiplier {
             return Some(Anomaly {
@@ -112,26 +112,25 @@ impl AnomalyDetector {
                 severity: current_metrics.average_latency / baseline.average_latency,
                 description: format!(
                     "Latency spiked to {:.1}ms (baseline: {:.1}ms)",
-                    current_metrics.average_latency,
-                    baseline.average_latency
+                    current_metrics.average_latency, baseline.average_latency
                 ),
             });
         }
-        
+
         // Check for connectivity drops
-        let connection_ratio = current_metrics.active_connections as f64 / baseline.active_connections.max(1) as f64;
+        let connection_ratio =
+            current_metrics.active_connections as f64 / baseline.active_connections.max(1) as f64;
         if connection_ratio < (1.0 / self.threshold_multiplier) {
             return Some(Anomaly {
                 anomaly_type: AnomalyType::ConnectivityDrop,
                 severity: 1.0 / connection_ratio,
                 description: format!(
                     "Active connections dropped to {} (baseline: {})",
-                    current_metrics.active_connections,
-                    baseline.active_connections
+                    current_metrics.active_connections, baseline.active_connections
                 ),
             });
         }
-        
+
         None
     }
 }
@@ -143,22 +142,24 @@ impl NetworkMonitor {
         let health_metrics = self.health_metrics.clone();
         let anomaly_detector = self.anomaly_detector.clone();
         let alert_sender = self.alert_sender.clone();
-        
+
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_secs(5));
-            
+
             loop {
                 ticker.tick().await;
-                
+
                 // Calculate health metrics
                 let metrics = Self::calculate_health_metrics(&topology).await;
                 *health_metrics.write().await = metrics.clone();
-                
+
                 // Check for anomalies
                 if let Some(anomaly) = anomaly_detector.check(&metrics).await {
-                    alert_sender.send(NetworkAlert::AnomalyDetected(anomaly)).ok();
+                    alert_sender
+                        .send(NetworkAlert::AnomalyDetected(anomaly))
+                        .ok();
                 }
-                
+
                 // Check for network partitions
                 if metrics.partition_risk > 0.7 {
                     alert_sender.send(NetworkAlert::PartitionRisk).ok();
@@ -166,12 +167,10 @@ impl NetworkMonitor {
             }
         });
     }
-    
-    async fn calculate_health_metrics(
-        topology: &Arc<RwLock<NetworkTopology>>,
-    ) -> HealthMetrics {
+
+    async fn calculate_health_metrics(topology: &Arc<RwLock<NetworkTopology>>) -> HealthMetrics {
         let topo = topology.read().await;
-        
+
         HealthMetrics {
             total_nodes: topo.nodes.len(),
             active_connections: topo.edges.len(),
@@ -181,120 +180,122 @@ impl NetworkMonitor {
             partition_risk: Self::calculate_partition_risk(&topo),
         }
     }
-    
+
     fn calculate_average_latency(edges: &HashMap<(PeerId, PeerId), EdgeInfo>) -> f64 {
         if edges.is_empty() {
             return 0.0;
         }
-        
+
         let total_latency: f64 = edges.values().map(|edge| edge.latency_ms).sum();
         total_latency / edges.len() as f64
     }
-    
+
     fn calculate_diameter(topology: &NetworkTopology) -> u32 {
         // Simplified diameter calculation using BFS
         let mut max_distance = 0u32;
-        
+
         for start_node in topology.nodes.keys() {
             let distances = Self::bfs_distances(topology, *start_node);
             if let Some(max_dist) = distances.values().max() {
                 max_distance = max_distance.max(*max_dist);
             }
         }
-        
+
         max_distance
     }
-    
+
     fn bfs_distances(topology: &NetworkTopology, start: PeerId) -> HashMap<PeerId, u32> {
         let mut distances = HashMap::new();
         let mut queue = VecDeque::new();
-        
+
         distances.insert(start, 0);
         queue.push_back(start);
-        
+
         while let Some(current) = queue.pop_front() {
             let current_distance = distances[&current];
-            
+
             if let Some(node) = topology.nodes.get(&current) {
                 for &neighbor in &node.connections {
-                    if let std::collections::hash_map::Entry::Vacant(e) = distances.entry(neighbor) {
+                    if let std::collections::hash_map::Entry::Vacant(e) = distances.entry(neighbor)
+                    {
                         e.insert(current_distance + 1);
                         queue.push_back(neighbor);
                     }
                 }
             }
         }
-        
+
         distances
     }
-    
+
     fn calculate_clustering(topology: &NetworkTopology) -> f64 {
         if topology.nodes.len() < 3 {
             return 0.0;
         }
-        
+
         let mut total_clustering = 0.0;
         let mut node_count = 0;
-        
+
         for node in topology.nodes.values() {
             if node.connections.len() < 2 {
                 continue;
             }
-            
+
             let mut triangle_count = 0;
             let possible_triangles = node.connections.len() * (node.connections.len() - 1) / 2;
-            
+
             for i in 0..node.connections.len() {
                 for j in (i + 1)..node.connections.len() {
                     let node1 = node.connections[i];
                     let node2 = node.connections[j];
-                    
-                    if topology.edges.contains_key(&(node1, node2)) || 
-                       topology.edges.contains_key(&(node2, node1)) {
+
+                    if topology.edges.contains_key(&(node1, node2))
+                        || topology.edges.contains_key(&(node2, node1))
+                    {
                         triangle_count += 1;
                     }
                 }
             }
-            
+
             if possible_triangles > 0 {
                 total_clustering += triangle_count as f64 / possible_triangles as f64;
                 node_count += 1;
             }
         }
-        
+
         if node_count > 0 {
             total_clustering / node_count as f64
         } else {
             0.0
         }
     }
-    
+
     fn calculate_partition_risk(topology: &NetworkTopology) -> f64 {
         // Count bridge nodes - nodes whose removal would partition the network
         let bridge_count = topology.bridge_nodes.len();
         let total_nodes = topology.nodes.len();
-        
+
         if total_nodes == 0 {
             return 1.0;
         }
-        
+
         // Risk increases with higher ratio of bridge nodes
         let bridge_ratio = bridge_count as f64 / total_nodes as f64;
-        
+
         // Also consider connectivity
         let avg_connections = if total_nodes > 0 {
             topology.edges.len() as f64 / total_nodes as f64
         } else {
             0.0
         };
-        
+
         // Low connectivity and high bridge ratio = high partition risk
         let connectivity_factor = if avg_connections < 2.0 {
             1.0 - (avg_connections / 2.0)
         } else {
             0.0
         };
-        
+
         (bridge_ratio + connectivity_factor).min(1.0)
     }
 }

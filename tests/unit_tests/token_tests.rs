@@ -12,10 +12,10 @@ async fn test_token_ledger_creation() {
 async fn test_account_creation() {
     let ledger = TokenLedger::new();
     let alice = [1u8; 32];
-    
+
     // Create account
     ledger.create_account(alice).await.unwrap();
-    
+
     // Check initial balance is 0
     assert_eq!(ledger.get_balance(&alice).await, 0);
 }

@@ -1,14 +1,14 @@
 //! Comprehensive Performance Audit and Optimization Analysis
-//! 
+//!
 //! This module implements automated performance testing, profiling,
 //! and optimization analysis for the BitCraps platform across all
 //! system components.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use serde::{Serialize, Deserialize};
 
 /// Comprehensive performance audit framework
 pub struct PerformanceAuditFramework {
@@ -104,11 +104,11 @@ pub struct BenchmarkResult {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum BenchmarkStatus {
-    Excellent,  // >110% of target
-    Good,       // 90-110% of target
-    Warning,    // 70-90% of target
-    Critical,   // <70% of target
-    Failed,     // Could not complete
+    Excellent, // >110% of target
+    Good,      // 90-110% of target
+    Warning,   // 70-90% of target
+    Critical,  // <70% of target
+    Failed,    // Could not complete
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -216,10 +216,10 @@ pub struct PerformanceBottleneck {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum BottleneckSeverity {
-    Critical,    // >50% performance impact
-    Major,       // 25-50% impact
-    Minor,       // 10-25% impact
-    Negligible,  // <10% impact
+    Critical,   // >50% performance impact
+    Major,      // 25-50% impact
+    Minor,      // 10-25% impact
+    Negligible, // <10% impact
 }
 
 // Monitor implementations
@@ -302,11 +302,11 @@ impl PerformanceAuditFramework {
             optimizer: PerformanceOptimizer::new(),
             results_history: Vec::new(),
         };
-        
+
         framework.initialize_benchmarks();
         framework
     }
-    
+
     fn initialize_benchmarks(&mut self) {
         // Cryptography benchmarks
         self.benchmarks.push(PerformanceBenchmark {
@@ -322,7 +322,7 @@ impl PerformanceAuditFramework {
             warmup_duration: Duration::from_secs(2),
             iteration_count: 100000,
         });
-        
+
         self.benchmarks.push(PerformanceBenchmark {
             name: "ChaCha20Poly1305 Encryption".to_string(),
             category: BenchmarkCategory::Cryptography,
@@ -336,7 +336,7 @@ impl PerformanceAuditFramework {
             warmup_duration: Duration::from_secs(2),
             iteration_count: 10000,
         });
-        
+
         // Consensus benchmarks
         self.benchmarks.push(PerformanceBenchmark {
             name: "Consensus Round Latency".to_string(),
@@ -351,7 +351,7 @@ impl PerformanceAuditFramework {
             warmup_duration: Duration::from_secs(5),
             iteration_count: 100,
         });
-        
+
         self.benchmarks.push(PerformanceBenchmark {
             name: "Byzantine Fault Tolerance".to_string(),
             category: BenchmarkCategory::Consensus,
@@ -365,7 +365,7 @@ impl PerformanceAuditFramework {
             warmup_duration: Duration::from_secs(10),
             iteration_count: 50,
         });
-        
+
         // Networking benchmarks
         self.benchmarks.push(PerformanceBenchmark {
             name: "P2P Message Throughput".to_string(),
@@ -380,7 +380,7 @@ impl PerformanceAuditFramework {
             warmup_duration: Duration::from_secs(5),
             iteration_count: 30000,
         });
-        
+
         self.benchmarks.push(PerformanceBenchmark {
             name: "BLE Connection Latency".to_string(),
             category: BenchmarkCategory::Mobile,
@@ -394,7 +394,7 @@ impl PerformanceAuditFramework {
             warmup_duration: Duration::from_secs(10),
             iteration_count: 100,
         });
-        
+
         // Memory benchmarks
         self.benchmarks.push(PerformanceBenchmark {
             name: "Memory Usage Under Load".to_string(),
@@ -409,7 +409,7 @@ impl PerformanceAuditFramework {
             warmup_duration: Duration::from_secs(10),
             iteration_count: 1000,
         });
-        
+
         // Storage benchmarks
         self.benchmarks.push(PerformanceBenchmark {
             name: "Database Query Performance".to_string(),
@@ -424,7 +424,7 @@ impl PerformanceAuditFramework {
             warmup_duration: Duration::from_secs(5),
             iteration_count: 1000,
         });
-        
+
         // Mobile-specific benchmarks
         self.benchmarks.push(PerformanceBenchmark {
             name: "Battery Drain Rate".to_string(),
@@ -440,43 +440,56 @@ impl PerformanceAuditFramework {
             iteration_count: 1,
         });
     }
-    
-    pub async fn run_comprehensive_audit(&mut self) -> Result<AuditResult, Box<dyn std::error::Error>> {
+
+    pub async fn run_comprehensive_audit(
+        &mut self,
+    ) -> Result<AuditResult, Box<dyn std::error::Error>> {
         println!("🚀 Starting comprehensive performance audit...");
-        println!("📊 Running {} performance benchmarks", self.benchmarks.len());
-        
+        println!(
+            "📊 Running {} performance benchmarks",
+            self.benchmarks.len()
+        );
+
         let audit_start = Instant::now();
         let mut benchmark_results = Vec::new();
-        
+
         // Start system profiling
         self.profiler.start_monitoring().await?;
-        
+
         // Run each benchmark
         for (index, benchmark) in self.benchmarks.iter().enumerate() {
-            println!("\n[{}/{}] Running: {}", index + 1, self.benchmarks.len(), benchmark.name);
-            
+            println!(
+                "\n[{}/{}] Running: {}",
+                index + 1,
+                self.benchmarks.len(),
+                benchmark.name
+            );
+
             let result = self.run_benchmark(benchmark).await?;
             benchmark_results.push(result);
-            
+
             // Brief pause between benchmarks
             tokio::time::sleep(Duration::from_millis(1000)).await;
         }
-        
+
         // Stop profiling and collect results
         let resource_usage = self.profiler.stop_monitoring_and_report().await?;
-        
+
         // Analyze results and generate optimizations
-        let optimization_recommendations = self.optimizer.analyze_results(&benchmark_results, &resource_usage).await?;
-        
+        let optimization_recommendations = self
+            .optimizer
+            .analyze_results(&benchmark_results, &resource_usage)
+            .await?;
+
         // Detect bottlenecks
         let bottlenecks_identified = self.optimizer.detect_bottlenecks(&resource_usage).await?;
-        
+
         // Calculate overall score
         let overall_score = self.calculate_overall_score(&benchmark_results);
-        
+
         // Generate trends (if we have historical data)
         let performance_trends = self.analyze_performance_trends(&benchmark_results);
-        
+
         let audit_result = AuditResult {
             timestamp: std::time::SystemTime::now(),
             overall_score,
@@ -486,62 +499,75 @@ impl PerformanceAuditFramework {
             performance_trends,
             bottlenecks_identified,
         };
-        
+
         // Store result for trend analysis
         self.results_history.push(audit_result.clone());
-        
+
         let audit_duration = audit_start.elapsed();
         println!("\n✅ Performance audit completed in {:?}", audit_duration);
         println!("📈 Overall Performance Score: {:.1}/100", overall_score);
-        
+
         self.print_audit_summary(&audit_result);
-        
+
         Ok(audit_result)
     }
-    
-    async fn run_benchmark(&self, benchmark: &PerformanceBenchmark) -> Result<BenchmarkResult, Box<dyn std::error::Error>> {
+
+    async fn run_benchmark(
+        &self,
+        benchmark: &PerformanceBenchmark,
+    ) -> Result<BenchmarkResult, Box<dyn std::error::Error>> {
         let start_time = Instant::now();
-        
+
         // Warmup phase
         println!("  🔥 Warming up for {:?}...", benchmark.warmup_duration);
-        self.execute_benchmark_logic(benchmark, benchmark.warmup_duration.as_secs() as usize / 10).await?;
-        
+        self.execute_benchmark_logic(benchmark, benchmark.warmup_duration.as_secs() as usize / 10)
+            .await?;
+
         // Actual benchmark
         println!("  ⚡ Running benchmark...");
         let benchmark_start = Instant::now();
-        let iterations_completed = self.execute_benchmark_logic(benchmark, benchmark.iteration_count).await?;
+        let iterations_completed = self
+            .execute_benchmark_logic(benchmark, benchmark.iteration_count)
+            .await?;
         let benchmark_duration = benchmark_start.elapsed();
-        
+
         // Calculate metrics based on benchmark type
         let metric_achieved = match benchmark.target_metric.metric {
-            MetricType::LatencyMs => benchmark_duration.as_millis() as f64 / iterations_completed as f64,
-            MetricType::ThroughputOps => iterations_completed as f64 / benchmark_duration.as_secs_f64(),
+            MetricType::LatencyMs => {
+                benchmark_duration.as_millis() as f64 / iterations_completed as f64
+            }
+            MetricType::ThroughputOps => {
+                iterations_completed as f64 / benchmark_duration.as_secs_f64()
+            }
             MetricType::MemoryMB => self.get_current_memory_usage(),
             MetricType::CpuPercent => self.get_current_cpu_usage(),
             MetricType::BatteryMah => self.estimate_battery_drain(benchmark_duration),
             _ => 0.0, // Default for other metrics
         };
-        
-        let performance_ratio = if benchmark.target_metric.metric == MetricType::LatencyMs || 
-                                  benchmark.target_metric.metric == MetricType::MemoryMB ||
-                                  benchmark.target_metric.metric == MetricType::BatteryMah {
+
+        let performance_ratio = if benchmark.target_metric.metric == MetricType::LatencyMs
+            || benchmark.target_metric.metric == MetricType::MemoryMB
+            || benchmark.target_metric.metric == MetricType::BatteryMah
+        {
             // For latency, memory, and battery, lower is better
             benchmark.target_metric.target_value / metric_achieved
         } else {
             // For throughput and other metrics, higher is better
             metric_achieved / benchmark.target_metric.target_value
         };
-        
+
         let status = self.determine_benchmark_status(performance_ratio, &benchmark.target_metric);
-        
+
         let total_time = start_time.elapsed();
-        
-        println!("  📊 Result: {:.2} {} (target: {:.2}) - {:?}", 
-                 metric_achieved, 
-                 self.metric_unit(&benchmark.target_metric.metric),
-                 benchmark.target_metric.target_value,
-                 status);
-        
+
+        println!(
+            "  📊 Result: {:.2} {} (target: {:.2}) - {:?}",
+            metric_achieved,
+            self.metric_unit(&benchmark.target_metric.metric),
+            benchmark.target_metric.target_value,
+            status
+        );
+
         Ok(BenchmarkResult {
             benchmark_name: benchmark.name.clone(),
             category: format!("{:?}", benchmark.category),
@@ -554,20 +580,43 @@ impl PerformanceAuditFramework {
             error_rate: 0.0, // Would be calculated from actual errors
         })
     }
-    
-    async fn execute_benchmark_logic(&self, benchmark: &PerformanceBenchmark, iterations: usize) -> Result<usize, Box<dyn std::error::Error>> {
+
+    async fn execute_benchmark_logic(
+        &self,
+        benchmark: &PerformanceBenchmark,
+        iterations: usize,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
         match benchmark.category {
-            BenchmarkCategory::Cryptography => self.run_crypto_benchmark(&benchmark.name, iterations).await,
-            BenchmarkCategory::Consensus => self.run_consensus_benchmark(&benchmark.name, iterations).await,
-            BenchmarkCategory::Networking => self.run_network_benchmark(&benchmark.name, iterations).await,
-            BenchmarkCategory::Storage => self.run_storage_benchmark(&benchmark.name, iterations).await,
-            BenchmarkCategory::Memory => self.run_memory_benchmark(&benchmark.name, iterations).await,
-            BenchmarkCategory::Mobile => self.run_mobile_benchmark(&benchmark.name, iterations).await,
+            BenchmarkCategory::Cryptography => {
+                self.run_crypto_benchmark(&benchmark.name, iterations).await
+            }
+            BenchmarkCategory::Consensus => {
+                self.run_consensus_benchmark(&benchmark.name, iterations)
+                    .await
+            }
+            BenchmarkCategory::Networking => {
+                self.run_network_benchmark(&benchmark.name, iterations)
+                    .await
+            }
+            BenchmarkCategory::Storage => {
+                self.run_storage_benchmark(&benchmark.name, iterations)
+                    .await
+            }
+            BenchmarkCategory::Memory => {
+                self.run_memory_benchmark(&benchmark.name, iterations).await
+            }
+            BenchmarkCategory::Mobile => {
+                self.run_mobile_benchmark(&benchmark.name, iterations).await
+            }
             _ => Ok(iterations), // Default implementation
         }
     }
-    
-    async fn run_crypto_benchmark(&self, name: &str, iterations: usize) -> Result<usize, Box<dyn std::error::Error>> {
+
+    async fn run_crypto_benchmark(
+        &self,
+        name: &str,
+        iterations: usize,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
         match name {
             "Ed25519 Signature Generation" => {
                 // Simulate Ed25519 signature generation
@@ -577,7 +626,7 @@ impl PerformanceAuditFramework {
                     tokio::task::yield_now().await;
                 }
                 Ok(iterations)
-            },
+            }
             "ChaCha20Poly1305 Encryption" => {
                 // Simulate encryption operations
                 for _ in 0..iterations {
@@ -586,12 +635,16 @@ impl PerformanceAuditFramework {
                     tokio::task::yield_now().await;
                 }
                 Ok(iterations)
-            },
+            }
             _ => Ok(iterations),
         }
     }
-    
-    async fn run_consensus_benchmark(&self, name: &str, iterations: usize) -> Result<usize, Box<dyn std::error::Error>> {
+
+    async fn run_consensus_benchmark(
+        &self,
+        name: &str,
+        iterations: usize,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
         match name {
             "Consensus Round Latency" => {
                 // Simulate consensus rounds with network delays
@@ -599,19 +652,23 @@ impl PerformanceAuditFramework {
                     tokio::time::sleep(Duration::from_millis(5)).await; // Simulate consensus work
                 }
                 Ok(iterations)
-            },
+            }
             "Byzantine Fault Tolerance" => {
                 // Simulate handling byzantine nodes
                 for _ in 0..iterations {
                     tokio::time::sleep(Duration::from_millis(10)).await; // Simulate validation work
                 }
                 Ok(iterations)
-            },
+            }
             _ => Ok(iterations),
         }
     }
-    
-    async fn run_network_benchmark(&self, name: &str, iterations: usize) -> Result<usize, Box<dyn std::error::Error>> {
+
+    async fn run_network_benchmark(
+        &self,
+        name: &str,
+        iterations: usize,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
         match name {
             "P2P Message Throughput" => {
                 // Simulate P2P message processing
@@ -620,19 +677,23 @@ impl PerformanceAuditFramework {
                     tokio::task::yield_now().await;
                 }
                 Ok(iterations)
-            },
+            }
             "BLE Connection Latency" => {
                 // Simulate BLE connection establishment
                 for _ in 0..iterations {
                     tokio::time::sleep(Duration::from_millis(1)).await; // Simulate BLE work
                 }
                 Ok(iterations)
-            },
+            }
             _ => Ok(iterations),
         }
     }
-    
-    async fn run_storage_benchmark(&self, name: &str, iterations: usize) -> Result<usize, Box<dyn std::error::Error>> {
+
+    async fn run_storage_benchmark(
+        &self,
+        name: &str,
+        iterations: usize,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
         match name {
             "Database Query Performance" => {
                 // Simulate database queries
@@ -640,12 +701,16 @@ impl PerformanceAuditFramework {
                     tokio::time::sleep(Duration::from_micros(100)).await; // Simulate query time
                 }
                 Ok(iterations)
-            },
+            }
             _ => Ok(iterations),
         }
     }
-    
-    async fn run_memory_benchmark(&self, name: &str, iterations: usize) -> Result<usize, Box<dyn std::error::Error>> {
+
+    async fn run_memory_benchmark(
+        &self,
+        name: &str,
+        iterations: usize,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
         match name {
             "Memory Usage Under Load" => {
                 // Simulate memory allocation patterns
@@ -653,7 +718,7 @@ impl PerformanceAuditFramework {
                 for i in 0..iterations {
                     let data = vec![0u8; 1024]; // Allocate 1KB
                     _allocations.push(data);
-                    
+
                     // Periodically clean up to simulate realistic usage
                     if i % 100 == 0 {
                         _allocations.clear();
@@ -661,12 +726,16 @@ impl PerformanceAuditFramework {
                     tokio::task::yield_now().await;
                 }
                 Ok(iterations)
-            },
+            }
             _ => Ok(iterations),
         }
     }
-    
-    async fn run_mobile_benchmark(&self, name: &str, iterations: usize) -> Result<usize, Box<dyn std::error::Error>> {
+
+    async fn run_mobile_benchmark(
+        &self,
+        name: &str,
+        iterations: usize,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
         match name {
             "Battery Drain Rate" => {
                 // Simulate mobile operations that consume battery
@@ -674,12 +743,16 @@ impl PerformanceAuditFramework {
                     tokio::time::sleep(Duration::from_secs(1)).await; // Simulate mobile work
                 }
                 Ok(iterations)
-            },
+            }
             _ => Ok(iterations),
         }
     }
-    
-    fn determine_benchmark_status(&self, performance_ratio: f64, target: &PerformanceTarget) -> BenchmarkStatus {
+
+    fn determine_benchmark_status(
+        &self,
+        performance_ratio: f64,
+        target: &PerformanceTarget,
+    ) -> BenchmarkStatus {
         if performance_ratio >= 1.1 {
             BenchmarkStatus::Excellent
         } else if performance_ratio >= 0.9 {
@@ -692,7 +765,7 @@ impl PerformanceAuditFramework {
             BenchmarkStatus::Failed
         }
     }
-    
+
     fn metric_unit(&self, metric: &MetricType) -> &'static str {
         match metric {
             MetricType::LatencyMs => "ms",
@@ -705,32 +778,32 @@ impl PerformanceAuditFramework {
             MetricType::ConcurrentUsers => "users",
         }
     }
-    
+
     fn get_current_memory_usage(&self) -> f64 {
         // In a real implementation, this would use system APIs
         // Simulated memory usage
         150.0 + (rand::random::<f64>() * 50.0)
     }
-    
+
     fn get_current_cpu_usage(&self) -> f64 {
         // Simulated CPU usage
         30.0 + (rand::random::<f64>() * 40.0)
     }
-    
+
     fn estimate_battery_drain(&self, duration: Duration) -> f64 {
         // Estimate battery drain based on duration and activity
         let hours = duration.as_secs_f64() / 3600.0;
         50.0 * hours // 50mAh per hour baseline
     }
-    
+
     fn calculate_overall_score(&self, results: &[BenchmarkResult]) -> f64 {
         if results.is_empty() {
             return 0.0;
         }
-        
+
         let mut total_weighted_score = 0.0;
         let mut total_weight = 0.0;
-        
+
         for result in results {
             let weight = self.get_benchmark_weight(&result.category);
             let score = match result.status {
@@ -740,31 +813,34 @@ impl PerformanceAuditFramework {
                 BenchmarkStatus::Critical => 40.0,
                 BenchmarkStatus::Failed => 0.0,
             };
-            
+
             total_weighted_score += score * weight;
             total_weight += weight;
         }
-        
+
         if total_weight > 0.0 {
             total_weighted_score / total_weight
         } else {
             0.0
         }
     }
-    
+
     fn get_benchmark_weight(&self, category: &str) -> f64 {
         match category {
-            "Cryptography" => 1.2,  // Higher weight for security-critical operations
-            "Consensus" => 1.5,     // Highest weight for core functionality
-            "Networking" => 1.3,    // High weight for P2P functionality
-            "Mobile" => 1.1,        // Mobile-specific concerns
-            "Memory" => 1.0,        // Standard weight
-            "Storage" => 0.9,       // Lower weight
+            "Cryptography" => 1.2, // Higher weight for security-critical operations
+            "Consensus" => 1.5,    // Highest weight for core functionality
+            "Networking" => 1.3,   // High weight for P2P functionality
+            "Mobile" => 1.1,       // Mobile-specific concerns
+            "Memory" => 1.0,       // Standard weight
+            "Storage" => 0.9,      // Lower weight
             _ => 1.0,
         }
     }
-    
-    fn analyze_performance_trends(&self, _current_results: &[BenchmarkResult]) -> PerformanceTrends {
+
+    fn analyze_performance_trends(
+        &self,
+        _current_results: &[BenchmarkResult],
+    ) -> PerformanceTrends {
         // In a real implementation, this would analyze historical data
         PerformanceTrends {
             trend_direction: TrendDirection::Stable,
@@ -774,62 +850,102 @@ impl PerformanceAuditFramework {
             historical_comparison: 0.0, // No historical data yet
         }
     }
-    
+
     fn print_audit_summary(&self, result: &AuditResult) {
         println!("\n{}", "=".repeat(70));
         println!("🎯 PERFORMANCE AUDIT SUMMARY");
         println!("{}", "=".repeat(70));
-        
-        println!("\n📊 Overall Performance Score: {:.1}/100", result.overall_score);
-        
+
+        println!(
+            "\n📊 Overall Performance Score: {:.1}/100",
+            result.overall_score
+        );
+
         println!("\n🏆 Benchmark Results:");
-        let excellent = result.benchmark_results.iter().filter(|r| r.status == BenchmarkStatus::Excellent).count();
-        let good = result.benchmark_results.iter().filter(|r| r.status == BenchmarkStatus::Good).count();
-        let warning = result.benchmark_results.iter().filter(|r| r.status == BenchmarkStatus::Warning).count();
-        let critical = result.benchmark_results.iter().filter(|r| r.status == BenchmarkStatus::Critical).count();
-        let failed = result.benchmark_results.iter().filter(|r| r.status == BenchmarkStatus::Failed).count();
-        
+        let excellent = result
+            .benchmark_results
+            .iter()
+            .filter(|r| r.status == BenchmarkStatus::Excellent)
+            .count();
+        let good = result
+            .benchmark_results
+            .iter()
+            .filter(|r| r.status == BenchmarkStatus::Good)
+            .count();
+        let warning = result
+            .benchmark_results
+            .iter()
+            .filter(|r| r.status == BenchmarkStatus::Warning)
+            .count();
+        let critical = result
+            .benchmark_results
+            .iter()
+            .filter(|r| r.status == BenchmarkStatus::Critical)
+            .count();
+        let failed = result
+            .benchmark_results
+            .iter()
+            .filter(|r| r.status == BenchmarkStatus::Failed)
+            .count();
+
         println!("  Excellent: {}", excellent);
         println!("  Good: {}", good);
         println!("  Warning: {}", warning);
         println!("  Critical: {}", critical);
         println!("  Failed: {}", failed);
-        
+
         println!("\n💡 Top Optimization Recommendations:");
-        for (i, rec) in result.optimization_recommendations.iter().take(3).enumerate() {
-            println!("  {}. [{}] {} - Expected improvement: {:.1}%", 
-                     i + 1, 
-                     format!("{:?}", rec.priority), 
-                     rec.recommendation, 
-                     rec.expected_improvement);
+        for (i, rec) in result
+            .optimization_recommendations
+            .iter()
+            .take(3)
+            .enumerate()
+        {
+            println!(
+                "  {}. [{}] {} - Expected improvement: {:.1}%",
+                i + 1,
+                format!("{:?}", rec.priority),
+                rec.recommendation,
+                rec.expected_improvement
+            );
         }
-        
+
         println!("\n🔍 Performance Bottlenecks:");
-        let critical_bottlenecks = result.bottlenecks_identified.iter()
+        let critical_bottlenecks = result
+            .bottlenecks_identified
+            .iter()
             .filter(|b| b.severity == BottleneckSeverity::Critical)
             .count();
-        let major_bottlenecks = result.bottlenecks_identified.iter()
+        let major_bottlenecks = result
+            .bottlenecks_identified
+            .iter()
             .filter(|b| b.severity == BottleneckSeverity::Major)
             .count();
-        
+
         if critical_bottlenecks > 0 || major_bottlenecks > 0 {
             println!("  Critical: {}", critical_bottlenecks);
             println!("  Major: {}", major_bottlenecks);
         } else {
             println!("  No critical bottlenecks detected ✅");
         }
-        
+
         println!("\n📈 Resource Usage:");
-        println!("  Memory: {:.1}MB (peak: {:.1}MB)", 
-                 result.resource_usage.memory_usage.heap_used_mb,
-                 result.resource_usage.memory_usage.heap_peak_mb);
-        println!("  CPU: {:.1}% avg ({:.1}% peak)", 
-                 result.resource_usage.cpu_usage.average_percent,
-                 result.resource_usage.cpu_usage.peak_percent);
-        println!("  Network: {:.2}MB sent, {:.2}MB received", 
-                 result.resource_usage.network_usage.bytes_sent as f64 / 1_000_000.0,
-                 result.resource_usage.network_usage.bytes_received as f64 / 1_000_000.0);
-        
+        println!(
+            "  Memory: {:.1}MB (peak: {:.1}MB)",
+            result.resource_usage.memory_usage.heap_used_mb,
+            result.resource_usage.memory_usage.heap_peak_mb
+        );
+        println!(
+            "  CPU: {:.1}% avg ({:.1}% peak)",
+            result.resource_usage.cpu_usage.average_percent,
+            result.resource_usage.cpu_usage.peak_percent
+        );
+        println!(
+            "  Network: {:.2}MB sent, {:.2}MB received",
+            result.resource_usage.network_usage.bytes_sent as f64 / 1_000_000.0,
+            result.resource_usage.network_usage.bytes_received as f64 / 1_000_000.0
+        );
+
         println!("\n{}", "=".repeat(70));
     }
 }
@@ -845,7 +961,7 @@ impl SystemProfiler {
             mobile_monitor: MobileResourceMonitor::new(),
         }
     }
-    
+
     async fn start_monitoring(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // Start all monitoring subsystems
         self.cpu_monitor.start_sampling().await?;
@@ -855,14 +971,16 @@ impl SystemProfiler {
         self.mobile_monitor.start_sampling().await?;
         Ok(())
     }
-    
-    async fn stop_monitoring_and_report(&mut self) -> Result<ResourceUsageReport, Box<dyn std::error::Error>> {
+
+    async fn stop_monitoring_and_report(
+        &mut self,
+    ) -> Result<ResourceUsageReport, Box<dyn std::error::Error>> {
         let cpu_usage = self.cpu_monitor.stop_and_report().await?;
         let memory_usage = self.memory_monitor.stop_and_report().await?;
         let network_usage = self.network_monitor.stop_and_report().await?;
         let storage_usage = self.storage_monitor.stop_and_report().await?;
         let mobile_usage = self.mobile_monitor.stop_and_report().await?;
-        
+
         Ok(ResourceUsageReport {
             cpu_usage,
             memory_usage,
@@ -880,18 +998,20 @@ impl CpuMonitor {
             sampling_interval: Duration::from_millis(100),
         }
     }
-    
+
     async fn start_sampling(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // In real implementation, would start background sampling
         Ok(())
     }
-    
+
     async fn stop_and_report(&mut self) -> Result<CpuUsageStats, Box<dyn std::error::Error>> {
         // Generate realistic CPU stats for simulation
-        let samples: Vec<f64> = (0..100).map(|_| 20.0 + rand::random::<f64>() * 60.0).collect();
+        let samples: Vec<f64> = (0..100)
+            .map(|_| 20.0 + rand::random::<f64>() * 60.0)
+            .collect();
         let average_percent = samples.iter().sum::<f64>() / samples.len() as f64;
         let peak_percent = samples.iter().fold(0.0, |a, &b| a.max(b));
-        
+
         Ok(CpuUsageStats {
             average_percent,
             peak_percent,
@@ -909,11 +1029,11 @@ impl MemoryMonitor {
             leak_detector: MemoryLeakDetector::new(),
         }
     }
-    
+
     async fn start_sampling(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
-    
+
     async fn stop_and_report(&mut self) -> Result<MemoryUsageStats, Box<dyn std::error::Error>> {
         Ok(MemoryUsageStats {
             heap_used_mb: 150.0,
@@ -934,14 +1054,14 @@ impl NetworkMonitor {
             connection_count: 0,
         }
     }
-    
+
     async fn start_sampling(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
-    
+
     async fn stop_and_report(&mut self) -> Result<NetworkUsageStats, Box<dyn std::error::Error>> {
         Ok(NetworkUsageStats {
-            bytes_sent: 1024 * 1024, // 1MB
+            bytes_sent: 1024 * 1024,         // 1MB
             bytes_received: 2 * 1024 * 1024, // 2MB
             packets_sent: 1000,
             packets_received: 1500,
@@ -956,14 +1076,18 @@ impl StorageMonitor {
     fn new() -> Self {
         Self {
             io_samples: Vec::new(),
-            cache_stats: CacheStats { hits: 0, misses: 0, evictions: 0 },
+            cache_stats: CacheStats {
+                hits: 0,
+                misses: 0,
+                evictions: 0,
+            },
         }
     }
-    
+
     async fn start_sampling(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
-    
+
     async fn stop_and_report(&mut self) -> Result<StorageUsageStats, Box<dyn std::error::Error>> {
         Ok(StorageUsageStats {
             reads_per_second: 100.0,
@@ -983,17 +1107,17 @@ impl MobileResourceMonitor {
             thermal_samples: Vec::new(),
         }
     }
-    
+
     async fn start_sampling(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
-    
+
     async fn stop_and_report(&mut self) -> Result<MobileUsageStats, Box<dyn std::error::Error>> {
         Ok(MobileUsageStats {
             battery_drain_mah: 50.0,
-            screen_on_time_ms: 30000, // 30 seconds
+            screen_on_time_ms: 30000,        // 30 seconds
             background_processing_ms: 60000, // 1 minute
-            bluetooth_active_ms: 45000, // 45 seconds
+            bluetooth_active_ms: 45000,      // 45 seconds
             thermal_state: "Normal".to_string(),
         })
     }
@@ -1015,41 +1139,47 @@ impl PerformanceOptimizer {
             bottleneck_detector: BottleneckDetector::new(),
         }
     }
-    
-    async fn analyze_results(&self, 
-                           benchmark_results: &[BenchmarkResult], 
-                           resource_usage: &ResourceUsageReport) -> Result<Vec<OptimizationRecommendation>, Box<dyn std::error::Error>> {
+
+    async fn analyze_results(
+        &self,
+        benchmark_results: &[BenchmarkResult],
+        resource_usage: &ResourceUsageReport,
+    ) -> Result<Vec<OptimizationRecommendation>, Box<dyn std::error::Error>> {
         let mut recommendations = Vec::new();
-        
+
         // Check for high memory usage
         if resource_usage.memory_usage.heap_used_mb > 200.0 {
             recommendations.push(OptimizationRecommendation {
                 priority: OptimizationPriority::High,
                 component: "Memory Management".to_string(),
                 issue: "High memory usage detected".to_string(),
-                recommendation: "Implement memory pooling and reduce allocations in hot paths".to_string(),
+                recommendation: "Implement memory pooling and reduce allocations in hot paths"
+                    .to_string(),
                 expected_improvement: 20.0,
                 implementation_effort: "2 weeks".to_string(),
                 code_location: Some("src/memory/mod.rs".to_string()),
             });
         }
-        
+
         // Check for high CPU usage
         if resource_usage.cpu_usage.average_percent > 70.0 {
             recommendations.push(OptimizationRecommendation {
                 priority: OptimizationPriority::High,
                 component: "CPU Usage".to_string(),
                 issue: "High CPU usage detected".to_string(),
-                recommendation: "Profile hot functions and optimize algorithmic complexity".to_string(),
+                recommendation: "Profile hot functions and optimize algorithmic complexity"
+                    .to_string(),
                 expected_improvement: 25.0,
                 implementation_effort: "1 week".to_string(),
                 code_location: Some("Performance profiling required".to_string()),
             });
         }
-        
+
         // Check benchmark-specific issues
         for result in benchmark_results {
-            if result.status == BenchmarkStatus::Critical || result.status == BenchmarkStatus::Failed {
+            if result.status == BenchmarkStatus::Critical
+                || result.status == BenchmarkStatus::Failed
+            {
                 recommendations.push(OptimizationRecommendation {
                     priority: OptimizationPriority::Critical,
                     component: result.category.clone(),
@@ -1061,13 +1191,16 @@ impl PerformanceOptimizer {
                 });
             }
         }
-        
+
         Ok(recommendations)
     }
-    
-    async fn detect_bottlenecks(&self, resource_usage: &ResourceUsageReport) -> Result<Vec<PerformanceBottleneck>, Box<dyn std::error::Error>> {
+
+    async fn detect_bottlenecks(
+        &self,
+        resource_usage: &ResourceUsageReport,
+    ) -> Result<Vec<PerformanceBottleneck>, Box<dyn std::error::Error>> {
         let mut bottlenecks = Vec::new();
-        
+
         // Memory bottleneck
         if resource_usage.memory_usage.heap_used_mb > self.bottleneck_detector.memory_threshold {
             bottlenecks.push(PerformanceBottleneck {
@@ -1078,7 +1211,7 @@ impl PerformanceOptimizer {
                 suggested_fix: "Implement memory optimization strategies".to_string(),
             });
         }
-        
+
         // CPU bottleneck
         if resource_usage.cpu_usage.average_percent > self.bottleneck_detector.cpu_threshold {
             bottlenecks.push(PerformanceBottleneck {
@@ -1089,9 +1222,11 @@ impl PerformanceOptimizer {
                 suggested_fix: "Optimize algorithmic complexity and parallelization".to_string(),
             });
         }
-        
+
         // Network bottleneck
-        if resource_usage.network_usage.average_latency_ms > self.bottleneck_detector.network_threshold {
+        if resource_usage.network_usage.average_latency_ms
+            > self.bottleneck_detector.network_threshold
+        {
             bottlenecks.push(PerformanceBottleneck {
                 component: "Network Layer".to_string(),
                 severity: BottleneckSeverity::Minor,
@@ -1100,13 +1235,15 @@ impl PerformanceOptimizer {
                 suggested_fix: "Implement connection pooling and caching strategies".to_string(),
             });
         }
-        
+
         Ok(bottlenecks)
     }
-    
+
     fn get_category_specific_recommendation(&self, category: &str) -> String {
         match category {
-            "Cryptography" => "Consider hardware acceleration or optimized crypto libraries".to_string(),
+            "Cryptography" => {
+                "Consider hardware acceleration or optimized crypto libraries".to_string()
+            }
             "Consensus" => "Optimize consensus algorithm or implement caching".to_string(),
             "Networking" => "Implement connection pooling and message batching".to_string(),
             "Storage" => "Add database indexing and query optimization".to_string(),
@@ -1133,45 +1270,53 @@ impl BottleneckDetector {
 #[tokio::test]
 async fn test_comprehensive_performance_audit() {
     let mut framework = PerformanceAuditFramework::new();
-    
+
     let result = framework.run_comprehensive_audit().await.unwrap();
-    
+
     // Verify audit completed successfully
     assert!(!result.benchmark_results.is_empty());
     assert!(result.overall_score >= 0.0 && result.overall_score <= 100.0);
-    
+
     // Verify all benchmark categories are represented
-    let categories: std::collections::HashSet<String> = result.benchmark_results.iter()
+    let categories: std::collections::HashSet<String> = result
+        .benchmark_results
+        .iter()
         .map(|r| r.category.clone())
         .collect();
     assert!(categories.contains("Cryptography"));
     assert!(categories.contains("Consensus"));
     assert!(categories.contains("Networking"));
-    
+
     println!("✅ Performance audit test completed successfully");
     println!("📊 Overall score: {:.1}/100", result.overall_score);
-    println!("🔧 Optimization recommendations: {}", result.optimization_recommendations.len());
+    println!(
+        "🔧 Optimization recommendations: {}",
+        result.optimization_recommendations.len()
+    );
 }
 
 #[tokio::test]
 async fn test_individual_benchmark_execution() {
     let framework = PerformanceAuditFramework::new();
-    
+
     let crypto_benchmark = &framework.benchmarks[0]; // Ed25519 benchmark
     let result = framework.run_benchmark(crypto_benchmark).await.unwrap();
-    
+
     assert_eq!(result.benchmark_name, "Ed25519 Signature Generation");
     assert!(result.metric_achieved > 0.0);
     assert!(result.iterations_completed > 0);
-    
+
     println!("✅ Individual benchmark test completed");
-    println!("📊 {}: {:.2} ops/sec", result.benchmark_name, result.metric_achieved);
+    println!(
+        "📊 {}: {:.2} ops/sec",
+        result.benchmark_name, result.metric_achieved
+    );
 }
 
 #[tokio::test]
 async fn test_bottleneck_detection() {
     let optimizer = PerformanceOptimizer::new();
-    
+
     // Create resource usage with bottlenecks
     let resource_usage = ResourceUsageReport {
         cpu_usage: CpuUsageStats {
@@ -1214,17 +1359,17 @@ async fn test_bottleneck_detection() {
             thermal_state: "Hot".to_string(),
         },
     };
-    
+
     let bottlenecks = optimizer.detect_bottlenecks(&resource_usage).await.unwrap();
-    
+
     assert!(!bottlenecks.is_empty());
-    
+
     // Should detect CPU and memory bottlenecks
     let cpu_bottleneck = bottlenecks.iter().any(|b| b.component.contains("CPU"));
     let memory_bottleneck = bottlenecks.iter().any(|b| b.component.contains("Memory"));
-    
+
     assert!(cpu_bottleneck || memory_bottleneck);
-    
+
     println!("✅ Bottleneck detection test completed");
     println!("🔍 Bottlenecks detected: {}", bottlenecks.len());
 }

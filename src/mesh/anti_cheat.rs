@@ -1,8 +1,8 @@
+use crate::protocol::{BitchatPacket, PeerId};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use crate::protocol::{PeerId, BitchatPacket};
 
 /// Anti-cheat monitor for detecting suspicious behavior
 pub struct AntiCheatMonitor {
@@ -76,47 +76,49 @@ impl AntiCheatMonitor {
             ban_list: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-    
+
     pub async fn analyze_packet(&self, packet: &BitchatPacket, peer_id: PeerId) -> Option<String> {
         if !self.enabled {
             return None;
         }
-        
+
         // Check if peer is banned
         if self.is_banned(peer_id).await {
             return Some("Peer is banned".to_string());
         }
-        
+
         let mut behaviors = self.peer_behavior.write().await;
-        let behavior = behaviors.entry(peer_id).or_insert_with(PeerBehavior::default);
-        
+        let behavior = behaviors
+            .entry(peer_id)
+            .or_insert_with(PeerBehavior::default);
+
         let now = Instant::now();
-        
+
         // Check rate limiting using token bucket
         if !behavior.token_bucket.try_consume(1.0) {
             return Some("Rate limit exceeded - packet flooding detected".to_string());
         }
-        
+
         behavior.packet_count += 1;
         behavior.last_packet_time = Some(now);
-        
+
         // Check for suspicious patterns in game packets
         if packet.packet_type >= 0x20 && packet.packet_type <= 0x27 {
             // Game-specific anti-cheat would go here
             // For example: impossible dice rolls, betting patterns, etc.
         }
-        
+
         None
     }
-    
+
     pub async fn ban_peer(&self, peer_id: PeerId, duration: Duration) {
         let ban_until = Instant::now() + duration;
         self.ban_list.write().await.insert(peer_id, ban_until);
     }
-    
+
     async fn is_banned(&self, peer_id: PeerId) -> bool {
         let mut ban_list = self.ban_list.write().await;
-        
+
         if let Some(&ban_until) = ban_list.get(&peer_id) {
             if Instant::now() < ban_until {
                 return true;
@@ -124,7 +126,7 @@ impl AntiCheatMonitor {
                 ban_list.remove(&peer_id);
             }
         }
-        
+
         false
     }
 }

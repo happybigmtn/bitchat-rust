@@ -7,17 +7,17 @@
 //! - Constant-time operations for sensitive comparisons
 //! - Security event logging and monitoring
 
-pub mod input_validation;
-pub mod rate_limiting;
 pub mod constant_time;
 pub mod dos_protection;
+pub mod input_validation;
+pub mod rate_limiting;
 pub mod security_events;
 
-pub use input_validation::{InputValidator, ValidationContext, ValidationResult};
-pub use rate_limiting::{RateLimiter, RateLimitConfig, RateLimitResult};
 pub use constant_time::ConstantTimeOps;
 pub use dos_protection::{DosProtection, DosProtectionConfig, ProtectionResult};
-pub use security_events::{SecurityEventLogger, SecurityEvent, SecurityLevel};
+pub use input_validation::{InputValidator, ValidationContext, ValidationResult};
+pub use rate_limiting::{RateLimitConfig, RateLimitResult, RateLimiter};
+pub use security_events::{SecurityEvent, SecurityEventLogger, SecurityLevel};
 
 use crate::error::{Error, Result};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -39,15 +39,15 @@ pub struct SecurityLimits {
 impl Default for SecurityLimits {
     fn default() -> Self {
         Self {
-            max_bet_amount: 1_000_000,        // 1M tokens max bet
-            max_players_per_game: 20,         // 20 players max per game
-            max_message_size: 64 * 1024,      // 64KB max message
-            max_games_per_player: 10,         // 10 concurrent games max
-            max_bets_per_player: 50,          // 50 active bets max
-            max_dice_value: 6,                // Standard dice: 1-6
-            max_timestamp_drift: 300,         // 5 minutes drift allowed
-            max_string_length: 1024,          // 1KB max string
-            max_array_length: 1000,           // 1000 elements max
+            max_bet_amount: 1_000_000,   // 1M tokens max bet
+            max_players_per_game: 20,    // 20 players max per game
+            max_message_size: 64 * 1024, // 64KB max message
+            max_games_per_player: 10,    // 10 concurrent games max
+            max_bets_per_player: 50,     // 50 active bets max
+            max_dice_value: 6,           // Standard dice: 1-6
+            max_timestamp_drift: 300,    // 5 minutes drift allowed
+            max_string_length: 1024,     // 1KB max string
+            max_array_length: 1000,      // 1000 elements max
         }
     }
 }
@@ -87,10 +87,8 @@ impl SecurityManager {
         let validator = InputValidator::new(&config.limits);
         let rate_limiter = RateLimiter::new(config.rate_limit_config.clone());
         let dos_protection = DosProtection::new(config.dos_protection_config.clone());
-        let event_logger = SecurityEventLogger::new(
-            config.enable_security_logging,
-            config.log_sensitive_data,
-        );
+        let event_logger =
+            SecurityEventLogger::new(config.enable_security_logging, config.log_sensitive_data);
 
         Self {
             config,
@@ -127,7 +125,9 @@ impl SecurityManager {
                 },
                 SecurityLevel::Warning,
             );
-            return Err(Error::Security("Rate limit exceeded for game join".to_string()));
+            return Err(Error::Security(
+                "Rate limit exceeded for game join".to_string(),
+            ));
         }
 
         // DoS protection check
@@ -189,7 +189,9 @@ impl SecurityManager {
                 },
                 SecurityLevel::Warning,
             );
-            return Err(Error::Security("Rate limit exceeded for dice roll".to_string()));
+            return Err(Error::Security(
+                "Rate limit exceeded for dice roll".to_string(),
+            ));
         }
 
         // Validate inputs
@@ -234,7 +236,9 @@ impl SecurityManager {
         }
 
         // DoS protection
-        let dos_result = self.dos_protection.check_request(sender_ip, message_data.len());
+        let dos_result = self
+            .dos_protection
+            .check_request(sender_ip, message_data.len());
         if !dos_result.is_allowed() {
             self.event_logger.log_security_event(
                 SecurityEvent::DosAttempt {
@@ -244,13 +248,19 @@ impl SecurityManager {
                 },
                 SecurityLevel::High,
             );
-            return Err(Error::Security("DoS protection triggered for message".to_string()));
+            return Err(Error::Security(
+                "DoS protection triggered for message".to_string(),
+            ));
         }
 
         // Rate limiting
-        let rate_result = self.rate_limiter.check_rate_limit(sender_ip, "network_message");
+        let rate_result = self
+            .rate_limiter
+            .check_rate_limit(sender_ip, "network_message");
         if rate_result.is_blocked() {
-            return Err(Error::Security("Rate limit exceeded for network messages".to_string()));
+            return Err(Error::Security(
+                "Rate limit exceeded for network messages".to_string(),
+            ));
         }
 
         Ok(())
@@ -319,12 +329,12 @@ mod tests {
     #[test]
     fn test_timestamp_validation() {
         let current = get_current_timestamp().unwrap();
-        
+
         // Valid timestamp (within drift)
         assert!(validate_timestamp_drift(current, 300).is_ok());
         assert!(validate_timestamp_drift(current + 100, 300).is_ok());
         assert!(validate_timestamp_drift(current.saturating_sub(100), 300).is_ok());
-        
+
         // Invalid timestamp (outside drift)
         assert!(validate_timestamp_drift(current + 400, 300).is_err());
         assert!(validate_timestamp_drift(current.saturating_sub(400), 300).is_err());
@@ -334,7 +344,7 @@ mod tests {
     fn test_security_manager_creation() {
         let config = SecurityConfig::default();
         let manager = SecurityManager::new(config);
-        
+
         let stats = manager.get_security_stats();
         assert_eq!(stats.total_validations, 0);
         assert_eq!(stats.rate_limit_violations, 0);
@@ -344,22 +354,17 @@ mod tests {
     fn test_game_join_validation() {
         let config = SecurityConfig::default();
         let manager = SecurityManager::new(config);
-        
+
         let game_id = [1u8; 16];
         let player_id = [2u8; 32];
         let buy_in = 1000;
         let timestamp = get_current_timestamp().unwrap();
         let client_ip = std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
-        
+
         // Should pass validation
-        let result = manager.validate_game_join_request(
-            &game_id,
-            &player_id,
-            buy_in,
-            timestamp,
-            client_ip,
-        );
-        
+        let result =
+            manager.validate_game_join_request(&game_id, &player_id, buy_in, timestamp, client_ip);
+
         assert!(result.is_ok());
     }
 }

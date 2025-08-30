@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use parking_lot::{Mutex, RwLock};
 use rustc_hash::FxHashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use sysinfo::{System, SystemExt};
 
 use crate::error::BitCrapsError;
@@ -29,16 +29,16 @@ pub struct MobileOptimizer {
 pub struct MobileOptimizerConfig {
     /// Battery level thresholds for optimization levels
     pub critical_battery_threshold: f32, // 0.15 = 15%
-    pub low_battery_threshold: f32,      // 0.30 = 30%
-    
+    pub low_battery_threshold: f32, // 0.30 = 30%
+
     /// Thermal thresholds (Celsius)
-    pub thermal_warning_threshold: f32,   // 45°C
-    pub thermal_critical_threshold: f32,  // 55°C
-    
+    pub thermal_warning_threshold: f32, // 45°C
+    pub thermal_critical_threshold: f32, // 55°C
+
     /// Memory pressure thresholds
-    pub memory_warning_threshold: f32,    // 0.80 = 80% usage
-    pub memory_critical_threshold: f32,   // 0.90 = 90% usage
-    
+    pub memory_warning_threshold: f32, // 0.80 = 80% usage
+    pub memory_critical_threshold: f32, // 0.90 = 90% usage
+
     /// Performance profiles
     pub enable_aggressive_optimization: bool,
     pub background_task_limit: usize,
@@ -64,7 +64,7 @@ impl Default for MobileOptimizerConfig {
 impl MobileOptimizer {
     pub fn new(config: MobileOptimizerConfig) -> Result<Self, BitCrapsError> {
         let power_manager = Arc::new(PowerManager::new(PowerMode::Balanced));
-        
+
         Ok(Self {
             power_manager,
             cpu_governor: CpuGovernor::new(&config),
@@ -75,18 +75,18 @@ impl MobileOptimizer {
             config,
         })
     }
-    
+
     /// Main optimization loop - call this periodically
     pub async fn optimize(&mut self) -> Result<OptimizationReport, BitCrapsError> {
         let start_time = Instant::now();
         let mut report = OptimizationReport::new();
-        
+
         // Get current system state
         let system_state = self.get_system_state().await?;
-        
+
         // Determine optimization profile based on system state
         let profile = self.determine_optimization_profile(&system_state);
-        
+
         // Apply optimizations based on profile
         match profile {
             OptimizationProfile::PowerSaver => {
@@ -102,28 +102,32 @@ impl MobileOptimizer {
                 report.merge(self.apply_critical_optimizations(&system_state).await?);
             }
         }
-        
+
         // Update metrics
         {
             let mut metrics = self.metrics.write();
             metrics.update_optimization_cycle(start_time.elapsed(), &system_state, &profile);
         }
-        
+
         report.optimization_duration = start_time.elapsed();
         report.profile_applied = profile;
-        
+
         Ok(report)
     }
-    
+
     /// Get current system performance state
     async fn get_system_state(&mut self) -> Result<SystemState, BitCrapsError> {
-        let battery_info = self.power_manager.get_battery_info().await
-            .map_err(|_| BitCrapsError::InvalidData("Failed to get battery info".to_string()))?;
-        let thermal_info = self.power_manager.get_thermal_info().await
-            .map_err(|_| BitCrapsError::InvalidData("Failed to get thermal info".to_string()))?;
+        let battery_info =
+            self.power_manager.get_battery_info().await.map_err(|_| {
+                BitCrapsError::InvalidData("Failed to get battery info".to_string())
+            })?;
+        let thermal_info =
+            self.power_manager.get_thermal_info().await.map_err(|_| {
+                BitCrapsError::InvalidData("Failed to get thermal info".to_string())
+            })?;
         let memory_info = self.memory_manager.get_memory_info()?;
         let network_info = self.network_optimizer.get_network_state().await;
-        
+
         Ok(SystemState {
             battery_level: battery_info.level.unwrap_or(0.0),
             is_charging: battery_info.is_charging,
@@ -136,173 +140,251 @@ impl MobileOptimizer {
             background_tasks: self.background_scheduler.active_task_count(),
         })
     }
-    
+
     /// Determine which optimization profile to use
     fn determine_optimization_profile(&self, state: &SystemState) -> OptimizationProfile {
         // Critical conditions override everything
-        if state.battery_level < self.config.critical_battery_threshold ||
-           state.cpu_temperature > self.config.thermal_critical_threshold ||
-           state.memory_usage > self.config.memory_critical_threshold {
+        if state.battery_level < self.config.critical_battery_threshold
+            || state.cpu_temperature > self.config.thermal_critical_threshold
+            || state.memory_usage > self.config.memory_critical_threshold
+        {
             return OptimizationProfile::Critical;
         }
-        
+
         // Power saver conditions
-        if state.battery_level < self.config.low_battery_threshold && !state.is_charging ||
-           state.cpu_temperature > self.config.thermal_warning_threshold ||
-           state.memory_usage > self.config.memory_warning_threshold {
+        if state.battery_level < self.config.low_battery_threshold && !state.is_charging
+            || state.cpu_temperature > self.config.thermal_warning_threshold
+            || state.memory_usage > self.config.memory_warning_threshold
+        {
             return OptimizationProfile::PowerSaver;
         }
-        
+
         // Performance mode when charging and good conditions
-        if state.is_charging && 
-           state.battery_level > 0.50 &&
-           state.cpu_temperature < self.config.thermal_warning_threshold &&
-           state.memory_usage < self.config.memory_warning_threshold {
+        if state.is_charging
+            && state.battery_level > 0.50
+            && state.cpu_temperature < self.config.thermal_warning_threshold
+            && state.memory_usage < self.config.memory_warning_threshold
+        {
             return OptimizationProfile::Performance;
         }
-        
+
         // Default to balanced
         OptimizationProfile::Balanced
     }
-    
+
     /// Apply power saver optimizations
-    async fn apply_power_saver_optimizations(&mut self, state: &SystemState) -> Result<OptimizationReport, BitCrapsError> {
+    async fn apply_power_saver_optimizations(
+        &mut self,
+        state: &SystemState,
+    ) -> Result<OptimizationReport, BitCrapsError> {
         let mut report = OptimizationReport::new();
-        
+
         // Reduce CPU frequency
-        if let Ok(old_freq) = self.cpu_governor.set_frequency_profile(CpuProfile::PowerSaver) {
-            report.actions_taken.push(format!("Reduced CPU frequency from {} to PowerSaver profile", old_freq));
+        if let Ok(old_freq) = self
+            .cpu_governor
+            .set_frequency_profile(CpuProfile::PowerSaver)
+        {
+            report.actions_taken.push(format!(
+                "Reduced CPU frequency from {} to PowerSaver profile",
+                old_freq
+            ));
         }
-        
+
         // Pause non-essential background tasks
         let paused_tasks = self.background_scheduler.pause_non_essential_tasks().await;
         if paused_tasks > 0 {
-            report.actions_taken.push(format!("Paused {} non-essential background tasks", paused_tasks));
+            report.actions_taken.push(format!(
+                "Paused {} non-essential background tasks",
+                paused_tasks
+            ));
         }
-        
+
         // Reduce network activity
-        self.network_optimizer.enable_aggressive_batching(true).await;
-        report.actions_taken.push("Enabled aggressive network batching".to_string());
-        
+        self.network_optimizer
+            .enable_aggressive_batching(true)
+            .await;
+        report
+            .actions_taken
+            .push("Enabled aggressive network batching".to_string());
+
         // Optimize memory usage
         let memory_freed = self.memory_manager.aggressive_cleanup().await;
         if memory_freed > 0 {
-            report.actions_taken.push(format!("Freed {} MB of memory", memory_freed));
+            report
+                .actions_taken
+                .push(format!("Freed {} MB of memory", memory_freed));
         }
-        
+
         // Reduce BLE advertising frequency
-        report.actions_taken.push("Reduced BLE advertising frequency".to_string());
-        
+        report
+            .actions_taken
+            .push("Reduced BLE advertising frequency".to_string());
+
         report.power_savings_estimated = Duration::from_secs(1800); // 30 minutes estimated
         Ok(report)
     }
-    
+
     /// Apply balanced optimizations
-    async fn apply_balanced_optimizations(&mut self, state: &SystemState) -> Result<OptimizationReport, BitCrapsError> {
+    async fn apply_balanced_optimizations(
+        &mut self,
+        state: &SystemState,
+    ) -> Result<OptimizationReport, BitCrapsError> {
         let mut report = OptimizationReport::new();
-        
+
         // Use balanced CPU profile
-        if let Ok(old_freq) = self.cpu_governor.set_frequency_profile(CpuProfile::Balanced) {
-            report.actions_taken.push(format!("Set CPU to balanced profile from {}", old_freq));
+        if let Ok(old_freq) = self
+            .cpu_governor
+            .set_frequency_profile(CpuProfile::Balanced)
+        {
+            report
+                .actions_taken
+                .push(format!("Set CPU to balanced profile from {}", old_freq));
         }
-        
+
         // Moderate background task management
         let optimized_tasks = self.background_scheduler.optimize_task_scheduling().await;
         if optimized_tasks > 0 {
-            report.actions_taken.push(format!("Optimized scheduling for {} background tasks", optimized_tasks));
+            report.actions_taken.push(format!(
+                "Optimized scheduling for {} background tasks",
+                optimized_tasks
+            ));
         }
-        
+
         // Standard memory management
         let memory_freed = self.memory_manager.routine_cleanup().await;
         if memory_freed > 0 {
-            report.actions_taken.push(format!("Routine cleanup freed {} MB", memory_freed));
+            report
+                .actions_taken
+                .push(format!("Routine cleanup freed {} MB", memory_freed));
         }
-        
+
         // Balanced network optimization
-        self.network_optimizer.enable_aggressive_batching(false).await;
-        report.actions_taken.push("Using balanced network batching".to_string());
-        
+        self.network_optimizer
+            .enable_aggressive_batching(false)
+            .await;
+        report
+            .actions_taken
+            .push("Using balanced network batching".to_string());
+
         Ok(report)
     }
-    
+
     /// Apply performance optimizations
-    async fn apply_performance_optimizations(&mut self, state: &SystemState) -> Result<OptimizationReport, BitCrapsError> {
+    async fn apply_performance_optimizations(
+        &mut self,
+        state: &SystemState,
+    ) -> Result<OptimizationReport, BitCrapsError> {
         let mut report = OptimizationReport::new();
-        
+
         // Maximum CPU performance
-        if let Ok(old_freq) = self.cpu_governor.set_frequency_profile(CpuProfile::Performance) {
-            report.actions_taken.push(format!("Boosted CPU to performance profile from {}", old_freq));
+        if let Ok(old_freq) = self
+            .cpu_governor
+            .set_frequency_profile(CpuProfile::Performance)
+        {
+            report.actions_taken.push(format!(
+                "Boosted CPU to performance profile from {}",
+                old_freq
+            ));
         }
-        
+
         // Allow more background tasks
-        self.background_scheduler.increase_task_limit(self.config.background_task_limit * 2).await;
-        report.actions_taken.push("Increased background task limit for performance".to_string());
-        
+        self.background_scheduler
+            .increase_task_limit(self.config.background_task_limit * 2)
+            .await;
+        report
+            .actions_taken
+            .push("Increased background task limit for performance".to_string());
+
         // Optimize for lowest latency
         self.network_optimizer.optimize_for_latency(true).await;
-        report.actions_taken.push("Optimized network for lowest latency".to_string());
-        
+        report
+            .actions_taken
+            .push("Optimized network for lowest latency".to_string());
+
         // Preemptive memory allocation
         self.memory_manager.preemptive_allocation().await;
-        report.actions_taken.push("Enabled preemptive memory allocation".to_string());
-        
+        report
+            .actions_taken
+            .push("Enabled preemptive memory allocation".to_string());
+
         Ok(report)
     }
-    
+
     /// Apply critical emergency optimizations
-    async fn apply_critical_optimizations(&mut self, state: &SystemState) -> Result<OptimizationReport, BitCrapsError> {
+    async fn apply_critical_optimizations(
+        &mut self,
+        state: &SystemState,
+    ) -> Result<OptimizationReport, BitCrapsError> {
         let mut report = OptimizationReport::new();
-        
+
         // Emergency power saving
-        if let Ok(old_freq) = self.cpu_governor.set_frequency_profile(CpuProfile::Emergency) {
-            report.actions_taken.push(format!("Emergency CPU throttling from {}", old_freq));
+        if let Ok(old_freq) = self
+            .cpu_governor
+            .set_frequency_profile(CpuProfile::Emergency)
+        {
+            report
+                .actions_taken
+                .push(format!("Emergency CPU throttling from {}", old_freq));
         }
-        
+
         // Pause all non-critical tasks
-        let paused_tasks = self.background_scheduler.pause_all_non_critical_tasks().await;
-        report.actions_taken.push(format!("Emergency pause of {} tasks", paused_tasks));
-        
+        let paused_tasks = self
+            .background_scheduler
+            .pause_all_non_critical_tasks()
+            .await;
+        report
+            .actions_taken
+            .push(format!("Emergency pause of {} tasks", paused_tasks));
+
         // Aggressive memory cleanup
         let memory_freed = self.memory_manager.emergency_cleanup().await;
-        report.actions_taken.push(format!("Emergency cleanup freed {} MB", memory_freed));
-        
+        report
+            .actions_taken
+            .push(format!("Emergency cleanup freed {} MB", memory_freed));
+
         // Minimize network activity
         self.network_optimizer.minimize_network_activity().await;
-        report.actions_taken.push("Minimized network activity".to_string());
-        
+        report
+            .actions_taken
+            .push("Minimized network activity".to_string());
+
         // Reduce game update frequency
-        report.actions_taken.push("Reduced game state update frequency".to_string());
-        
+        report
+            .actions_taken
+            .push("Reduced game state update frequency".to_string());
+
         report.power_savings_estimated = Duration::from_secs(3600); // 1 hour estimated
         Ok(report)
     }
-    
+
     /// Get current CPU usage percentage
     fn get_cpu_usage(&self) -> f32 {
         // This would use platform-specific APIs in a real implementation
         // For now, return a placeholder
         50.0
     }
-    
+
     /// Get comprehensive mobile performance metrics
     pub fn get_metrics(&self) -> MobileMetrics {
         self.metrics.read().clone()
     }
-    
+
     /// Force cleanup of all optimizers
     pub async fn cleanup(&mut self) -> Result<(), BitCrapsError> {
         // Reset to normal profiles
-        let _ = self.cpu_governor.set_frequency_profile(CpuProfile::Balanced);
-        
+        let _ = self
+            .cpu_governor
+            .set_frequency_profile(CpuProfile::Balanced);
+
         // Resume all tasks
         self.background_scheduler.resume_all_tasks().await;
-        
+
         // Reset network optimization
         self.network_optimizer.reset_to_default().await;
-        
+
         // Final memory cleanup
         self.memory_manager.final_cleanup().await;
-        
+
         Ok(())
     }
 }
@@ -320,11 +402,14 @@ impl CpuGovernor {
             config: config.clone(),
         }
     }
-    
-    pub fn set_frequency_profile(&mut self, profile: CpuProfile) -> Result<CpuProfile, BitCrapsError> {
+
+    pub fn set_frequency_profile(
+        &mut self,
+        profile: CpuProfile,
+    ) -> Result<CpuProfile, BitCrapsError> {
         let old_profile = self.current_profile;
         self.current_profile = profile;
-        
+
         // In a real implementation, this would set actual CPU governor settings
         match profile {
             CpuProfile::Emergency => {
@@ -344,10 +429,10 @@ impl CpuGovernor {
                 tracing::info!("Setting CPU to performance mode");
             }
         }
-        
+
         Ok(old_profile)
     }
-    
+
     pub fn current_profile(&self) -> CpuProfile {
         self.current_profile
     }
@@ -366,20 +451,20 @@ impl MobileMemoryManager {
             system: System::new_all(),
         }
     }
-    
+
     pub fn get_memory_info(&mut self) -> Result<MemoryInfo, BitCrapsError> {
         self.system.refresh_memory();
-        
+
         let total_memory = self.system.total_memory();
         let available_memory = self.system.available_memory();
         let used_memory = total_memory - available_memory;
-        
+
         let usage_percentage = if total_memory > 0 {
             used_memory as f32 / total_memory as f32
         } else {
             0.0
         };
-        
+
         Ok(MemoryInfo {
             total_mb: (total_memory / 1024 / 1024) as u32,
             available_mb: (available_memory / 1024 / 1024) as u32,
@@ -387,33 +472,33 @@ impl MobileMemoryManager {
             usage_percentage,
         })
     }
-    
+
     pub async fn routine_cleanup(&self) -> u32 {
         // Simulate routine memory cleanup
         tokio::time::sleep(Duration::from_millis(10)).await;
         // Return MB freed
         25
     }
-    
+
     pub async fn aggressive_cleanup(&self) -> u32 {
         // Simulate aggressive memory cleanup
         tokio::time::sleep(Duration::from_millis(50)).await;
         // Return MB freed
         100
     }
-    
+
     pub async fn emergency_cleanup(&self) -> u32 {
         // Simulate emergency memory cleanup
         tokio::time::sleep(Duration::from_millis(200)).await;
         // Return MB freed
         250
     }
-    
+
     pub async fn preemptive_allocation(&self) {
         // Preemptively allocate memory pools for performance
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    
+
     pub async fn final_cleanup(&self) {
         // Final cleanup on shutdown
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -435,7 +520,7 @@ impl MobileNetworkOptimizer {
             latency_optimized: false,
         }
     }
-    
+
     pub async fn get_network_state(&self) -> NetworkState {
         // Simulate network state detection
         NetworkState {
@@ -445,26 +530,26 @@ impl MobileNetworkOptimizer {
             is_metered: true,
         }
     }
-    
+
     pub async fn enable_aggressive_batching(&mut self, enable: bool) {
         self.aggressive_batching = enable;
         if enable {
             tracing::info!("Enabled aggressive network batching for power saving");
         }
     }
-    
+
     pub async fn optimize_for_latency(&mut self, optimize: bool) {
         self.latency_optimized = optimize;
         if optimize {
             tracing::info!("Optimized network for lowest latency");
         }
     }
-    
+
     pub async fn minimize_network_activity(&mut self) {
         self.aggressive_batching = true;
         tracing::info!("Minimized network activity for emergency power saving");
     }
-    
+
     pub async fn reset_to_default(&mut self) {
         self.aggressive_batching = false;
         self.latency_optimized = false;
@@ -487,51 +572,51 @@ impl BackgroundTaskScheduler {
             config: config.clone(),
         }
     }
-    
+
     pub fn active_task_count(&self) -> usize {
         self.active_tasks.lock().len()
     }
-    
+
     pub async fn pause_non_essential_tasks(&self) -> usize {
         let mut tasks = self.active_tasks.lock();
         let mut paused_count = 0;
-        
+
         for task in tasks.iter_mut() {
             if task.priority == TaskPriority::Low || task.priority == TaskPriority::Normal {
                 task.paused = true;
                 paused_count += 1;
             }
         }
-        
+
         paused_count
     }
-    
+
     pub async fn pause_all_non_critical_tasks(&self) -> usize {
         let mut tasks = self.active_tasks.lock();
         let mut paused_count = 0;
-        
+
         for task in tasks.iter_mut() {
             if task.priority != TaskPriority::Critical {
                 task.paused = true;
                 paused_count += 1;
             }
         }
-        
+
         paused_count
     }
-    
+
     pub async fn resume_all_tasks(&self) {
         let mut tasks = self.active_tasks.lock();
         for task in tasks.iter_mut() {
             task.paused = false;
         }
     }
-    
+
     pub async fn optimize_task_scheduling(&self) -> usize {
         // Simulate task scheduling optimization
         self.active_tasks.lock().len()
     }
-    
+
     pub async fn increase_task_limit(&self, new_limit: usize) {
         *self.task_limit.lock() = new_limit;
     }
@@ -569,7 +654,7 @@ impl std::fmt::Display for CpuProfile {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum NetworkQuality {
     Poor,
-    Fair, 
+    Fair,
     Good,
     Excellent,
 }
@@ -637,7 +722,7 @@ impl OptimizationReport {
             optimization_duration: Duration::from_secs(0),
         }
     }
-    
+
     pub fn merge(&mut self, other: OptimizationReport) {
         self.actions_taken.extend(other.actions_taken);
         self.power_savings_estimated += other.power_savings_estimated;
@@ -667,30 +752,35 @@ impl MobileMetrics {
             power_savings_total: Duration::from_secs(0),
         }
     }
-    
-    pub fn update_optimization_cycle(&mut self, duration: Duration, state: &SystemState, profile: &OptimizationProfile) {
+
+    pub fn update_optimization_cycle(
+        &mut self,
+        duration: Duration,
+        state: &SystemState,
+        profile: &OptimizationProfile,
+    ) {
         self.optimization_cycles += 1;
         self.total_optimization_time += duration;
-        
+
         *self.profile_usage.entry(*profile).or_insert(0) += 1;
-        
+
         // Keep only last 100 readings to prevent unbounded growth
         if self.battery_levels.len() >= 100 {
             self.battery_levels.remove(0);
         }
         self.battery_levels.push(state.battery_level);
-        
+
         if self.cpu_temperatures.len() >= 100 {
             self.cpu_temperatures.remove(0);
         }
         self.cpu_temperatures.push(state.cpu_temperature);
-        
+
         if self.memory_usage_history.len() >= 100 {
             self.memory_usage_history.remove(0);
         }
         self.memory_usage_history.push(state.memory_usage);
     }
-    
+
     pub fn average_battery_level(&self) -> f32 {
         if self.battery_levels.is_empty() {
             0.0
@@ -698,7 +788,7 @@ impl MobileMetrics {
             self.battery_levels.iter().sum::<f32>() / self.battery_levels.len() as f32
         }
     }
-    
+
     pub fn average_cpu_temperature(&self) -> f32 {
         if self.cpu_temperatures.is_empty() {
             0.0

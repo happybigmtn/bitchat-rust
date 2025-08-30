@@ -1,23 +1,21 @@
 //! Game Lifecycle Manager with Security Hardening
-//! 
+//!
 //! Handles game creation, joining, leaving, and lifecycle transitions.
 //! Now includes comprehensive input validation and security controls.
 
+use super::config::GameRuntimeConfig;
+use crate::error::{Error, Result};
+use crate::protocol::craps::CrapsGame;
+use crate::protocol::{new_game_id, DiceRoll, GameId, PeerId};
+use crate::protocol::{Bet, BetType};
+use crate::security::{SecurityConfig, SecurityManager};
+use futures::future::join_all;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::net::IpAddr;
 use tokio::sync::RwLock;
-use futures::future::join_all;
-use serde::{Serialize, Deserialize};
-use crate::protocol::{PeerId, GameId, new_game_id, DiceRoll};
-use crate::protocol::craps::CrapsGame;
-use crate::protocol::{Bet, BetType};
-use crate::error::{Error, Result};
-use crate::security::{
-    SecurityManager, SecurityConfig
-};
-use super::config::GameRuntimeConfig;
 
 /// Dice roll broadcast message
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,83 +98,92 @@ impl TurnManager {
             last_activity: Instant::now(),
         }
     }
-    
+
     /// Add a player to the shooter rotation queue
     pub fn add_player(&mut self, player: PeerId) {
         if !self.shooter_queue.contains(&player) {
             self.shooter_queue.push(player);
         }
     }
-    
+
     /// Remove a player from the shooter rotation queue
     pub fn remove_player(&mut self, player: PeerId) {
         self.shooter_queue.retain(|&p| p != player);
-        
+
         // If current shooter left, advance to next
         if self.current_shooter == player && !self.shooter_queue.is_empty() {
             self.advance_to_next_shooter();
         }
     }
-    
+
     /// Get current shooter
     pub fn current_shooter(&self) -> PeerId {
         self.current_shooter
     }
-    
+
     /// Get current turn state
     pub fn turn_state(&self) -> &TurnState {
         &self.turn_state
     }
-    
+
     /// Check if it's a specific player's turn
     pub fn is_players_turn(&self, player: PeerId) -> bool {
         self.current_shooter == player
     }
-    
+
     /// Check if the turn has timed out
     pub fn is_turn_timed_out(&self) -> bool {
         self.last_activity.elapsed() > self.turn_timeout
     }
-    
+
     /// Start betting phase
     pub fn start_betting_phase(&mut self) {
         self.turn_state = TurnState::WaitingForBets;
         self.last_activity = Instant::now();
-        log::debug!("Turn state: WaitingForBets for shooter {:?}", self.current_shooter);
+        log::debug!(
+            "Turn state: WaitingForBets for shooter {:?}",
+            self.current_shooter
+        );
     }
-    
+
     /// Ready to roll dice
     pub fn ready_to_roll(&mut self) -> Result<()> {
         match self.turn_state {
             TurnState::WaitingForBets => {
                 self.turn_state = TurnState::ReadyToRoll;
                 self.last_activity = Instant::now();
-                log::debug!("Turn state: ReadyToRoll for shooter {:?}", self.current_shooter);
+                log::debug!(
+                    "Turn state: ReadyToRoll for shooter {:?}",
+                    self.current_shooter
+                );
                 Ok(())
             }
             _ => Err(Error::GameError(format!(
                 "Cannot roll dice in state {:?}",
                 self.turn_state
-            )))
+            ))),
         }
     }
-    
+
     /// Process dice roll
     pub fn process_roll(&mut self) -> Result<()> {
         match self.turn_state {
             TurnState::ReadyToRoll => {
                 self.turn_state = TurnState::ProcessingRoll;
                 self.last_activity = Instant::now();
-                log::debug!("Turn state: ProcessingRoll for shooter {:?}", self.current_shooter);
+                log::debug!(
+                    "Turn state: ProcessingRoll for shooter {:?}",
+                    self.current_shooter
+                );
                 Ok(())
             }
             _ => Err(Error::GameError(format!(
                 "Cannot process roll in state {:?}",
                 self.turn_state
-            )))
+            ))),
         }
     }
-    
+
     /// Handle seven-out (pass dice to next shooter)
     pub fn handle_seven_out(&mut self) {
         self.turn_state = TurnState::PassingDice;
@@ -184,22 +191,26 @@ impl TurnManager {
         self.advance_to_next_shooter();
         self.start_betting_phase();
     }
-    
+
     /// Handle point made (shooter continues)
     pub fn handle_point_made(&mut self) {
         log::info!("Point made! Shooter {:?} continues", self.current_shooter);
         self.start_betting_phase();
     }
-    
+
     /// Advance to next shooter in rotation
     fn advance_to_next_shooter(&mut self) {
         if self.shooter_queue.len() <= 1 {
             log::warn!("Cannot advance shooter: not enough players");
             return;
         }
-        
+
         // Find current shooter index and advance
-        if let Some(current_index) = self.shooter_queue.iter().position(|&p| p == self.current_shooter) {
+        if let Some(current_index) = self
+            .shooter_queue
+            .iter()
+            .position(|&p| p == self.current_shooter)
+        {
             let next_index = (current_index + 1) % self.shooter_queue.len();
             self.current_shooter = self.shooter_queue[next_index];
             log::info!("Advanced to next shooter: {:?}", self.current_shooter);
@@ -207,31 +218,38 @@ impl TurnManager {
             // Current shooter not found, use first player
             if let Some(&first_shooter) = self.shooter_queue.first() {
                 self.current_shooter = first_shooter;
-                log::warn!("Current shooter not in queue, using first player: {:?}", self.current_shooter);
+                log::warn!(
+                    "Current shooter not in queue, using first player: {:?}",
+                    self.current_shooter
+                );
             }
         }
     }
-    
+
     /// Force advance to next shooter (for timeout or voluntary pass)
     pub fn force_advance_shooter(&mut self) -> PeerId {
         let old_shooter = self.current_shooter;
         self.advance_to_next_shooter();
         self.start_betting_phase();
-        log::info!("Forced advance from {:?} to {:?}", old_shooter, self.current_shooter);
+        log::info!(
+            "Forced advance from {:?} to {:?}",
+            old_shooter,
+            self.current_shooter
+        );
         self.current_shooter
     }
-    
+
     /// End the game
     pub fn end_game(&mut self) {
         self.turn_state = TurnState::GameEnded;
         log::info!("Game ended - turn management stopped");
     }
-    
+
     /// Get all players in shooter rotation
     pub fn get_shooter_queue(&self) -> &[PeerId] {
         &self.shooter_queue
     }
-    
+
     /// Update activity timestamp
     pub fn update_activity(&mut self) {
         self.last_activity = Instant::now();
@@ -282,25 +300,54 @@ pub struct ActiveGame {
 /// Commands for game lifecycle
 #[derive(Debug)]
 pub enum GameCommand {
-    CreateGame { creator: PeerId, config: GameConfig },
-    JoinGame { game_id: GameId, player: PeerId, buy_in: u64 },
-    PlaceBet { game_id: GameId, player: PeerId, bet: Bet },
-    RollDice { game_id: GameId, shooter: PeerId },
-    LeaveGame { game_id: GameId, player: PeerId },
-    SuspendGame { game_id: GameId, reason: String },
-    ResumeGame { game_id: GameId },
-    PassDice { game_id: GameId, current_shooter: PeerId, next_shooter: PeerId },
-    RequestTurn { game_id: GameId, player: PeerId },
+    CreateGame {
+        creator: PeerId,
+        config: GameConfig,
+    },
+    JoinGame {
+        game_id: GameId,
+        player: PeerId,
+        buy_in: u64,
+    },
+    PlaceBet {
+        game_id: GameId,
+        player: PeerId,
+        bet: Bet,
+    },
+    RollDice {
+        game_id: GameId,
+        shooter: PeerId,
+    },
+    LeaveGame {
+        game_id: GameId,
+        player: PeerId,
+    },
+    SuspendGame {
+        game_id: GameId,
+        reason: String,
+    },
+    ResumeGame {
+        game_id: GameId,
+    },
+    PassDice {
+        game_id: GameId,
+        current_shooter: PeerId,
+        next_shooter: PeerId,
+    },
+    RequestTurn {
+        game_id: GameId,
+        player: PeerId,
+    },
 }
 
 /// Turn state for managing shooter rotation
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TurnState {
-    WaitingForBets,      // Accepting bets before roll
-    ReadyToRoll,         // Shooter can roll dice
-    ProcessingRoll,      // Roll in progress, processing results  
-    PassingDice,         // Seven-out, passing to next shooter
-    GameEnded,           // Game concluded
+    WaitingForBets, // Accepting bets before roll
+    ReadyToRoll,    // Shooter can roll dice
+    ProcessingRoll, // Roll in progress, processing results
+    PassingDice,    // Seven-out, passing to next shooter
+    GameEnded,      // Game concluded
 }
 
 /// Turn management for coordinating shooter rotation
@@ -326,7 +373,7 @@ impl GameLifecycleManager {
     pub fn new(config: Arc<GameRuntimeConfig>) -> Self {
         let security_config = SecurityConfig::default();
         let security_manager = Arc::new(SecurityManager::new(security_config));
-        
+
         Self {
             config,
             games: Arc::new(RwLock::new(HashMap::new())),
@@ -334,14 +381,14 @@ impl GameLifecycleManager {
             security_manager,
         }
     }
-    
+
     /// Create a new game lifecycle manager with custom security configuration
     pub fn new_with_security(
-        config: Arc<GameRuntimeConfig>, 
-        security_config: SecurityConfig
+        config: Arc<GameRuntimeConfig>,
+        security_config: SecurityConfig,
     ) -> Self {
         let security_manager = Arc::new(SecurityManager::new(security_config));
-        
+
         Self {
             config,
             games: Arc::new(RwLock::new(HashMap::new())),
@@ -349,20 +396,20 @@ impl GameLifecycleManager {
             security_manager,
         }
     }
-    
+
     /// Create a new game
     pub async fn create_game(&self, creator: PeerId, config: GameConfig) -> Result<GameId> {
         let mut games = self.games.write().await;
-        
+
         // Check limits
         if games.len() >= self.config.max_concurrent_games {
             return Err(Error::GameError("Maximum concurrent games reached".into()));
         }
-        
+
         // Create game
         let game_id = new_game_id();
         let game = CrapsGame::new(game_id, creator);
-        
+
         let active_game = ActiveGame {
             game,
             created_at: Instant::now(),
@@ -373,106 +420,107 @@ impl GameLifecycleManager {
             config,
             turn_manager: TurnManager::new(creator),
         };
-        
+
         games.insert(game_id, active_game);
-        
+
         // Set timeout
         let mut timeouts = self.game_timeouts.write().await;
         timeouts.insert(game_id, Instant::now() + self.config.game_timeout);
-        
+
         Ok(game_id)
     }
-    
+
     /// Add a player to a game with comprehensive security validation
     pub async fn add_player_to_game_with_security(
-        &self, 
-        game_id: GameId, 
-        player: PeerId, 
+        &self,
+        game_id: GameId,
+        player: PeerId,
         buy_in: u64,
-        client_ip: IpAddr
+        client_ip: IpAddr,
     ) -> Result<()> {
         log::info!("Player {:?} attempting to join game {:?}", player, game_id);
-        
+
         // Security validation first
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-            
-        self.security_manager.validate_game_join_request(
-            &game_id,
-            &player,
-            buy_in,
-            timestamp,
-            client_ip
-        )?;
-        
+
+        self.security_manager
+            .validate_game_join_request(&game_id, &player, buy_in, timestamp, client_ip)?;
+
         let mut games = self.games.write().await;
-        let game = games.get_mut(&game_id)
-            .ok_or(Error::GameNotFound)?;
-        
+        let game = games.get_mut(&game_id).ok_or(Error::GameNotFound)?;
+
         // Check if game is full
         if game.game.participants.len() >= self.config.max_players {
             return Err(Error::GameError("Game is full".into()));
         }
-        
+
         // Check if game is suspended
         if game.is_suspended {
             return Err(Error::GameError("Game is suspended".into()));
         }
-        
+
         // Validate player eligibility (check balance, reputation, etc.)
-        self.validate_player_eligibility(player, &game.config).await?;
-        
+        self.validate_player_eligibility(player, &game.config)
+            .await?;
+
         // For multiplayer games, broadcast join request for consensus
         if game.game.participants.len() > 1 {
-            self.broadcast_player_join_request(game_id, player, &game.game.participants).await?;
+            self.broadcast_player_join_request(game_id, player, &game.game.participants)
+                .await?;
         }
-        
+
         // Add player
         if !game.game.add_player(player) {
             return Err(Error::GameError("Player already in game".into()));
         }
-        
+
         // Add to turn manager rotation
         game.turn_manager.add_player(player);
-        
+
         // Broadcast successful join to all participants
-        self.broadcast_player_joined(game_id, player, &game.game.participants).await?;
-        
+        self.broadcast_player_joined(game_id, player, &game.game.participants)
+            .await?;
+
         // Update activity
         game.last_activity = Instant::now();
-        
-        log::info!("Player {:?} successfully joined game {:?}. Total players: {}", 
-                  player, game_id, game.game.participants.len());
-        
+
+        log::info!(
+            "Player {:?} successfully joined game {:?}. Total players: {}",
+            player,
+            game_id,
+            game.game.participants.len()
+        );
+
         Ok(())
     }
-    
+
     /// Validate player eligibility to join a game
     async fn validate_player_eligibility(&self, player: PeerId, config: &GameConfig) -> Result<()> {
         // Check minimum buy-in (this would integrate with the token ledger)
         // For now, we'll do a basic validation
         log::debug!("Validating player eligibility for {:?}", player);
-        
+
         // TODO: Check player balance meets minimum buy-in
         // TODO: Check player reputation score if required
         // TODO: Check if player is banned or restricted
-        
+
         // Basic validation - ensure non-zero player ID
         if player == [0u8; 32] {
             return Err(Error::GameError("Invalid player ID".into()));
         }
-        
+
         // Check if game requires password
         if let Some(_password) = &config.password {
             // TODO: Implement password validation
             log::debug!("Game requires password validation");
         }
-        
+
         Ok(())
     }
-    
+
     /// Broadcast player join request for consensus approval
     async fn broadcast_player_join_request(
         &self,
@@ -488,22 +536,28 @@ impl GameLifecycleManager {
                 .unwrap_or_default()
                 .as_secs(),
         };
-        
-        log::info!("Broadcasting join request for player {:?} to {} participants", 
-                  joining_player, current_participants.len());
-        
+
+        log::info!(
+            "Broadcasting join request for player {:?} to {} participants",
+            joining_player,
+            current_participants.len()
+        );
+
         // Broadcast to all current participants in parallel for better performance
-        let broadcast_tasks: Vec<_> = current_participants.iter().map(|&participant| {
-            let message_clone = message.clone();
-            
-            tokio::spawn(async move {
-                log::debug!("Sending join request to participant {:?}", participant);
-                // TODO: Implement actual network broadcast via mesh service
-                // This would use the mesh service to send the message
-                Ok::<(), Error>(())
+        let broadcast_tasks: Vec<_> = current_participants
+            .iter()
+            .map(|&participant| {
+                let message_clone = message.clone();
+
+                tokio::spawn(async move {
+                    log::debug!("Sending join request to participant {:?}", participant);
+                    // TODO: Implement actual network broadcast via mesh service
+                    // This would use the mesh service to send the message
+                    Ok::<(), Error>(())
+                })
             })
-        }).collect();
-        
+            .collect();
+
         // Wait for all broadcasts to complete
         let results = join_all(broadcast_tasks).await;
         for result in results {
@@ -511,12 +565,12 @@ impl GameLifecycleManager {
                 log::error!("Failed to send join request: {:?}", e);
             }
         }
-        
+
         // In a full implementation, we would wait for consensus approval
         // For now, we automatically approve
         Ok(())
     }
-    
+
     /// Broadcast successful player join to all participants
     async fn broadcast_player_joined(
         &self,
@@ -533,21 +587,27 @@ impl GameLifecycleManager {
                 .unwrap_or_default()
                 .as_secs(),
         };
-        
-        log::info!("Broadcasting successful join of player {:?} to {} participants", 
-                  new_player, all_participants.len());
-        
+
+        log::info!(
+            "Broadcasting successful join of player {:?} to {} participants",
+            new_player,
+            all_participants.len()
+        );
+
         // Broadcast to all participants in parallel (including the new player)
-        let broadcast_tasks: Vec<_> = all_participants.iter().map(|&participant| {
-            let message_clone = message.clone();
-            
-            tokio::spawn(async move {
-                log::debug!("Notifying participant {:?} of new player", participant);
-                // TODO: Implement actual network broadcast via mesh service
-                Ok::<(), Error>(())
+        let broadcast_tasks: Vec<_> = all_participants
+            .iter()
+            .map(|&participant| {
+                let message_clone = message.clone();
+
+                tokio::spawn(async move {
+                    log::debug!("Notifying participant {:?} of new player", participant);
+                    // TODO: Implement actual network broadcast via mesh service
+                    Ok::<(), Error>(())
+                })
             })
-        }).collect();
-        
+            .collect();
+
         // Wait for all notifications to complete
         let results = join_all(broadcast_tasks).await;
         for result in results {
@@ -555,39 +615,46 @@ impl GameLifecycleManager {
                 log::error!("Failed to send player joined notification: {:?}", e);
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Handle player leaving with consensus
-    pub async fn remove_player_from_game_with_consensus(&self, game_id: GameId, player: PeerId, reason: &str) -> Result<()> {
+    pub async fn remove_player_from_game_with_consensus(
+        &self,
+        game_id: GameId,
+        player: PeerId,
+        reason: &str,
+    ) -> Result<()> {
         log::info!("Player {:?} leaving game {:?}: {}", player, game_id, reason);
-        
+
         let mut games = self.games.write().await;
-        let game = games.get_mut(&game_id)
-            .ok_or(Error::GameNotFound)?;
-        
+        let game = games.get_mut(&game_id).ok_or(Error::GameNotFound)?;
+
         // Broadcast player leaving to remaining participants
-        let remaining_participants: Vec<PeerId> = game.game.participants
+        let remaining_participants: Vec<PeerId> = game
+            .game
+            .participants
             .iter()
             .filter(|&&p| p != player)
             .copied()
             .collect();
-        
+
         if !remaining_participants.is_empty() {
-            self.broadcast_player_left(game_id, player, &remaining_participants, reason).await?;
+            self.broadcast_player_left(game_id, player, &remaining_participants, reason)
+                .await?;
         }
-        
+
         // Remove player bets and clear their state
         game.game.clear_player_bets(&player);
-        
+
         // Remove from participants and turn manager
         game.game.participants.retain(|&p| p != player);
         game.turn_manager.remove_player(player);
-        
+
         // Update activity
         game.last_activity = Instant::now();
-        
+
         // Check if game should end
         if game.game.participants.len() < self.config.min_players {
             log::info!("Game {:?} ended due to insufficient players", game_id);
@@ -598,10 +665,10 @@ impl GameLifecycleManager {
             // Update game shooter to match turn manager
             game.game.set_shooter(game.turn_manager.current_shooter());
         }
-        
+
         Ok(())
     }
-    
+
     /// Broadcast player left message
     async fn broadcast_player_left(
         &self,
@@ -620,95 +687,100 @@ impl GameLifecycleManager {
                 .unwrap_or_default()
                 .as_secs(),
         };
-        
-        log::info!("Broadcasting departure of player {:?} to {} remaining participants", 
-                  departed_player, remaining_participants.len());
-        
+
+        log::info!(
+            "Broadcasting departure of player {:?} to {} remaining participants",
+            departed_player,
+            remaining_participants.len()
+        );
+
         for participant in remaining_participants {
-            log::debug!("Notifying participant {:?} of player departure", participant);
+            log::debug!(
+                "Notifying participant {:?} of player departure",
+                participant
+            );
             // TODO: Implement actual network broadcast via mesh service
         }
-        
+
         Ok(())
     }
-    
+
     /// Remove a player from a game
     pub async fn remove_player_from_game(&self, game_id: GameId, player: PeerId) -> Result<()> {
         let mut games = self.games.write().await;
-        let game = games.get_mut(&game_id)
-            .ok_or(Error::GameNotFound)?;
-        
+        let game = games.get_mut(&game_id).ok_or(Error::GameNotFound)?;
+
         // Remove player bets
         game.game.clear_player_bets(&player);
-        
+
         // Remove from participants
         game.game.participants.retain(|&p| p != player);
-        
+
         // Update activity
         game.last_activity = Instant::now();
-        
+
         // Check if game should end
         if game.game.participants.len() < self.config.min_players {
             games.remove(&game_id);
             self.game_timeouts.write().await.remove(&game_id);
         }
-        
+
         Ok(())
     }
-    
+
     /// Process a bet
     pub async fn process_bet(&self, game_id: GameId, player: PeerId, bet: Bet) -> Result<()> {
         let mut games = self.games.write().await;
-        let game = games.get_mut(&game_id)
-            .ok_or(Error::GameNotFound)?;
-        
+        let game = games.get_mut(&game_id).ok_or(Error::GameNotFound)?;
+
         // Validate bet is allowed
-        if !game.config.allowed_bets.is_empty() && 
-           !game.config.allowed_bets.contains(&bet.bet_type) {
-            return Err(Error::InvalidBet("Bet type not allowed in this game".into()));
+        if !game.config.allowed_bets.is_empty() && !game.config.allowed_bets.contains(&bet.bet_type)
+        {
+            return Err(Error::InvalidBet(
+                "Bet type not allowed in this game".into(),
+            ));
         }
-        
+
         // Store amount before moving bet
         let bet_amount = bet.amount.amount();
-        
+
         // Place bet
         game.game.place_bet(player, bet)?;
-        
+
         // Update pot and activity
         game.total_pot = game.total_pot.saturating_add(bet_amount);
         game.last_activity = Instant::now();
-        
+
         Ok(())
     }
-    
+
     /// Process a dice roll with comprehensive security validation
     pub async fn process_dice_roll_with_security(
-        &self, 
-        game_id: GameId, 
+        &self,
+        game_id: GameId,
         shooter: PeerId,
         entropy: [u8; 32],
         commitment: [u8; 32],
-        client_ip: IpAddr
+        client_ip: IpAddr,
     ) -> Result<DiceRoll> {
         // Security validation first
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-            
+
         self.security_manager.validate_dice_roll_commit(
             &game_id,
             &shooter,
             &entropy,
             &commitment,
             timestamp,
-            client_ip
+            client_ip,
         )?;
-        
+
         let mut games = self.games.write().await;
-        let game = games.get_mut(&game_id)
-            .ok_or(Error::GameNotFound)?;
-        
+        let game = games.get_mut(&game_id).ok_or(Error::GameNotFound)?;
+
         // Verify shooter using turn manager
         if !game.turn_manager.is_players_turn(shooter) {
             return Err(Error::GameError(format!(
@@ -716,25 +788,27 @@ impl GameLifecycleManager {
                 game.turn_manager.current_shooter()
             )));
         }
-        
+
         // Check turn state allows rolling
         game.turn_manager.ready_to_roll()?;
         game.turn_manager.process_roll()?;
-        
+
         // For multiplayer games, use consensus dice roll generation
         let roll = if game.game.participants.len() > 1 {
-            self.generate_consensus_dice_roll(game_id, &game.game.participants).await?
+            self.generate_consensus_dice_roll(game_id, &game.game.participants)
+                .await?
         } else {
             // Single player can use local secure randomness
             CrapsGame::roll_dice_secure()?
         };
-        
+
         // Broadcast the dice roll result to all participants
-        self.broadcast_dice_roll_result(game_id, roll, &game.game.participants).await?;
-        
+        self.broadcast_dice_roll_result(game_id, roll, &game.game.participants)
+            .await?;
+
         // Process roll
         let resolutions = game.game.process_roll(roll);
-        
+
         // Handle turn management based on roll result
         let total = roll.total();
         match game.game.phase {
@@ -764,23 +838,25 @@ impl GameLifecycleManager {
                 game.turn_manager.start_betting_phase();
             }
         }
-        
+
         // Broadcast bet resolutions if any
         if !resolutions.is_empty() {
-            self.broadcast_bet_resolutions(game_id, &resolutions, &game.game.participants).await?;
+            self.broadcast_bet_resolutions(game_id, &resolutions, &game.game.participants)
+                .await?;
         }
-        
+
         // Broadcast turn state change if shooter changed
-        self.broadcast_turn_state_change(game_id, &game.turn_manager, &game.game.participants).await?;
-        
+        self.broadcast_turn_state_change(game_id, &game.turn_manager, &game.game.participants)
+            .await?;
+
         // Update stats and activity
         game.rounds_played += 1;
         game.last_activity = Instant::now();
         game.turn_manager.update_activity();
-        
+
         Ok(roll)
     }
-    
+
     /// Generate consensus dice roll using commit-reveal scheme
     async fn generate_consensus_dice_roll(
         &self,
@@ -788,53 +864,68 @@ impl GameLifecycleManager {
         participants: &[PeerId],
     ) -> Result<DiceRoll> {
         use crate::protocol::consensus::commit_reveal::EntropyPool;
-        
-        log::info!("Generating consensus dice roll for game {:?} with {} participants", game_id, participants.len());
-        
+
+        log::info!(
+            "Generating consensus dice roll for game {:?} with {} participants",
+            game_id,
+            participants.len()
+        );
+
         // Create entropy pool
         let mut entropy_pool = EntropyPool::new();
-        
+
         // Collect entropy from all participants (simplified - in real implementation would use commit-reveal)
         for participant in participants {
             // Generate entropy source for each participant
-            let entropy = self.generate_participant_entropy(*participant, game_id).await?;
+            let entropy = self
+                .generate_participant_entropy(*participant, game_id)
+                .await?;
             entropy_pool.add_entropy(entropy);
         }
-        
+
         // Generate dice roll from combined entropy
         let (die1, die2) = entropy_pool.generate_dice_roll();
-        
-        log::info!("Consensus dice roll generated: {} + {} = {}", die1, die2, die1 + die2);
-        
+
+        log::info!(
+            "Consensus dice roll generated: {} + {} = {}",
+            die1,
+            die2,
+            die1 + die2
+        );
+
         DiceRoll::new(die1, die2)
     }
-    
+
     /// Generate entropy for a participant
-    async fn generate_participant_entropy(&self, participant: PeerId, game_id: GameId) -> Result<[u8; 32]> {
-        use sha2::{Sha256, Digest};
+    async fn generate_participant_entropy(
+        &self,
+        participant: PeerId,
+        game_id: GameId,
+    ) -> Result<[u8; 32]> {
         use rand::rngs::OsRng;
         use rand::RngCore;
-        
+        use sha2::{Digest, Sha256};
+
         // Generate secure random nonce
         let mut nonce = [0u8; 32];
         OsRng.fill_bytes(&mut nonce);
-        
+
         // Combine with game context
         let mut hasher = Sha256::new();
         hasher.update(&participant);
         hasher.update(&game_id);
         hasher.update(&nonce);
-        
+
         // Add current timestamp for uniqueness
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
         hasher.update(timestamp.to_be_bytes());
-        
+
         Ok(hasher.finalize().into())
     }
-    
+
     /// Broadcast dice roll result to all participants
     async fn broadcast_dice_roll_result(
         &self,
@@ -851,20 +942,27 @@ impl GameLifecycleManager {
                 .unwrap_or_default()
                 .as_secs(),
         };
-        
-        log::info!("Broadcasting dice roll {:?} to {} participants", roll, participants.len());
-        
+
+        log::info!(
+            "Broadcasting dice roll {:?} to {} participants",
+            roll,
+            participants.len()
+        );
+
         // Broadcast dice roll result in parallel for better performance
-        let broadcast_tasks: Vec<_> = participants.iter().map(|&participant| {
-            let message_clone = message.clone();
-            
-            tokio::spawn(async move {
-                log::debug!("Sending dice roll to participant {:?}", participant);
-                // TODO: Implement actual network broadcast via mesh service
-                Ok::<(), Error>(())
+        let broadcast_tasks: Vec<_> = participants
+            .iter()
+            .map(|&participant| {
+                let message_clone = message.clone();
+
+                tokio::spawn(async move {
+                    log::debug!("Sending dice roll to participant {:?}", participant);
+                    // TODO: Implement actual network broadcast via mesh service
+                    Ok::<(), Error>(())
+                })
             })
-        }).collect();
-        
+            .collect();
+
         // Wait for all broadcasts to complete
         let results = join_all(broadcast_tasks).await;
         for result in results {
@@ -872,10 +970,10 @@ impl GameLifecycleManager {
                 log::error!("Failed to broadcast dice roll: {:?}", e);
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Broadcast bet resolutions to all participants
     async fn broadcast_bet_resolutions(
         &self,
@@ -883,8 +981,12 @@ impl GameLifecycleManager {
         resolutions: &[crate::protocol::game_logic::BetResolution],
         participants: &[PeerId],
     ) -> Result<()> {
-        log::info!("Broadcasting {} bet resolutions to {} participants", resolutions.len(), participants.len());
-        
+        log::info!(
+            "Broadcasting {} bet resolutions to {} participants",
+            resolutions.len(),
+            participants.len()
+        );
+
         // Create bet resolution message
         let message = BetResolutionBroadcast {
             game_id,
@@ -894,18 +996,21 @@ impl GameLifecycleManager {
                 .unwrap_or_default()
                 .as_secs(),
         };
-        
+
         // Broadcast bet resolutions in parallel
-        let broadcast_tasks: Vec<_> = participants.iter().map(|&participant| {
-            let message_clone = message.clone();
-            
-            tokio::spawn(async move {
-                log::debug!("Sending bet resolutions to participant {:?}", participant);
-                // TODO: Implement actual network broadcast via mesh service
-                Ok::<(), Error>(())
+        let broadcast_tasks: Vec<_> = participants
+            .iter()
+            .map(|&participant| {
+                let message_clone = message.clone();
+
+                tokio::spawn(async move {
+                    log::debug!("Sending bet resolutions to participant {:?}", participant);
+                    // TODO: Implement actual network broadcast via mesh service
+                    Ok::<(), Error>(())
+                })
             })
-        }).collect();
-        
+            .collect();
+
         // Wait for all broadcasts to complete
         let results = join_all(broadcast_tasks).await;
         for result in results {
@@ -913,46 +1018,44 @@ impl GameLifecycleManager {
                 log::error!("Failed to broadcast bet resolutions: {:?}", e);
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Suspend a game
     pub async fn suspend_game(&self, game_id: GameId, _reason: String) -> Result<()> {
         let mut games = self.games.write().await;
-        let game = games.get_mut(&game_id)
-            .ok_or(Error::GameNotFound)?;
-        
+        let game = games.get_mut(&game_id).ok_or(Error::GameNotFound)?;
+
         game.is_suspended = true;
         Ok(())
     }
-    
+
     /// Resume a game
     pub async fn resume_game(&self, game_id: GameId) -> Result<()> {
         let mut games = self.games.write().await;
-        let game = games.get_mut(&game_id)
-            .ok_or(Error::GameNotFound)?;
-        
+        let game = games.get_mut(&game_id).ok_or(Error::GameNotFound)?;
+
         game.is_suspended = false;
         game.last_activity = Instant::now();
         Ok(())
     }
-    
+
     /// Start timeout monitor
     pub async fn start_timeout_monitor(&self) {
         let games = self.games.clone();
         let timeouts = self.game_timeouts.clone();
         let _timeout_duration = self.config.game_timeout;
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60));
-            
+
             loop {
                 interval.tick().await;
-                
+
                 let now = Instant::now();
                 let mut expired_games = Vec::new();
-                
+
                 // Find expired games
                 {
                     let timeout_map = timeouts.read().await;
@@ -962,12 +1065,12 @@ impl GameLifecycleManager {
                         }
                     }
                 }
-                
+
                 // Remove expired games
                 if !expired_games.is_empty() {
                     let mut games_map = games.write().await;
                     let mut timeout_map = timeouts.write().await;
-                    
+
                     for game_id in expired_games {
                         games_map.remove(&game_id);
                         timeout_map.remove(&game_id);
@@ -977,28 +1080,28 @@ impl GameLifecycleManager {
             }
         });
     }
-    
+
     /// Stop all games
     pub async fn stop_all_games(&self) -> Result<()> {
         let mut games = self.games.write().await;
         games.clear();
-        
+
         let mut timeouts = self.game_timeouts.write().await;
         timeouts.clear();
-        
+
         Ok(())
     }
-    
+
     /// Get active game count
     pub async fn active_game_count(&self) -> usize {
         self.games.read().await.len()
     }
-    
+
     /// Get game state
     pub async fn get_game(&self, game_id: GameId) -> Option<ActiveGame> {
         self.games.read().await.get(&game_id).cloned()
     }
-    
+
     /// Broadcast turn state change to all participants
     async fn broadcast_turn_state_change(
         &self,
@@ -1016,14 +1119,20 @@ impl GameLifecycleManager {
                 .unwrap_or_default()
                 .as_secs(),
         };
-        
-        log::debug!("Broadcasting turn state change to {} participants", participants.len());
-        
+
+        log::debug!(
+            "Broadcasting turn state change to {} participants",
+            participants.len()
+        );
+
         for participant in participants {
-            log::debug!("Notifying participant {:?} of turn state change", participant);
+            log::debug!(
+                "Notifying participant {:?} of turn state change",
+                participant
+            );
             // TODO: Implement actual network broadcast via mesh service
         }
-        
+
         Ok(())
     }
 }

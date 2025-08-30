@@ -1,16 +1,16 @@
 //! JNI bindings for Android integration
-//! 
+//!
 //! This module provides JNI wrappers around the UniFFI interface
 //! for direct Android integration and performance-critical operations.
 
 #[cfg(target_os = "android")]
-use jni::JNIEnv;
-#[cfg(target_os = "android")]
-use jni::objects::{JClass, JString, JValue, JObject, JObjectArray};
-#[cfg(target_os = "android")]
-use jni::sys::{jlong, jstring, jboolean, jint, jobjectArray};
+use jni::objects::{JClass, JObject, JObjectArray, JString, JValue};
 #[cfg(target_os = "android")]
 use jni::signature::{JavaType, Primitive};
+#[cfg(target_os = "android")]
+use jni::sys::{jboolean, jint, jlong, jobjectArray, jstring};
+#[cfg(target_os = "android")]
+use jni::JNIEnv;
 
 use super::*;
 
@@ -67,7 +67,8 @@ impl AndroidJNI {
 
 // Global JNI interface instance
 #[cfg(target_os = "android")]
-static ANDROID_JNI: once_cell::sync::Lazy<AndroidJNI> = once_cell::sync::Lazy::new(|| AndroidJNI::new());
+static ANDROID_JNI: once_cell::sync::Lazy<AndroidJNI> =
+    once_cell::sync::Lazy::new(|| AndroidJNI::new());
 
 /// JNI helper functions
 #[cfg(target_os = "android")]
@@ -77,21 +78,22 @@ mod jni_helpers {
     pub fn jstring_to_string(env: &JNIEnv, jstr: JString) -> Result<String, BitCrapsError> {
         env.get_string(jstr)
             .map(|s| s.into())
-            .map_err(|e| BitCrapsError::InvalidInput { 
-                reason: format!("Failed to convert JString: {}", e) 
+            .map_err(|e| BitCrapsError::InvalidInput {
+                reason: format!("Failed to convert JString: {}", e),
             })
     }
 
     pub fn string_to_jstring(env: &JNIEnv, s: &str) -> Result<JString, BitCrapsError> {
-        env.new_string(s)
-            .map_err(|e| BitCrapsError::InvalidInput { 
-                reason: format!("Failed to create JString: {}", e) 
-            })
+        env.new_string(s).map_err(|e| BitCrapsError::InvalidInput {
+            reason: format!("Failed to create JString: {}", e),
+        })
     }
 
     pub fn throw_exception(env: &JNIEnv, error: &BitCrapsError) {
         let exception_class = match error {
-            BitCrapsError::InitializationError { .. } => "com/bitcraps/exceptions/InitializationException",
+            BitCrapsError::InitializationError { .. } => {
+                "com/bitcraps/exceptions/InitializationException"
+            }
             BitCrapsError::BluetoothError { .. } => "com/bitcraps/exceptions/BluetoothException",
             BitCrapsError::NetworkError { .. } => "com/bitcraps/exceptions/NetworkException",
             BitCrapsError::GameError { .. } => "com/bitcraps/exceptions/GameException",
@@ -118,7 +120,7 @@ pub extern "C" fn Java_com_bitcraps_BitCrapsNative_initialize(
     android_logger::init_once(
         android_logger::Config::default()
             .with_min_level(log::Level::Info)
-            .with_tag("BitCraps")
+            .with_tag("BitCraps"),
     );
 
     log::info!("BitCraps native library initialized");
@@ -137,7 +139,7 @@ pub extern "C" fn Java_com_bitcraps_BitCrapsNative_createNode(
 ) -> jlong {
     let config = match (|| -> Result<BitCrapsConfig, BitCrapsError> {
         let data_dir = jni_helpers::jstring_to_string(&env, data_dir)?;
-        
+
         Ok(BitCrapsConfig {
             data_dir,
             pow_difficulty: pow_difficulty as u32,
@@ -175,9 +177,12 @@ pub extern "C" fn Java_com_bitcraps_BitCrapsNative_startDiscovery(
     let node = match ANDROID_JNI.get_node(node_handle) {
         Some(node) => node,
         None => {
-            jni_helpers::throw_exception(&env, &BitCrapsError::InvalidInput {
-                reason: "Invalid node handle".to_string(),
-            });
+            jni_helpers::throw_exception(
+                &env,
+                &BitCrapsError::InvalidInput {
+                    reason: "Invalid node handle".to_string(),
+                },
+            );
             return false as jboolean;
         }
     };
@@ -204,9 +209,12 @@ pub extern "C" fn Java_com_bitcraps_BitCrapsNative_stopDiscovery(
     let node = match ANDROID_JNI.get_node(node_handle) {
         Some(node) => node,
         None => {
-            jni_helpers::throw_exception(&env, &BitCrapsError::InvalidInput {
-                reason: "Invalid node handle".to_string(),
-            });
+            jni_helpers::throw_exception(
+                &env,
+                &BitCrapsError::InvalidInput {
+                    reason: "Invalid node handle".to_string(),
+                },
+            );
             return false as jboolean;
         }
     };
@@ -232,9 +240,12 @@ pub extern "C" fn Java_com_bitcraps_BitCrapsNative_pollEvent(
     let node = match ANDROID_JNI.get_node(node_handle) {
         Some(node) => node,
         None => {
-            jni_helpers::throw_exception(&env, &BitCrapsError::InvalidInput {
-                reason: "Invalid node handle".to_string(),
-            });
+            jni_helpers::throw_exception(
+                &env,
+                &BitCrapsError::InvalidInput {
+                    reason: "Invalid node handle".to_string(),
+                },
+            );
             return std::ptr::null_mut();
         }
     };
@@ -244,23 +255,24 @@ pub extern "C" fn Java_com_bitcraps_BitCrapsNative_pollEvent(
         Some(event) => {
             // Serialize event to JSON
             match serde_json::to_string(&event) {
-                Ok(json) => {
-                    match jni_helpers::string_to_jstring(&env, &json) {
-                        Ok(jstr) => jstr.into_raw(),
-                        Err(e) => {
-                            jni_helpers::throw_exception(&env, &e);
-                            std::ptr::null_mut()
-                        }
+                Ok(json) => match jni_helpers::string_to_jstring(&env, &json) {
+                    Ok(jstr) => jstr.into_raw(),
+                    Err(e) => {
+                        jni_helpers::throw_exception(&env, &e);
+                        std::ptr::null_mut()
                     }
                 },
                 Err(e) => {
-                    jni_helpers::throw_exception(&env, &BitCrapsError::InvalidInput {
-                        reason: format!("Failed to serialize event: {}", e),
-                    });
+                    jni_helpers::throw_exception(
+                        &env,
+                        &BitCrapsError::InvalidInput {
+                            reason: format!("Failed to serialize event: {}", e),
+                        },
+                    );
                     std::ptr::null_mut()
                 }
             }
-        },
+        }
         None => std::ptr::null_mut(),
     }
 }
@@ -276,28 +288,32 @@ pub extern "C" fn Java_com_bitcraps_BitCrapsNative_getNodeStatus(
     let node = match ANDROID_JNI.get_node(node_handle) {
         Some(node) => node,
         None => {
-            jni_helpers::throw_exception(&env, &BitCrapsError::InvalidInput {
-                reason: "Invalid node handle".to_string(),
-            });
+            jni_helpers::throw_exception(
+                &env,
+                &BitCrapsError::InvalidInput {
+                    reason: "Invalid node handle".to_string(),
+                },
+            );
             return std::ptr::null_mut();
         }
     };
 
     let status = node.get_status();
     match serde_json::to_string(&status) {
-        Ok(json) => {
-            match jni_helpers::string_to_jstring(&env, &json) {
-                Ok(jstr) => jstr.into_raw(),
-                Err(e) => {
-                    jni_helpers::throw_exception(&env, &e);
-                    std::ptr::null_mut()
-                }
+        Ok(json) => match jni_helpers::string_to_jstring(&env, &json) {
+            Ok(jstr) => jstr.into_raw(),
+            Err(e) => {
+                jni_helpers::throw_exception(&env, &e);
+                std::ptr::null_mut()
             }
         },
         Err(e) => {
-            jni_helpers::throw_exception(&env, &BitCrapsError::InvalidInput {
-                reason: format!("Failed to serialize status: {}", e),
-            });
+            jni_helpers::throw_exception(
+                &env,
+                &BitCrapsError::InvalidInput {
+                    reason: format!("Failed to serialize status: {}", e),
+                },
+            );
             std::ptr::null_mut()
         }
     }
@@ -315,9 +331,12 @@ pub extern "C" fn Java_com_bitcraps_BitCrapsNative_setPowerMode(
     let node = match ANDROID_JNI.get_node(node_handle) {
         Some(node) => node,
         None => {
-            jni_helpers::throw_exception(&env, &BitCrapsError::InvalidInput {
-                reason: "Invalid node handle".to_string(),
-            });
+            jni_helpers::throw_exception(
+                &env,
+                &BitCrapsError::InvalidInput {
+                    reason: "Invalid node handle".to_string(),
+                },
+            );
             return false as jboolean;
         }
     };
@@ -328,9 +347,12 @@ pub extern "C" fn Java_com_bitcraps_BitCrapsNative_setPowerMode(
         2 => PowerMode::BatterySaver,
         3 => PowerMode::UltraLowPower,
         _ => {
-            jni_helpers::throw_exception(&env, &BitCrapsError::InvalidInput {
-                reason: "Invalid power mode".to_string(),
-            });
+            jni_helpers::throw_exception(
+                &env,
+                &BitCrapsError::InvalidInput {
+                    reason: "Invalid power mode".to_string(),
+                },
+            );
             return false as jboolean;
         }
     };
@@ -377,19 +399,19 @@ impl Serialize for GameEvent {
                 state.serialize_field("type", "PeerDiscovered")?;
                 state.serialize_field("peer", peer)?;
                 state.end()
-            },
+            }
             GameEvent::PeerConnected { peer_id } => {
                 let mut state = serializer.serialize_struct("GameEvent", 2)?;
                 state.serialize_field("type", "PeerConnected")?;
                 state.serialize_field("peer_id", peer_id)?;
                 state.end()
-            },
+            }
             GameEvent::DiceRolled { roll } => {
                 let mut state = serializer.serialize_struct("GameEvent", 2)?;
                 state.serialize_field("type", "DiceRolled")?;
                 state.serialize_field("roll", roll)?;
                 state.end()
-            },
+            }
             // Add more event serializations as needed
             _ => {
                 let mut state = serializer.serialize_struct("GameEvent", 1)?;
@@ -412,7 +434,10 @@ impl Serialize for NodeStatus {
         state.serialize_field("discovery_active", &self.discovery_active)?;
         state.serialize_field("current_game_id", &self.current_game_id)?;
         state.serialize_field("active_connections", &self.active_connections)?;
-        state.serialize_field("current_power_mode", &format!("{:?}", self.current_power_mode))?;
+        state.serialize_field(
+            "current_power_mode",
+            &format!("{:?}", self.current_power_mode),
+        )?;
         state.end()
     }
 }

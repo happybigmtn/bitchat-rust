@@ -103,7 +103,11 @@ impl InputValidator {
     }
 
     /// Validate player ID format and bounds
-    pub fn validate_player_id(&self, player_id: &[u8; 32], context: &ValidationContext) -> Result<()> {
+    pub fn validate_player_id(
+        &self,
+        player_id: &[u8; 32],
+        context: &ValidationContext,
+    ) -> Result<()> {
         self.record_validation(true);
 
         // Check for all-zero ID (invalid)
@@ -177,7 +181,12 @@ impl InputValidator {
     }
 
     /// Validate dice roll with both dice values
-    pub fn validate_dice_roll(&self, die1: u8, die2: u8, context: &ValidationContext) -> Result<()> {
+    pub fn validate_dice_roll(
+        &self,
+        die1: u8,
+        die2: u8,
+        context: &ValidationContext,
+    ) -> Result<()> {
         self.validate_dice_value(die1, context)?;
         self.validate_dice_value(die2, context)?;
 
@@ -228,7 +237,11 @@ impl InputValidator {
     }
 
     /// Validate entropy source for randomness quality
-    pub fn validate_entropy_source(&self, entropy: &[u8; 32], context: &ValidationContext) -> Result<()> {
+    pub fn validate_entropy_source(
+        &self,
+        entropy: &[u8; 32],
+        context: &ValidationContext,
+    ) -> Result<()> {
         self.record_validation(true);
 
         // Check for all-zero entropy (completely invalid)
@@ -273,7 +286,11 @@ impl InputValidator {
     }
 
     /// Validate cryptographic commitment
-    pub fn validate_commitment(&self, commitment: &[u8; 32], context: &ValidationContext) -> Result<()> {
+    pub fn validate_commitment(
+        &self,
+        commitment: &[u8; 32],
+        context: &ValidationContext,
+    ) -> Result<()> {
         self.record_validation(true);
 
         // Check for all-zero commitment (invalid)
@@ -305,7 +322,12 @@ impl InputValidator {
     }
 
     /// Validate string input with length and content checks
-    pub fn validate_string(&self, input: &str, field_name: &str, context: &ValidationContext) -> Result<()> {
+    pub fn validate_string(
+        &self,
+        input: &str,
+        field_name: &str,
+        context: &ValidationContext,
+    ) -> Result<()> {
         self.record_validation(true);
 
         // Length check
@@ -313,7 +335,10 @@ impl InputValidator {
             self.record_validation(false);
             return Err(Error::InvalidInput(format!(
                 "String '{}' too long: {} chars (max: {}, operation: {})",
-                field_name, input.len(), self.limits.max_string_length, context.operation
+                field_name,
+                input.len(),
+                self.limits.max_string_length,
+                context.operation
             )));
         }
 
@@ -341,14 +366,22 @@ impl InputValidator {
     }
 
     /// Validate array length
-    pub fn validate_array_length<T>(&self, array: &[T], field_name: &str, context: &ValidationContext) -> Result<()> {
+    pub fn validate_array_length<T>(
+        &self,
+        array: &[T],
+        field_name: &str,
+        context: &ValidationContext,
+    ) -> Result<()> {
         self.record_validation(true);
 
         if array.len() > self.limits.max_array_length {
             self.record_validation(false);
             return Err(Error::InvalidInput(format!(
                 "Array '{}' too long: {} elements (max: {}, operation: {})",
-                field_name, array.len(), self.limits.max_array_length, context.operation
+                field_name,
+                array.len(),
+                self.limits.max_array_length,
+                context.operation
             )));
         }
 
@@ -543,22 +576,30 @@ mod tests {
 
         // Valid entropy
         let good_entropy = [42u8; 32];
-        assert!(validator.validate_entropy_source(&good_entropy, &context).is_ok());
+        assert!(validator
+            .validate_entropy_source(&good_entropy, &context)
+            .is_ok());
 
         // Invalid: all-zero entropy
         let zero_entropy = [0u8; 32];
-        assert!(validator.validate_entropy_source(&zero_entropy, &context).is_err());
+        assert!(validator
+            .validate_entropy_source(&zero_entropy, &context)
+            .is_err());
 
         // Invalid: all-ones entropy
         let ones_entropy = [0xFFu8; 32];
-        assert!(validator.validate_entropy_source(&ones_entropy, &context).is_err());
+        assert!(validator
+            .validate_entropy_source(&ones_entropy, &context)
+            .is_err());
 
         // Invalid: low entropy (mostly zeros)
         let mut low_entropy = [42u8; 32];
         for i in 0..28 {
             low_entropy[i] = 0;
         }
-        assert!(validator.validate_entropy_source(&low_entropy, &context).is_err());
+        assert!(validator
+            .validate_entropy_source(&low_entropy, &context)
+            .is_err());
     }
 
     #[test]
@@ -567,20 +608,30 @@ mod tests {
         let context = create_test_context();
 
         // Valid strings
-        assert!(validator.validate_string("valid_name", "test", &context).is_ok());
-        assert!(validator.validate_string("Player123", "test", &context).is_ok());
+        assert!(validator
+            .validate_string("valid_name", "test", &context)
+            .is_ok());
+        assert!(validator
+            .validate_string("Player123", "test", &context)
+            .is_ok());
 
         // Invalid: too long
         let long_string = "x".repeat(2000);
-        assert!(validator.validate_string(&long_string, "test", &context).is_err());
+        assert!(validator
+            .validate_string(&long_string, "test", &context)
+            .is_err());
 
         // Invalid: contains null byte
         let null_string = "invalid\0string";
-        assert!(validator.validate_string(null_string, "test", &context).is_err());
+        assert!(validator
+            .validate_string(null_string, "test", &context)
+            .is_err());
 
         // Invalid: contains control characters
         let control_string = "invalid\x01string";
-        assert!(validator.validate_string(control_string, "test", &context).is_err());
+        assert!(validator
+            .validate_string(control_string, "test", &context)
+            .is_err());
     }
 
     #[test]
@@ -597,10 +648,14 @@ mod tests {
 
         // Invalid IPs
         let invalid_ipv4 = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
-        assert!(validator.validate_ip_address(invalid_ipv4, &context).is_err());
+        assert!(validator
+            .validate_ip_address(invalid_ipv4, &context)
+            .is_err());
 
         let invalid_ipv6 = IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0));
-        assert!(validator.validate_ip_address(invalid_ipv6, &context).is_err());
+        assert!(validator
+            .validate_ip_address(invalid_ipv6, &context)
+            .is_err());
     }
 
     #[test]
@@ -613,7 +668,7 @@ mod tests {
 
         // Perform some validations
         let _ = validator.validate_bet_amount(100, &context); // Valid
-        let _ = validator.validate_bet_amount(0, &context);   // Invalid
+        let _ = validator.validate_bet_amount(0, &context); // Invalid
 
         assert_eq!(validator.get_validation_count(), initial_count + 2);
         assert_eq!(validator.get_violation_count(), initial_violations + 1);

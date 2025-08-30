@@ -1,17 +1,17 @@
 //! BLE Peripheral Advertising for BitChat
-//! 
+//!
 //! This module provides platform-specific implementations for BLE peripheral
 //! advertising since btleplug doesn't support peripheral mode on most platforms.
 //! It works alongside btleplug for central mode (scanning) functionality.
 
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use async_trait::async_trait;
 use uuid::Uuid;
-use serde::{Serialize, Deserialize};
 
-use crate::protocol::PeerId;
 use crate::error::Result;
+use crate::protocol::PeerId;
 
 // Import platform-specific implementations
 #[cfg(target_os = "android")]
@@ -49,7 +49,7 @@ impl Default for AdvertisingConfig {
             service_uuid: BITCRAPS_SERVICE_UUID,
             local_name: "BitChat".to_string(),
             advertising_interval_ms: 100, // 100ms interval
-            tx_power_level: 0, // 0 dBm
+            tx_power_level: 0,            // 0 dBm
             include_name: true,
             connectable: true,
             max_connections: 8,
@@ -65,24 +65,16 @@ pub enum PeripheralEvent {
     /// Advertising stopped
     AdvertisingStopped,
     /// Central device connected
-    CentralConnected { 
+    CentralConnected {
         peer_id: PeerId,
-        central_address: String 
+        central_address: String,
     },
     /// Central device disconnected
-    CentralDisconnected { 
-        peer_id: PeerId,
-        reason: String 
-    },
+    CentralDisconnected { peer_id: PeerId, reason: String },
     /// Data received from central
-    DataReceived { 
-        peer_id: PeerId,
-        data: Vec<u8> 
-    },
+    DataReceived { peer_id: PeerId, data: Vec<u8> },
     /// Error occurred
-    Error { 
-        error: String 
-    },
+    Error { error: String },
     /// Advertising failed with recovery suggestion
     AdvertisingFailed {
         error: String,
@@ -172,46 +164,46 @@ impl Default for RecoveryConfig {
 pub trait BlePeripheral: Send + Sync {
     /// Start advertising with the given configuration
     async fn start_advertising(&mut self, config: &AdvertisingConfig) -> Result<()>;
-    
+
     /// Stop advertising
     async fn stop_advertising(&mut self) -> Result<()>;
-    
+
     /// Check if currently advertising
     fn is_advertising(&self) -> bool;
-    
+
     /// Send data to a connected central device
     async fn send_to_central(&mut self, peer_id: PeerId, data: &[u8]) -> Result<()>;
-    
+
     /// Disconnect from a central device
     async fn disconnect_central(&mut self, peer_id: PeerId) -> Result<()>;
-    
+
     /// Get list of connected central devices
     fn connected_centrals(&self) -> Vec<PeerId>;
-    
+
     /// Get the next peripheral event
     async fn next_event(&mut self) -> Option<PeripheralEvent>;
-    
+
     /// Get peripheral statistics
     async fn get_stats(&self) -> PeripheralStats;
-    
+
     /// Update advertising configuration (may require restart)
     async fn update_config(&mut self, config: &AdvertisingConfig) -> Result<()>;
-    
+
     /// Set recovery configuration
     async fn set_recovery_config(&mut self, config: RecoveryConfig) -> Result<()>;
-    
+
     /// Trigger manual recovery attempt
     async fn recover(&mut self) -> Result<()>;
-    
+
     /// Get current connection state for a peer
     async fn get_connection_state(&self, peer_id: PeerId) -> Option<ConnectionState>;
-    
+
     /// Force reconnection to a specific central
     async fn force_reconnect(&mut self, peer_id: PeerId) -> Result<()>;
-    
+
     /// Check platform-specific health status
     async fn health_check(&self) -> Result<bool>;
-    
+
     /// Reset peripheral state (emergency recovery)
     async fn reset(&mut self) -> Result<()>;
 }
@@ -227,23 +219,30 @@ impl BlePeripheralFactory {
             log::info!("Creating Android BLE peripheral implementation");
             Ok(Box::new(AndroidBlePeripheral::new(local_peer_id).await?))
         }
-        
+
         #[cfg(any(target_os = "ios", target_os = "macos"))]
         {
             log::info!("Creating iOS/macOS BLE peripheral implementation");
             Ok(Box::new(IosBlePeripheral::new(local_peer_id).await?))
         }
-        
+
         #[cfg(target_os = "linux")]
         {
             log::info!("Creating Linux BlueZ BLE peripheral implementation");
             Ok(Box::new(LinuxBlePeripheral::new(local_peer_id).await?))
         }
-        
-        #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "macos", target_os = "linux")))]
+
+        #[cfg(not(any(
+            target_os = "android",
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "linux"
+        )))]
         {
             log::error!("No BLE peripheral implementation available for this platform");
-            Err(Error::Network("BLE peripheral not supported on this platform".to_string()))
+            Err(Error::Network(
+                "BLE peripheral not supported on this platform".to_string(),
+            ))
         }
     }
 }

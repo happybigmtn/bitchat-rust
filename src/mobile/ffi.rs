@@ -1,15 +1,17 @@
 //! Foreign Function Interface for mobile platforms
-//! 
+//!
 //! This module provides the UniFFI bindings for Android and iOS
 
-use crate::error::Error;
-use crate::protocol::PeerId;
-use crate::gaming::multi_game_framework::{GameSession, GameSessionConfig, GameSessionState, GameSessionStats};
-use crate::mesh::MeshService;
 use crate::crypto::BitchatIdentity;
+use crate::error::Error;
+use crate::gaming::multi_game_framework::{
+    GameSession, GameSessionConfig, GameSessionState, GameSessionStats,
+};
+use crate::mesh::MeshService;
+use crate::protocol::PeerId;
 use crate::transport::TransportCoordinator;
-use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -48,24 +50,25 @@ impl Default for BitCrapsConfig {
 
 /// Create a new BitCraps node with the given configuration
 pub fn create_node(config: BitCrapsConfig) -> Result<Arc<BitCrapsNode>> {
-    
-    
-    
     // Generate peer ID and identity
     let uuid_bytes = Uuid::new_v4().as_bytes().clone();
     let mut peer_id_bytes = [0u8; 32];
     peer_id_bytes[..16].copy_from_slice(&uuid_bytes);
     peer_id_bytes[16..].copy_from_slice(&uuid_bytes); // Duplicate for 32 bytes
     let peer_id = PeerId::from(peer_id_bytes);
-    
+
     // Create identity for the node (with minimal proof-of-work for mobile)
     // Lower difficulty for mobile devices to conserve battery
-    let pow_difficulty = if config.enable_battery_optimization { 8 } else { 10 };
+    let pow_difficulty = if config.enable_battery_optimization {
+        8
+    } else {
+        10
+    };
     let identity = Arc::new(BitchatIdentity::generate_with_pow(pow_difficulty));
-    
+
     // Create transport coordinator with mobile optimizations
     let mut transport = TransportCoordinator::new();
-    
+
     // Configure Bluetooth transport for mobile
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
@@ -74,30 +77,30 @@ pub fn create_node(config: BitCrapsConfig) -> Result<Arc<BitCrapsNode>> {
             transport.add_transport(Box::new(bt_transport));
         }
     }
-    
+
     // Set mobile-specific transport parameters
     transport.set_max_connections(config.max_peers);
     transport.set_discovery_interval(Duration::from_secs(config.discovery_timeout_seconds as u64));
-    
+
     let transport = Arc::new(transport);
-    
+
     // Initialize mesh service with mobile configuration
     let mesh_service = Arc::new(MeshService::new(identity.clone(), transport.clone()));
-    
+
     // Configure mesh service for mobile
     if config.enable_battery_optimization {
         // Reduce heartbeat frequency and increase timeouts for battery saving
         mesh_service.set_heartbeat_interval(Duration::from_secs(60));
         mesh_service.set_peer_timeout(Duration::from_secs(180));
     }
-    
+
     let node = Arc::new(BitCrapsNode {
         peer_id,
         mesh_service,
         active_games: Arc::new(Mutex::new(HashMap::new())),
         config,
     });
-    
+
     Ok(node)
 }
 
@@ -109,13 +112,13 @@ pub fn get_available_bluetooth_adapters() -> Vec<String> {
         // Use JNI to query Android Bluetooth adapters
         vec!["Default Bluetooth Adapter".to_string()]
     }
-    
+
     #[cfg(target_os = "ios")]
     {
         // iOS only has one Bluetooth adapter
         vec!["iOS Bluetooth".to_string()]
     }
-    
+
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         // Desktop/testing fallback
@@ -129,25 +132,25 @@ pub fn get_available_bluetooth_adapters() -> Vec<String> {
 pub enum BitCrapsError {
     #[error("Initialization error: {reason}")]
     InitializationError { reason: String },
-    
+
     #[error("Bluetooth error: {reason}")]
     BluetoothError { reason: String },
-    
+
     #[error("Network error: {reason}")]
     NetworkError { reason: String },
-    
+
     #[error("Game error: {reason}")]
     GameError { reason: String },
-    
+
     #[error("Crypto error: {reason}")]
     CryptoError { reason: String },
-    
+
     #[error("Invalid input: {reason}")]
     InvalidInput { reason: String },
-    
+
     #[error("Operation timeout")]
     Timeout,
-    
+
     #[error("Item not found: {item}")]
     NotFound { item: String },
 }
@@ -161,8 +164,8 @@ impl From<Error> for BitCrapsError {
             Error::GameError(msg) => BitCrapsError::GameError { reason: msg },
             Error::Crypto(msg) => BitCrapsError::CryptoError { reason: msg },
             Error::Transport(msg) => BitCrapsError::BluetoothError { reason: msg }, // Transport errors as Bluetooth
-            _ => BitCrapsError::InitializationError { 
-                reason: format!("Internal error: {}", err) 
+            _ => BitCrapsError::InitializationError {
+                reason: format!("Internal error: {}", err),
             },
         }
     }
@@ -177,18 +180,45 @@ pub struct GameHandle {
 /// Game events for UI updates
 #[derive(Debug, Clone)]
 pub enum GameEvent {
-    PeerDiscovered { peer_id: String, name: String },
-    PeerConnected { peer_id: String },
-    PeerDisconnected { peer_id: String },
-    GameCreated { game_id: String },
-    GameJoined { game_id: String },
+    PeerDiscovered {
+        peer_id: String,
+        name: String,
+    },
+    PeerConnected {
+        peer_id: String,
+    },
+    PeerDisconnected {
+        peer_id: String,
+    },
+    GameCreated {
+        game_id: String,
+    },
+    GameJoined {
+        game_id: String,
+    },
     GameStarted,
-    DiceRolled { die1: u8, die2: u8, roller: String },
-    BetPlaced { amount: u64, bet_type: String, player: String },
-    PayoutReceived { amount: u64 },
-    GameEnded { winner: Option<String> },
-    NetworkStateChanged { new_state: NetworkState },
-    Error { message: String },
+    DiceRolled {
+        die1: u8,
+        die2: u8,
+        roller: String,
+    },
+    BetPlaced {
+        amount: u64,
+        bet_type: String,
+        player: String,
+    },
+    PayoutReceived {
+        amount: u64,
+    },
+    GameEnded {
+        winner: Option<String>,
+    },
+    NetworkStateChanged {
+        new_state: NetworkState,
+    },
+    Error {
+        message: String,
+    },
 }
 
 /// Network state for UI
@@ -273,38 +303,51 @@ impl BitCrapsNode {
     /// Start discovery for nearby peers
     pub async fn start_discovery(&self) -> Result<()> {
         // Start the mesh service which includes discovery
-        self.mesh_service.start().await
-            .map_err(|e| BitCrapsError::NetworkError { 
-                reason: format!("Failed to start discovery: {}", e) 
+        self.mesh_service
+            .start()
+            .await
+            .map_err(|e| BitCrapsError::NetworkError {
+                reason: format!("Failed to start discovery: {}", e),
             })?;
         Ok(())
     }
-    
+
     /// Stop discovery
     pub async fn stop_discovery(&self) {
         // Stop the mesh service
         self.mesh_service.stop().await;
     }
-    
+
     /// Create a new game
     pub async fn create_game(&self, config: GameConfig) -> Result<Arc<GameHandle>> {
         let game_id = Uuid::new_v4().to_string();
-        
+
         // Create game session with proper initialization
         let session = Arc::new(GameSession {
             id: Uuid::new_v4().to_string(),
             game_id: game_id.clone(),
             players: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
-            state: Arc::new(tokio::sync::RwLock::new(GameSessionState::WaitingForPlayers)),
+            state: Arc::new(tokio::sync::RwLock::new(
+                GameSessionState::WaitingForPlayers,
+            )),
             config: GameSessionConfig {
                 min_bet: config.min_bet,
                 max_bet: config.max_bet,
                 auto_start: true,
                 game_specific_config: {
                     let mut map = HashMap::new();
-                    map.insert("player_limit".to_string(), serde_json::json!(config.player_limit));
-                    map.insert("timeout_seconds".to_string(), serde_json::json!(config.timeout_seconds));
-                    map.insert("allow_spectators".to_string(), serde_json::json!(config.allow_spectators));
+                    map.insert(
+                        "player_limit".to_string(),
+                        serde_json::json!(config.player_limit),
+                    );
+                    map.insert(
+                        "timeout_seconds".to_string(),
+                        serde_json::json!(config.timeout_seconds),
+                    );
+                    map.insert(
+                        "allow_spectators".to_string(),
+                        serde_json::json!(config.allow_spectators),
+                    );
                     map
                 },
             },
@@ -316,42 +359,41 @@ impl BitCrapsNode {
             created_at: std::time::SystemTime::now(),
             last_activity: Arc::new(tokio::sync::RwLock::new(std::time::SystemTime::now())),
         });
-        
+
         let handle = Arc::new(GameHandle {
             game_id: game_id.clone(),
             session: session.clone(),
         });
-        
+
         // Store in active games
         if let Ok(mut games) = self.active_games.lock() {
             games.insert(game_id, session);
         }
-        
+
         Ok(handle)
     }
-    
+
     /// Join an existing game
     pub async fn join_game(&self, game_id: String) -> Result<Arc<GameHandle>> {
         // Parse game ID
-        let game_id_bytes = hex::decode(&game_id)
-            .map_err(|_| BitCrapsError::InvalidInput { 
-                reason: "Invalid game ID format".to_string() 
-            })?;
-        
+        let game_id_bytes = hex::decode(&game_id).map_err(|_| BitCrapsError::InvalidInput {
+            reason: "Invalid game ID format".to_string(),
+        })?;
+
         // Validate game ID format
         if game_id_bytes.len() != 32 {
-            return Err(BitCrapsError::InvalidInput { 
-                reason: "Game ID must be 64 hex characters".to_string() 
+            return Err(BitCrapsError::InvalidInput {
+                reason: "Game ID must be 64 hex characters".to_string(),
             });
         }
-        
+
         // TODO: Join actual game via mesh network
-        
-        Err(BitCrapsError::NotFound { 
-            item: format!("Game {}", game_id) 
+
+        Err(BitCrapsError::NotFound {
+            item: format!("Game {}", game_id),
         })
     }
-    
+
     /// Leave current game
     pub async fn leave_game(&self) -> Result<()> {
         // Clear active game from storage
@@ -361,28 +403,30 @@ impl BitCrapsNode {
         }
         Ok(())
     }
-    
+
     /// Poll for next event
     pub async fn poll_event(&self) -> Option<GameEvent> {
         // In production, this would pull from an event queue
         // For now, return None to indicate no pending events
         None
     }
-    
+
     /// Drain all pending events
     pub async fn drain_events(&self) -> Vec<GameEvent> {
         // In production, this would drain an event queue
         // For now, return empty vector
         Vec::new()
     }
-    
+
     /// Get current node status
     pub fn get_status(&self) -> NodeStatus {
         NodeStatus {
             peer_id: hex::encode(&self.peer_id),
             state: NodeState::Ready,
             connected_peers: 0,
-            active_games: self.active_games.lock()
+            active_games: self
+                .active_games
+                .lock()
                 .map(|g| g.len() as u32)
                 .unwrap_or(0),
             total_balance: 0,
@@ -390,14 +434,14 @@ impl BitCrapsNode {
             bluetooth_enabled: false,
         }
     }
-    
+
     /// Get connected peers
     pub fn get_connected_peers(&self) -> Vec<PeerInfo> {
         // For now, return empty list as mesh peer tracking is async
         // In production, this would use futures::executor::block_on or similar
         Vec::new()
     }
-    
+
     /// Get network statistics
     pub fn get_network_stats(&self) -> NetworkStats {
         NetworkStats {
@@ -409,23 +453,26 @@ impl BitCrapsNode {
             packet_loss_percent: 0.0,
         }
     }
-    
+
     /// Set power mode for battery optimization
     pub fn set_power_mode(&self, mode: PowerMode) -> Result<()> {
         // Adjust mesh service parameters based on power mode
         match mode {
             PowerMode::PowerSaver => {
-                self.mesh_service.set_heartbeat_interval(Duration::from_secs(120));
+                self.mesh_service
+                    .set_heartbeat_interval(Duration::from_secs(120));
                 self.mesh_service.set_peer_timeout(Duration::from_secs(300));
-            },
+            }
             PowerMode::Balanced => {
-                self.mesh_service.set_heartbeat_interval(Duration::from_secs(60));
+                self.mesh_service
+                    .set_heartbeat_interval(Duration::from_secs(60));
                 self.mesh_service.set_peer_timeout(Duration::from_secs(180));
-            },
+            }
             PowerMode::HighPerformance => {
-                self.mesh_service.set_heartbeat_interval(Duration::from_secs(30));
+                self.mesh_service
+                    .set_heartbeat_interval(Duration::from_secs(30));
                 self.mesh_service.set_peer_timeout(Duration::from_secs(90));
-            },
+            }
         }
         Ok(())
     }
@@ -447,25 +494,25 @@ impl GameHandle {
         log::info!("Bet placed: {} CRAP on {}", amount, bet_type);
         Ok(())
     }
-    
+
     /// Roll dice in the current game
     pub async fn roll_dice(&self) -> Result<(u8, u8)> {
         // Generate cryptographically secure random dice
-        use rand::{Rng, rngs::OsRng};
+        use rand::{rngs::OsRng, Rng};
         let mut rng = OsRng;
         let die1 = rng.gen_range(1..=6);
         let die2 = rng.gen_range(1..=6);
-        
+
         // In production, this would use consensus-based rolling
         // with commitment scheme and multi-party computation
         Ok((die1, die2))
     }
-    
+
     /// Get current game state
     pub fn get_game_state(&self) -> GameState {
         GameState::Waiting
     }
-    
+
     /// Get game history
     pub fn get_history(&self) -> Vec<GameHistoryEntry> {
         Vec::new()
@@ -494,14 +541,14 @@ pub struct GameHistoryEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_create_node() {
         let config = BitCrapsConfig::default();
         let node = create_node(config);
         assert!(node.is_ok());
     }
-    
+
     #[test]
     fn test_get_adapters() {
         let adapters = get_available_bluetooth_adapters();

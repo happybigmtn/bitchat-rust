@@ -1,13 +1,13 @@
+use crate::protocol::BitchatPacket;
+use dashmap::DashMap;
+use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use dashmap::DashMap;
-use sha2::{Sha256, Digest};
-use crate::protocol::BitchatPacket;
 
 /// Message deduplication with sliding window (Lock-free implementation)
-/// 
+///
 /// Feynman: This is like a bouncer with perfect memory - it remembers
 /// every guest (message) who entered recently and won't let duplicates in.
 /// After a while, it forgets old guests to save memory.
@@ -32,7 +32,7 @@ impl MessageDeduplicator {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_else(|_| Duration::from_secs(0)) // Fallback for clock issues
             .as_millis() as u64;
-            
+
         Self {
             seen_messages: Arc::new(DashMap::new()),
             window_duration,
@@ -43,7 +43,7 @@ impl MessageDeduplicator {
             cleanup_interval: Duration::from_secs(30), // Cleanup every 30 seconds
         }
     }
-    
+
     /// Check if a message is a duplicate (lock-free implementation)
     pub async fn is_duplicate(&self, packet: &BitchatPacket) -> bool {
         let hash = self.compute_packet_hash(packet);
@@ -51,15 +51,15 @@ impl MessageDeduplicator {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_else(|_| Duration::from_secs(0)) // Fallback for clock issues
             .as_millis() as u64;
-        
+
         // Trigger cleanup if interval has passed (non-blocking)
         self.maybe_trigger_cleanup(now_timestamp).await;
-        
+
         // Check if we've seen this message (lock-free read)
         if let Some(entry) = self.seen_messages.get(&hash) {
             let timestamp = *entry;
             let age_ms = now_timestamp.saturating_sub(timestamp);
-            
+
             // Check if entry is still valid (within window)
             if age_ms <= self.window_duration.as_millis() as u64 {
                 self.cache_hits.fetch_add(1, Ordering::Relaxed);
@@ -69,78 +69,83 @@ impl MessageDeduplicator {
             drop(entry);
             self.seen_messages.remove(&hash);
         }
-        
+
         // Not a duplicate - add to cache (lock-free write)
         self.seen_messages.insert(hash, now_timestamp);
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
-        
+
         // Enforce max entries limit (probabilistic cleanup)
         if self.seen_messages.len() > self.max_entries {
             self.emergency_cleanup().await;
         }
-        
+
         false // Not a duplicate
     }
-    
+
     /// Compute hash of a packet for deduplication
     fn compute_packet_hash(&self, packet: &BitchatPacket) -> [u8; 32] {
         let mut hasher = Sha256::new();
-        
+
         // Hash relevant packet fields (exclude TTL and timestamp)
         hasher.update([packet.version]);
         hasher.update([packet.packet_type]);
         hasher.update([packet.flags]);
         hasher.update(packet.sequence.to_le_bytes());
         hasher.update(packet.total_length.to_le_bytes());
-        
+
         // Hash TLV data for uniqueness
         for tlv in &packet.tlv_data {
             hasher.update([tlv.field_type]);
             hasher.update(tlv.length.to_le_bytes());
             hasher.update(&tlv.value);
         }
-        
+
         // Hash payload if present
         if let Some(ref payload) = packet.payload {
             hasher.update(payload);
         }
-        
+
         hasher.finalize().into()
     }
-    
+
     /// Maybe trigger cleanup if interval has passed (non-blocking)
     async fn maybe_trigger_cleanup(&self, now_timestamp: u64) {
         let last_cleanup = self.last_cleanup.load(Ordering::Relaxed);
         let cleanup_interval_ms = self.cleanup_interval.as_millis() as u64;
-        
+
         if now_timestamp.saturating_sub(last_cleanup) >= cleanup_interval_ms {
             // Try to acquire cleanup responsibility atomically
-            if self.last_cleanup.compare_exchange_weak(
-                last_cleanup,
-                now_timestamp,
-                Ordering::Relaxed,
-                Ordering::Relaxed
-            ).is_ok() {
+            if self
+                .last_cleanup
+                .compare_exchange_weak(
+                    last_cleanup,
+                    now_timestamp,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+            {
                 // We won the race - perform cleanup in background
                 let seen_messages = Arc::clone(&self.seen_messages);
                 let window_duration = self.window_duration;
-                
+
                 tokio::spawn(async move {
-                    Self::cleanup_expired_entries(seen_messages, window_duration, now_timestamp).await;
+                    Self::cleanup_expired_entries(seen_messages, window_duration, now_timestamp)
+                        .await;
                 });
             }
         }
     }
-    
+
     /// Clean up expired entries (background task)
     async fn cleanup_expired_entries(
         seen_messages: Arc<DashMap<[u8; 32], u64>>,
         window_duration: Duration,
-        now_timestamp: u64
+        now_timestamp: u64,
     ) {
         let window_ms = window_duration.as_millis() as u64;
         let mut expired_keys = Vec::new();
-        
+
         // Collect expired keys
         for entry in seen_messages.iter() {
             let age_ms = now_timestamp.saturating_sub(*entry.value());
@@ -148,52 +153,52 @@ impl MessageDeduplicator {
                 expired_keys.push(*entry.key());
             }
         }
-        
+
         // Remove expired entries
         for key in expired_keys {
             seen_messages.remove(&key);
         }
     }
-    
+
     /// Emergency cleanup when max entries exceeded
     async fn emergency_cleanup(&self) {
         let _now_timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_else(|_| Duration::from_secs(0)) // Fallback for clock issues
             .as_millis() as u64;
-            
+
         // Remove oldest 25% of entries to free up space
         let target_size = (self.max_entries * 3) / 4;
         let mut entries_to_remove = Vec::new();
-        
+
         // Collect entries with timestamps for sorting
         let mut timestamped_entries: Vec<([u8; 32], u64)> = Vec::new();
         for entry in self.seen_messages.iter() {
             timestamped_entries.push((*entry.key(), *entry.value()));
         }
-        
+
         if timestamped_entries.len() > target_size {
             // Sort by timestamp (oldest first)
             timestamped_entries.sort_by_key(|(_, timestamp)| *timestamp);
-            
+
             // Mark oldest entries for removal
             let remove_count = timestamped_entries.len() - target_size;
             for (hash, _) in timestamped_entries.into_iter().take(remove_count) {
                 entries_to_remove.push(hash);
             }
-            
+
             // Remove the entries
             for hash in entries_to_remove {
                 self.seen_messages.remove(&hash);
             }
         }
     }
-    
+
     /// Get current cache size (lock-free)
     pub async fn cache_size(&self) -> usize {
         self.seen_messages.len()
     }
-    
+
     /// Clear all cached messages (lock-free)
     pub async fn clear(&self) {
         self.seen_messages.clear();
@@ -205,7 +210,7 @@ impl MessageDeduplicator {
             .as_millis() as u64;
         self.last_cleanup.store(now_timestamp, Ordering::Relaxed);
     }
-    
+
     /// Get statistics about deduplication (lock-free)
     pub async fn get_stats(&self) -> DeduplicationStats {
         DeduplicationStats {
@@ -231,7 +236,7 @@ pub struct DeduplicationStats {
 }
 
 /// Advanced deduplication with Bloom filters for efficiency
-/// 
+///
 /// Feynman: Bloom filters are like a "maybe" detector - they can
 /// definitely tell you "no, haven't seen it" but only "maybe" for "yes".
 /// Perfect for quick filtering before expensive checks.
@@ -255,7 +260,7 @@ impl BloomFilter {
             size,
         }
     }
-    
+
     fn add(&mut self, data: &[u8]) {
         for i in 0..self.hash_count {
             let hash = self.hash_with_seed(data, i as u32);
@@ -263,7 +268,7 @@ impl BloomFilter {
             self.bits[index] = true;
         }
     }
-    
+
     fn possibly_contains(&self, data: &[u8]) -> bool {
         for i in 0..self.hash_count {
             let hash = self.hash_with_seed(data, i as u32);
@@ -274,7 +279,7 @@ impl BloomFilter {
         }
         true // Possibly in set
     }
-    
+
     fn hash_with_seed(&self, data: &[u8], seed: u32) -> u64 {
         let mut hasher = Sha256::new();
         hasher.update(seed.to_le_bytes());
@@ -282,7 +287,7 @@ impl BloomFilter {
         let result = hasher.finalize();
         u64::from_le_bytes(result[0..8].try_into().unwrap_or([0u8; 8]))
     }
-    
+
     fn clear(&mut self) {
         self.bits.fill(false);
     }
@@ -296,30 +301,30 @@ impl BloomDeduplicator {
             exact_cache: Arc::new(MessageDeduplicator::new(window_duration)),
         }
     }
-    
+
     /// Check if a packet is a duplicate using Bloom filter first
     pub async fn is_duplicate(&self, packet: &BitchatPacket) -> bool {
         let hash = self.compute_packet_hash(packet);
-        
+
         // Quick check with Bloom filter
         let bloom = self.bloom_filter.read().await;
         if !bloom.possibly_contains(&hash) {
             // Definitely not a duplicate
             drop(bloom);
-            
+
             // Add to Bloom filter
             self.bloom_filter.write().await.add(&hash);
-            
+
             // Add to exact cache
             let _ = self.exact_cache.is_duplicate(packet).await;
-            
+
             return false;
         }
-        
+
         // Might be duplicate, check exact cache
         self.exact_cache.is_duplicate(packet).await
     }
-    
+
     fn compute_packet_hash(&self, packet: &BitchatPacket) -> [u8; 32] {
         let mut hasher = Sha256::new();
         hasher.update([packet.version]);
@@ -327,20 +332,20 @@ impl BloomDeduplicator {
         hasher.update([packet.flags]);
         hasher.update(packet.sequence.to_le_bytes());
         hasher.update(packet.total_length.to_le_bytes());
-        
+
         // Hash TLV data for uniqueness
         for tlv in &packet.tlv_data {
             hasher.update([tlv.field_type]);
             hasher.update(tlv.length.to_le_bytes());
             hasher.update(&tlv.value);
         }
-        
+
         if let Some(ref payload) = packet.payload {
             hasher.update(payload);
         }
         hasher.finalize().into()
     }
-    
+
     /// Clear both Bloom filter and exact cache
     pub async fn clear(&self) {
         self.bloom_filter.write().await.clear();
@@ -380,10 +385,10 @@ mod tests {
 
         // First time should not be duplicate
         assert!(!deduplicator.is_duplicate(&packet).await);
-        
+
         // Second time should be duplicate
         assert!(deduplicator.is_duplicate(&packet).await);
-        
+
         // Different packet should not be duplicate
         let packet2 = create_test_packet(2);
         assert!(!deduplicator.is_duplicate(&packet2).await);

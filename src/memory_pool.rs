@@ -1,12 +1,12 @@
 //! Memory Pool for Performance Optimization
-//! 
+//!
 //! This module provides memory pooling for frequently allocated objects
 //! to reduce allocation overhead and garbage collection pressure.
 
-use std::sync::Arc;
 use std::collections::VecDeque;
-use tokio::sync::Mutex;
+use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::Mutex;
 
 /// Generic memory pool for reusable objects
 pub struct MemoryPool<T> {
@@ -70,7 +70,7 @@ where
     {
         let mut stats = PoolStats::default();
         stats.last_reset = Instant::now();
-        
+
         Self {
             pool: Arc::new(Mutex::new(VecDeque::with_capacity(max_size))),
             factory: Box::new(factory),
@@ -83,16 +83,16 @@ where
     pub async fn get(&self) -> PooledObject<T> {
         let mut pool = self.pool.lock().await;
         let mut stats = self.stats.lock().await;
-        
+
         stats.allocations += 1;
-        
+
         if let Some(object) = pool.pop_front() {
             stats.cache_hits += 1;
             stats.current_size = pool.len();
-            
+
             drop(pool);
             drop(stats);
-            
+
             PooledObject {
                 object: Some(object),
                 pool: self.pool.clone(),
@@ -100,12 +100,12 @@ where
             }
         } else {
             stats.cache_misses += 1;
-            
+
             drop(pool);
             drop(stats);
-            
+
             let object = (self.factory)();
-            
+
             PooledObject {
                 object: Some(object),
                 pool: self.pool.clone(),
@@ -118,11 +118,11 @@ where
     pub async fn warmup(&self, count: usize) {
         let mut pool = self.pool.lock().await;
         let target_count = std::cmp::min(count, self.max_size);
-        
+
         while pool.len() < target_count {
             pool.push_back((self.factory)());
         }
-        
+
         let mut stats = self.stats.lock().await;
         stats.current_size = pool.len();
         stats.max_size_reached = std::cmp::max(stats.max_size_reached, pool.len());
@@ -147,7 +147,7 @@ where
     pub async fn clear(&self) {
         let mut pool = self.pool.lock().await;
         pool.clear();
-        
+
         let mut stats = self.stats.lock().await;
         stats.current_size = 0;
     }
@@ -156,17 +156,23 @@ where
 impl<T: Send + 'static> PooledObject<T> {
     /// Get a reference to the pooled object
     pub fn as_ref(&self) -> &T {
-        self.object.as_ref().expect("PooledObject should always contain an object")
+        self.object
+            .as_ref()
+            .expect("PooledObject should always contain an object")
     }
 
     /// Get a mutable reference to the pooled object
     pub fn as_mut(&mut self) -> &mut T {
-        self.object.as_mut().expect("PooledObject should always contain an object")
+        self.object
+            .as_mut()
+            .expect("PooledObject should always contain an object")
     }
 
     /// Take ownership of the object, preventing it from returning to the pool
     pub fn into_inner(mut self) -> T {
-        self.object.take().expect("PooledObject should always contain an object")
+        self.object
+            .take()
+            .expect("PooledObject should always contain an object")
     }
 }
 
@@ -176,21 +182,19 @@ impl<T: Send + 'static> Drop for PooledObject<T> {
             // Return object to pool asynchronously
             let pool = self.pool.clone();
             let stats = self.stats.clone();
-            
+
             tokio::spawn(async move {
                 let mut pool_guard = pool.lock().await;
                 let mut stats_guard = stats.lock().await;
-                
+
                 // Only add back to pool if it's not full
                 if pool_guard.len() < pool_guard.capacity() {
                     pool_guard.push_back(object);
                     stats_guard.current_size = pool_guard.len();
-                    stats_guard.max_size_reached = std::cmp::max(
-                        stats_guard.max_size_reached, 
-                        pool_guard.len()
-                    );
+                    stats_guard.max_size_reached =
+                        std::cmp::max(stats_guard.max_size_reached, pool_guard.len());
                 }
-                
+
                 stats_guard.deallocations += 1;
             });
         }
@@ -224,7 +228,9 @@ impl GameMemoryPools {
         Self {
             vec_u8_pool: MemoryPool::with_factory(100, || Vec::with_capacity(1024)),
             string_pool: MemoryPool::with_factory(50, || String::with_capacity(256)),
-            hashmap_pool: MemoryPool::with_factory(25, || std::collections::HashMap::with_capacity(16)),
+            hashmap_pool: MemoryPool::with_factory(25, || {
+                std::collections::HashMap::with_capacity(16)
+            }),
         }
     }
 
@@ -277,21 +283,21 @@ mod tests {
     #[tokio::test]
     async fn test_memory_pool_basic() {
         let pool = MemoryPool::<Vec<u8>>::new(10);
-        
+
         // Test getting an object from empty pool
         let obj1 = pool.get().await;
         assert_eq!(obj1.len(), 0);
-        
+
         // Modify the object
         {
             let mut obj_mut = obj1;
             obj_mut.push(42);
             assert_eq!(obj_mut[0], 42);
         }
-        
+
         // Object should return to pool when dropped
         sleep(Duration::from_millis(10)).await;
-        
+
         let stats = pool.stats().await;
         assert_eq!(stats.allocations, 1);
         assert_eq!(stats.cache_misses, 1);
@@ -300,20 +306,20 @@ mod tests {
     #[tokio::test]
     async fn test_pool_reuse() {
         let pool = MemoryPool::<Vec<u8>>::new(10);
-        
+
         // Pre-populate pool
         pool.warmup(5).await;
-        
+
         let obj = pool.get().await;
         let stats_before = pool.stats().await;
         drop(obj);
-        
+
         // Allow time for async drop
         sleep(Duration::from_millis(10)).await;
-        
+
         let obj2 = pool.get().await;
         let stats_after = pool.stats().await;
-        
+
         assert!(stats_after.cache_hits > stats_before.cache_hits);
         drop(obj2);
     }
@@ -322,20 +328,20 @@ mod tests {
     async fn test_game_memory_pools() {
         let pools = GameMemoryPools::new();
         pools.warmup().await;
-        
+
         let vec_obj = pools.vec_u8_pool.get().await;
         let string_obj = pools.string_pool.get().await;
         let hashmap_obj = pools.hashmap_pool.get().await;
-        
+
         // Verify objects are properly initialized
         assert!(vec_obj.capacity() >= 1024);
         assert!(string_obj.capacity() >= 256);
         assert!(hashmap_obj.capacity() >= 16);
-        
+
         drop(vec_obj);
         drop(string_obj);
         drop(hashmap_obj);
-        
+
         let combined_stats = pools.combined_stats().await;
         assert!(combined_stats.vec_u8_stats.allocations > 0);
     }
@@ -345,10 +351,10 @@ mod tests {
         let pool = MemoryPool::<Vec<u8>>::new(10);
         let mut obj = pool.get().await;
         obj.push(123);
-        
+
         let inner = obj.into_inner();
         assert_eq!(inner[0], 123);
-        
+
         // Object should not return to pool
         sleep(Duration::from_millis(10)).await;
         let stats = pool.stats().await;

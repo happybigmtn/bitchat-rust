@@ -1,16 +1,16 @@
 //! P2P Consensus Messages for BitChat-Rust Casino
-//! 
+//!
 //! This module defines the message types for distributed consensus
 //! between game participants over the mesh network.
 
+use crate::error::Result;
+use crate::protocol::consensus::commit_reveal::{RandomnessCommit, RandomnessReveal};
+use crate::protocol::consensus::engine::{GameOperation, GameProposal};
+use crate::protocol::consensus::validation::{Dispute, DisputeVote};
+use crate::protocol::consensus::{DisputeId, ProposalId};
+use crate::protocol::{CrapTokens, GameId, Hash256, PeerId, Signature};
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
-use crate::protocol::{PeerId, GameId, Hash256, Signature, CrapTokens};
-use crate::protocol::consensus::engine::{GameProposal, GameOperation};
-use crate::protocol::consensus::validation::{Dispute, DisputeVote};
-use crate::protocol::consensus::{ProposalId, DisputeId};
-use crate::protocol::consensus::commit_reveal::{RandomnessCommit, RandomnessReveal};
-use crate::error::Result;
 
 /// Round identifier for consensus rounds
 pub type RoundId = u64;
@@ -44,21 +44,21 @@ pub enum ConsensusPayload {
         proposal: GameProposal,
         priority: u8, // For leader election ordering
     },
-    
-    // Voting phase messages  
+
+    // Voting phase messages
     Vote {
         proposal_id: ProposalId,
         vote: bool, // true = accept, false = reject
         reasoning: Option<String>,
     },
-    
+
     // State synchronization messages
     StateSync {
         state_hash: Hash256,
         sequence_number: u64,
         partial_state: Option<CompressedGameState>,
     },
-    
+
     // Randomness generation (commit-reveal)
     RandomnessCommit {
         round_id: RoundId,
@@ -68,7 +68,7 @@ pub enum ConsensusPayload {
         round_id: RoundId,
         reveal: RandomnessReveal,
     },
-    
+
     // Dispute resolution
     DisputeClaim {
         dispute: Dispute,
@@ -78,7 +78,7 @@ pub enum ConsensusPayload {
         dispute_id: DisputeId,
         vote: DisputeVote,
     },
-    
+
     // Network management
     JoinRequest {
         participant_info: ParticipantInfo,
@@ -91,13 +91,13 @@ pub enum ConsensusPayload {
     JoinReject {
         reason: String,
     },
-    
+
     // Heartbeat and liveness
     Heartbeat {
         alive_participants: Vec<PeerId>,
         network_view: NetworkView,
     },
-    
+
     // Leader election
     LeaderProposal {
         proposed_leader: PeerId,
@@ -108,14 +108,14 @@ pub enum ConsensusPayload {
         term: u64,
         leader: PeerId,
     },
-    
+
     // Network partition recovery
     PartitionRecovery {
         partition_id: u64,
         participants: Vec<PeerId>,
         state_summary: StateSummary,
     },
-    
+
     // Anti-cheat and validation
     CheatAlert {
         suspected_peer: PeerId,
@@ -180,20 +180,15 @@ pub enum CheatType {
 
 impl ConsensusMessage {
     /// Create a new consensus message
-    pub fn new(
-        sender: PeerId,
-        game_id: GameId,
-        round: RoundId,
-        payload: ConsensusPayload,
-    ) -> Self {
+    pub fn new(sender: PeerId, game_id: GameId, round: RoundId, payload: ConsensusPayload) -> Self {
         let timestamp = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-            
+
         // Generate unique message ID
         let message_id = Self::generate_message_id(&sender, &game_id, round, timestamp);
-        
+
         Self {
             message_id,
             sender,
@@ -205,7 +200,7 @@ impl ConsensusMessage {
             compressed: false,
         }
     }
-    
+
     /// Generate deterministic message ID
     fn generate_message_id(
         sender: &PeerId,
@@ -213,40 +208,40 @@ impl ConsensusMessage {
         round: RoundId,
         timestamp: u64,
     ) -> [u8; 32] {
-        use sha2::{Sha256, Digest};
-        
+        use sha2::{Digest, Sha256};
+
         let mut hasher = Sha256::new();
         hasher.update(sender);
         hasher.update(game_id);
         hasher.update(round.to_le_bytes());
         hasher.update(timestamp.to_le_bytes());
-        
+
         hasher.finalize().into()
     }
-    
+
     /// Check if message is recent (for spam prevention)
     pub fn is_recent(&self, max_age_seconds: u64) -> bool {
         let now = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-            
+
         self.timestamp + max_age_seconds >= now
     }
-    
+
     /// Compress payload for BLE transmission
     pub fn compress(&mut self) -> Result<()> {
         if self.compressed {
             return Ok(()); // Already compressed
         }
-        
+
         // Serialize payload
         let payload_bytes = bincode::serialize(&self.payload)
             .map_err(|e| crate::error::Error::Serialization(e.to_string()))?;
-        
+
         // Compress with LZ4
         let compressed_bytes = lz4_flex::compress_prepend_size(&payload_bytes);
-        
+
         // Replace payload with compressed version if beneficial
         if compressed_bytes.len() < payload_bytes.len() {
             // Create a compressed payload marker
@@ -262,10 +257,10 @@ impl ConsensusMessage {
             };
             self.compressed = true;
         }
-        
+
         Ok(())
     }
-    
+
     /// Get payload size in bytes (for BLE MTU planning)
     pub fn payload_size(&self) -> usize {
         bincode::serialized_size(&self.payload).unwrap_or(0) as usize
@@ -275,10 +270,10 @@ impl ConsensusMessage {
 /// Message priority for bandwidth management
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MessagePriority {
-    Critical = 0,   // Consensus votes, disputes
-    High = 1,       // Proposals, state sync
-    Normal = 2,     // Randomness commits/reveals
-    Low = 3,        // Heartbeats, network maintenance
+    Critical = 0, // Consensus votes, disputes
+    High = 1,     // Proposals, state sync
+    Normal = 2,   // Randomness commits/reveals
+    Low = 3,      // Heartbeats, network maintenance
 }
 
 impl ConsensusPayload {
@@ -288,16 +283,16 @@ impl ConsensusPayload {
             ConsensusPayload::Vote { .. } => MessagePriority::Critical,
             ConsensusPayload::DisputeVote { .. } => MessagePriority::Critical,
             ConsensusPayload::DisputeClaim { .. } => MessagePriority::Critical,
-            
+
             ConsensusPayload::Proposal { .. } => MessagePriority::High,
             ConsensusPayload::StateSync { .. } => MessagePriority::High,
             ConsensusPayload::PartitionRecovery { .. } => MessagePriority::High,
-            
+
             ConsensusPayload::RandomnessCommit { .. } => MessagePriority::Normal,
             ConsensusPayload::RandomnessReveal { .. } => MessagePriority::Normal,
             ConsensusPayload::LeaderProposal { .. } => MessagePriority::Normal,
             ConsensusPayload::LeaderAccept { .. } => MessagePriority::Normal,
-            
+
             ConsensusPayload::Heartbeat { .. } => MessagePriority::Low,
             ConsensusPayload::JoinRequest { .. } => MessagePriority::Low,
             ConsensusPayload::JoinAccept { .. } => MessagePriority::Low,
@@ -310,7 +305,7 @@ impl ConsensusPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_message_creation() {
         let sender = [1u8; 32];
@@ -324,15 +319,15 @@ mod tests {
                 leader: None,
             },
         };
-        
+
         let message = ConsensusMessage::new(sender, game_id, 1, payload);
-        
+
         assert_eq!(message.sender, sender);
         assert_eq!(message.game_id, game_id);
         assert_eq!(message.round, 1);
         assert!(!message.compressed);
     }
-    
+
     #[test]
     fn test_message_priority() {
         let vote_payload = ConsensusPayload::Vote {
@@ -341,7 +336,7 @@ mod tests {
             reasoning: None,
         };
         assert_eq!(vote_payload.priority(), MessagePriority::Critical);
-        
+
         let heartbeat_payload = ConsensusPayload::Heartbeat {
             alive_participants: vec![],
             network_view: NetworkView {

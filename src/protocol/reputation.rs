@@ -1,15 +1,15 @@
 //! Reputation System with Dispute Resolution
-//! 
+//!
 //! This module implements a decentralized reputation system that tracks
 //! player behavior and automatically resolves disputes through voting
 //! and evidence-based mechanisms.
 
+use crate::crypto::GameCrypto;
+use crate::error::Error;
+use crate::protocol::{Hash256, PeerId};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use serde::{Serialize, Deserialize};
-use crate::protocol::{PeerId, Hash256};
-use crate::error::Error;
-use crate::crypto::GameCrypto;
 
 /// Reputation score bounds
 pub const MIN_REPUTATION: i64 = -1000;
@@ -101,14 +101,14 @@ impl ReputationRecord {
             ban_expiry: None,
         }
     }
-    
+
     /// Apply reputation event
     pub fn apply_event(&mut self, event: ReputationEvent) {
         let change = match &event {
             ReputationEvent::GameCompleted => {
                 self.games_completed += 1;
                 REP_SUCCESSFUL_GAME
-            },
+            }
             ReputationEvent::FailedCommit => REP_FAILED_COMMIT,
             ReputationEvent::FailedReveal => REP_FAILED_REVEAL,
             ReputationEvent::InvalidSignature => REP_INVALID_SIGNATURE,
@@ -116,31 +116,31 @@ impl ReputationRecord {
             ReputationEvent::DisputeWon { .. } => {
                 self.disputes_won += 1;
                 REP_DISPUTE_WIN
-            },
+            }
             ReputationEvent::DisputeLost { .. } => REP_DISPUTE_LOSS,
             ReputationEvent::FalseAccusation { .. } => REP_FALSE_ACCUSATION,
             ReputationEvent::TimeoutPenalty { .. } => REP_TIMEOUT_PENALTY,
             ReputationEvent::PositiveContribution { .. } => REP_SUCCESSFUL_GAME / 2,
         };
-        
+
         // Update score with bounds
         self.score = (self.score + change).clamp(MIN_REPUTATION, MAX_REPUTATION);
-        
+
         // Track event
         self.recent_events.push_back((current_timestamp(), event));
         if self.recent_events.len() > 100 {
             self.recent_events.pop_front();
         }
-        
+
         // Update timestamp
         self.last_updated = current_timestamp();
-        
+
         // Check for auto-ban on severe negative reputation
         if self.score <= MIN_REPUTATION / 2 {
             self.ban_expiry = Some(current_timestamp() + 86400); // 24 hour ban
         }
     }
-    
+
     /// Check if peer is banned
     pub fn is_banned(&self) -> bool {
         if let Some(expiry) = self.ban_expiry {
@@ -149,20 +149,21 @@ impl ReputationRecord {
             false
         }
     }
-    
+
     /// Check if peer can participate in games
     pub fn can_play(&self) -> bool {
         !self.is_banned() && self.score >= MIN_REP_TO_PLAY
     }
-    
+
     /// Check if peer can vote in disputes
     pub fn can_vote(&self) -> bool {
         !self.is_banned() && self.score >= MIN_REP_TO_VOTE
     }
-    
+
     /// Get trust level (0.0 to 1.0)
     pub fn trust_level(&self) -> f64 {
-        let normalized = (self.score - MIN_REPUTATION) as f64 / (MAX_REPUTATION - MIN_REPUTATION) as f64;
+        let normalized =
+            (self.score - MIN_REPUTATION) as f64 / (MAX_REPUTATION - MIN_REPUTATION) as f64;
         normalized.clamp(0.0, 1.0)
     }
 }
@@ -171,13 +172,22 @@ impl ReputationRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DisputeType {
     /// Invalid game state proposed
-    InvalidState { proposed_state: Vec<u8>, evidence: Vec<u8> },
+    InvalidState {
+        proposed_state: Vec<u8>,
+        evidence: Vec<u8>,
+    },
     /// Failed to reveal after commit
     FailedReveal { round_id: u64, peer: PeerId },
     /// Invalid signature on message
-    InvalidSignature { message: Vec<u8>, signature: Vec<u8> },
+    InvalidSignature {
+        message: Vec<u8>,
+        signature: Vec<u8>,
+    },
     /// Cheating attempt detected
-    Cheating { description: String, evidence: Vec<u8> },
+    Cheating {
+        description: String,
+        evidence: Vec<u8>,
+    },
     /// Timeout violation
     TimeoutViolation { phase: String, deadline: u64 },
     /// Double spending tokens
@@ -217,13 +227,13 @@ impl Dispute {
     ) -> Self {
         let timestamp = current_timestamp();
         let deadline = timestamp + DISPUTE_TIMEOUT.as_secs();
-        
+
         let mut data = Vec::new();
         data.extend_from_slice(&accuser);
         data.extend_from_slice(&accused);
         data.extend_from_slice(&timestamp.to_le_bytes());
         data.extend_from_slice(evidence);
-        
+
         Self {
             id: GameCrypto::hash(&data),
             dispute_type,
@@ -236,43 +246,43 @@ impl Dispute {
             resolution: None,
         }
     }
-    
+
     /// Add a vote
     pub fn add_vote(&mut self, voter: PeerId, vote: DisputeVote) -> Result<(), Error> {
         // Check if already voted
         if self.votes.contains_key(&voter) {
             return Err(Error::InvalidState("Already voted on this dispute".into()));
         }
-        
+
         // Check if dispute is still open
         if self.resolution.is_some() {
             return Err(Error::InvalidState("Dispute already resolved".into()));
         }
-        
+
         // Check deadline
         if current_timestamp() > self.deadline {
             return Err(Error::InvalidState("Dispute voting period expired".into()));
         }
-        
+
         self.votes.insert(voter, vote);
         Ok(())
     }
-    
+
     /// Check if dispute has enough votes to resolve
     pub fn can_resolve(&self, min_votes: usize) -> bool {
         self.votes.len() >= min_votes && self.resolution.is_none()
     }
-    
+
     /// Resolve dispute based on votes
     pub fn resolve(&mut self) -> DisputeResolution {
         if self.resolution.is_some() {
             return self.resolution.clone().unwrap();
         }
-        
+
         let mut guilty_votes = 0;
         let mut innocent_votes = 0;
         let mut _invalid_votes = 0;
-        
+
         for vote in self.votes.values() {
             match vote.verdict {
                 Verdict::Guilty => guilty_votes += 1,
@@ -280,7 +290,7 @@ impl Dispute {
                 Verdict::Invalid => _invalid_votes += 1,
             }
         }
-        
+
         let total_votes = self.votes.len();
         let resolution = if guilty_votes > total_votes / 2 {
             DisputeResolution::Guilty {
@@ -293,7 +303,7 @@ impl Dispute {
         } else {
             DisputeResolution::Invalid
         };
-        
+
         self.resolution = Some(resolution.clone());
         resolution
     }
@@ -348,38 +358,40 @@ impl ReputationManager {
             min_dispute_votes,
         }
     }
-    
+
     /// Get or create reputation record
     pub fn get_or_create(&mut self, peer: PeerId) -> &mut ReputationRecord {
-        self.records.entry(peer).or_insert_with(ReputationRecord::new)
+        self.records
+            .entry(peer)
+            .or_insert_with(ReputationRecord::new)
     }
-    
+
     /// Apply reputation event
     pub fn apply_event(&mut self, peer: PeerId, event: ReputationEvent) {
         self.get_or_create(peer).apply_event(event);
     }
-    
+
     /// Check if peer can participate
     pub fn can_participate(&self, peer: &PeerId) -> bool {
-        self.records.get(peer)
-            .map(|r| r.can_play())
-            .unwrap_or(true) // New peers can play
+        self.records.get(peer).map(|r| r.can_play()).unwrap_or(true) // New peers can play
     }
-    
+
     /// Check if peer can vote
     pub fn can_vote(&self, peer: &PeerId) -> bool {
-        self.records.get(peer)
+        self.records
+            .get(peer)
             .map(|r| r.can_vote())
             .unwrap_or(false) // New peers cannot vote
     }
-    
+
     /// Get peer trust level
     pub fn get_trust_level(&self, peer: &PeerId) -> f64 {
-        self.records.get(peer)
+        self.records
+            .get(peer)
             .map(|r| r.trust_level())
             .unwrap_or(0.5) // Neutral for unknown peers
     }
-    
+
     /// Raise a dispute
     pub fn raise_dispute(
         &mut self,
@@ -390,22 +402,24 @@ impl ReputationManager {
     ) -> Result<Hash256, Error> {
         // Check accuser can raise disputes
         if !self.can_participate(&accuser) {
-            return Err(Error::InvalidState("Insufficient reputation to raise dispute".into()));
+            return Err(Error::InvalidState(
+                "Insufficient reputation to raise dispute".into(),
+            ));
         }
-        
+
         // Create dispute
         let dispute = Dispute::new(dispute_type, accuser, accused, evidence);
         let dispute_id = dispute.id;
-        
+
         // Track dispute raised
         self.get_or_create(accuser).disputes_raised += 1;
-        
+
         // Store dispute
         self.disputes.insert(dispute_id, dispute);
-        
+
         Ok(dispute_id)
     }
-    
+
     /// Vote on a dispute
     pub fn vote_on_dispute(
         &mut self,
@@ -415,76 +429,85 @@ impl ReputationManager {
     ) -> Result<(), Error> {
         // Check voter can vote
         if !self.can_vote(&voter) {
-            return Err(Error::InvalidState("Insufficient reputation to vote".into()));
+            return Err(Error::InvalidState(
+                "Insufficient reputation to vote".into(),
+            ));
         }
-        
+
         // Get dispute
-        let dispute = self.disputes.get_mut(&dispute_id)
+        let dispute = self
+            .disputes
+            .get_mut(&dispute_id)
             .ok_or_else(|| Error::InvalidState("Dispute not found".into()))?;
-        
+
         // Add vote
         dispute.add_vote(voter, vote)?;
-        
+
         // Check if ready to resolve
         if dispute.can_resolve(self.min_dispute_votes) {
             self.resolve_dispute(dispute_id)?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Resolve a dispute
     fn resolve_dispute(&mut self, dispute_id: Hash256) -> Result<(), Error> {
-        let dispute = self.disputes.get_mut(&dispute_id)
+        let dispute = self
+            .disputes
+            .get_mut(&dispute_id)
             .ok_or_else(|| Error::InvalidState("Dispute not found".into()))?;
-        
+
         let resolution = dispute.resolve();
         let accuser = dispute.accuser;
         let accused = dispute.accused;
-        
+
         // Apply reputation changes based on resolution
         match resolution {
             DisputeResolution::Guilty { penalty_multiplier } => {
                 // Accused is guilty
                 self.apply_event(accused, ReputationEvent::DisputeLost { dispute_id });
-                
+
                 // Apply additional penalty based on severity
                 let extra_penalty = (REP_CHEATING_ATTEMPT as f64 * penalty_multiplier) as i64;
                 if let Some(record) = self.records.get_mut(&accused) {
-                    record.score = (record.score + extra_penalty).clamp(MIN_REPUTATION, MAX_REPUTATION);
+                    record.score =
+                        (record.score + extra_penalty).clamp(MIN_REPUTATION, MAX_REPUTATION);
                 }
-                
+
                 // Reward accuser
                 self.apply_event(accuser, ReputationEvent::DisputeWon { dispute_id });
-            },
+            }
             DisputeResolution::Innocent { false_accusation } => {
                 // Accused is innocent
                 if false_accusation {
                     // Penalize false accuser
                     self.apply_event(accuser, ReputationEvent::FalseAccusation { dispute_id });
                 }
-                
+
                 // Small reputation boost for accused
                 if let Some(record) = self.records.get_mut(&accused) {
                     record.score = (record.score + 10).clamp(MIN_REPUTATION, MAX_REPUTATION);
                 }
-            },
+            }
             DisputeResolution::Invalid => {
                 // No reputation changes
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Clean up expired disputes
     pub fn cleanup_expired(&mut self) {
         let now = current_timestamp();
-        let expired: Vec<Hash256> = self.disputes.iter()
+        let expired: Vec<Hash256> = self
+            .disputes
+            .iter()
             .filter(|(_, d)| now > d.deadline && d.resolution.is_none())
             .map(|(id, _)| *id)
             .collect();
-        
+
         for id in expired {
             // Auto-resolve as invalid
             if let Some(dispute) = self.disputes.get_mut(&id) {
@@ -492,13 +515,15 @@ impl ReputationManager {
             }
         }
     }
-    
+
     /// Get reputation leaderboard
     pub fn get_leaderboard(&self, limit: usize) -> Vec<(PeerId, i64)> {
-        let mut scores: Vec<(PeerId, i64)> = self.records.iter()
+        let mut scores: Vec<(PeerId, i64)> = self
+            .records
+            .iter()
             .map(|(peer, record)| (*peer, record.score))
             .collect();
-        
+
         scores.sort_by_key(|(_, score)| -score);
         scores.truncate(limit);
         scores
@@ -516,28 +541,31 @@ fn current_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_reputation_events() {
         let mut record = ReputationRecord::new();
         assert_eq!(record.score, INITIAL_REPUTATION);
-        
+
         record.apply_event(ReputationEvent::GameCompleted);
         assert_eq!(record.score, INITIAL_REPUTATION + REP_SUCCESSFUL_GAME);
-        
+
         record.apply_event(ReputationEvent::FailedCommit);
-        assert_eq!(record.score, INITIAL_REPUTATION + REP_SUCCESSFUL_GAME + REP_FAILED_COMMIT);
-        
+        assert_eq!(
+            record.score,
+            INITIAL_REPUTATION + REP_SUCCESSFUL_GAME + REP_FAILED_COMMIT
+        );
+
         assert!(record.can_play());
         assert!(record.can_vote());
     }
-    
+
     #[test]
     fn test_dispute_creation() {
         let accuser = [1; 32];
         let accused = [2; 32];
         let evidence = b"proof of cheating";
-        
+
         let dispute = Dispute::new(
             DisputeType::Cheating {
                 description: "Invalid state transition".to_string(),
@@ -547,13 +575,13 @@ mod tests {
             accused,
             evidence,
         );
-        
+
         assert_eq!(dispute.accuser, accuser);
         assert_eq!(dispute.accused, accused);
         assert!(dispute.votes.is_empty());
         assert!(dispute.resolution.is_none());
     }
-    
+
     #[test]
     fn test_dispute_voting() {
         let mut dispute = Dispute::new(
@@ -565,27 +593,31 @@ mod tests {
             [2; 32],
             &[],
         );
-        
+
         // Add votes
         for i in 0..5 {
             let vote = DisputeVote {
                 dispute_id: dispute.id,
                 voter: [i; 32],
-                verdict: if i < 3 { Verdict::Guilty } else { Verdict::Innocent },
+                verdict: if i < 3 {
+                    Verdict::Guilty
+                } else {
+                    Verdict::Innocent
+                },
                 reasoning: None,
                 timestamp: current_timestamp(),
                 signature: vec![0; 64],
             };
-            
+
             assert!(dispute.add_vote([i; 32], vote).is_ok());
         }
-        
+
         // Resolve
         let resolution = dispute.resolve();
         match resolution {
             DisputeResolution::Guilty { .. } => {
                 // Majority voted guilty
-            },
+            }
             _ => panic!("Expected guilty verdict"),
         }
     }

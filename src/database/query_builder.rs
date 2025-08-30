@@ -1,12 +1,12 @@
 //! SQL query builder for type-safe database operations
-//! 
+//!
 //! Provides a fluent interface for building complex SQL queries with
 //! compile-time safety and parameter validation.
 
+use crate::error::{Error, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
-use serde::{Serialize, Deserialize};
-use crate::error::{Error, Result};
 
 /// SQL query builder with type safety
 #[derive(Debug, Clone)]
@@ -333,8 +333,9 @@ impl QueryBuilder {
     /// Add a WHERE IN condition
     pub fn where_in<T: Into<QueryValue>>(mut self, column: &str, values: Vec<T>) -> Self {
         // For IN clauses, we'll store as a JSON array for simplicity
-        let json_values = serde_json::to_string(&values.into_iter().map(|v| v.into()).collect::<Vec<_>>())
-            .unwrap_or_else(|_| "[]".to_string());
+        let json_values =
+            serde_json::to_string(&values.into_iter().map(|v| v.into()).collect::<Vec<_>>())
+                .unwrap_or_else(|_| "[]".to_string());
 
         self.conditions.push(WhereCondition {
             column: column.to_string(),
@@ -440,7 +441,7 @@ impl QueryBuilder {
         match self.query_type {
             QueryType::Select => {
                 write!(sql, "SELECT ")?;
-                
+
                 if self.columns.is_empty() {
                     write!(sql, "*")?;
                 } else {
@@ -453,7 +454,13 @@ impl QueryBuilder {
 
                 // Add JOINs
                 for join in &self.joins {
-                    write!(sql, " {} {} ON {}", join.join_type.to_sql(), join.table, join.on_condition)?;
+                    write!(
+                        sql,
+                        " {} {} ON {}",
+                        join.join_type.to_sql(),
+                        join.table,
+                        join.on_condition
+                    )?;
                 }
 
                 // Add WHERE conditions
@@ -467,7 +474,9 @@ impl QueryBuilder {
                 // Add ORDER BY
                 if !self.order_by.is_empty() {
                     write!(sql, " ORDER BY ")?;
-                    let order_clauses: Vec<String> = self.order_by.iter()
+                    let order_clauses: Vec<String> = self
+                        .order_by
+                        .iter()
                         .map(|o| format!("{} {}", o.column, o.direction.to_sql()))
                         .collect();
                     write!(sql, "{}", order_clauses.join(", "))?;
@@ -488,11 +497,11 @@ impl QueryBuilder {
                 }
 
                 write!(sql, "INSERT INTO {} ", self.table)?;
-                
+
                 if !self.columns.is_empty() {
                     write!(sql, "({})", self.columns.join(", "))?;
                     write!(sql, " VALUES (")?;
-                    
+
                     for (i, value) in self.values.iter().enumerate() {
                         if i > 0 {
                             write!(sql, ", ")?;
@@ -501,7 +510,7 @@ impl QueryBuilder {
                         parameters.push(value.clone());
                         parameter_names.push(format!("param_{}", i));
                     }
-                    
+
                     write!(sql, ")")?;
                 }
             }
@@ -513,7 +522,8 @@ impl QueryBuilder {
 
                 write!(sql, "UPDATE {} SET ", self.table)?;
 
-                for (i, (column, value)) in self.columns.iter().zip(self.values.iter()).enumerate() {
+                for (i, (column, value)) in self.columns.iter().zip(self.values.iter()).enumerate()
+                {
                     if i > 0 {
                         write!(sql, ", ")?;
                     }
@@ -555,7 +565,7 @@ impl QueryBuilder {
     ) -> Result<()> {
         if !self.conditions.is_empty() {
             write!(sql, " WHERE ")?;
-            
+
             for (i, condition) in self.conditions.iter().enumerate() {
                 if i > 0 {
                     write!(sql, " {} ", condition.logical.to_sql())?;
@@ -621,7 +631,11 @@ impl UserQueries {
         QueryBuilder::select()
             .all_columns()
             .from("users")
-            .where_op("reputation", ComparisonOperator::GreaterThanOrEqual, min_rep)
+            .where_op(
+                "reputation",
+                ComparisonOperator::GreaterThanOrEqual,
+                min_rep,
+            )
             .where_op("reputation", ComparisonOperator::LessThanOrEqual, max_rep)
             .order_by_desc("reputation")
             .build()
@@ -661,8 +675,13 @@ impl GameQueries {
     pub fn find_with_stats(game_id: &str) -> CompiledQuery {
         QueryBuilder::select()
             .columns(&[
-                "g.id", "g.state", "g.pot_size", "g.phase",
-                "gs.total_bets", "gs.total_wagered", "gs.player_count"
+                "g.id",
+                "g.state",
+                "g.pot_size",
+                "g.phase",
+                "gs.total_bets",
+                "gs.total_wagered",
+                "gs.player_count",
             ])
             .from("games g")
             .left_join("game_statistics gs", "g.id = gs.game_id")

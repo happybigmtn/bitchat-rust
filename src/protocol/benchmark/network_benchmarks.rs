@@ -1,16 +1,16 @@
 //! Network and synchronization benchmarks for BitCraps
 
-use std::time::Duration;
 use criterion::{black_box, Criterion};
+use std::time::Duration;
 
-use super::{BenchmarkResults, BenchmarkConfig, MemoryBenchmarkStats};
+use super::{BenchmarkConfig, BenchmarkResults, MemoryBenchmarkStats};
 
 /// Benchmark state synchronization
 pub fn benchmark_state_sync(_config: &BenchmarkConfig) -> Vec<BenchmarkResults> {
     let mut results = Vec::new();
-    
+
     println!("\n🔄 Benchmarking State Synchronization...");
-    
+
     // Simplified sync benchmarks (implementation would be more complex)
     results.push(BenchmarkResults {
         name: "Merkle Tree Sync".to_string(),
@@ -59,7 +59,7 @@ pub fn benchmark_state_sync(_config: &BenchmarkConfig) -> Vec<BenchmarkResults> 
         },
         improvement_factor: 50.0,
     });
-    
+
     results
 }
 
@@ -72,7 +72,7 @@ pub fn criterion_network_benchmarks(c: &mut Criterion, _config: &BenchmarkConfig
             black_box(simulated_operation)
         })
     });
-    
+
     c.bench_function("bloom_filter_check", |b| {
         b.iter(|| {
             // Simulate bloom filter check

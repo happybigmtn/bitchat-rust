@@ -7,15 +7,13 @@
 //! - Permission handling and validation
 //! - Security policy enforcement
 
-use std::sync::{Arc, Mutex};
-use serde::{Serialize, Deserialize};
-use crate::error::{Result, Error};
+use crate::error::{Error, Result};
 use crate::mobile::{
-    SecureStorageManager,
-    BiometricAuthManager,
-    KeyDerivationManager, KeyHierarchy,
-    PermissionManager, PermissionState, PermissionSummary,
+    BiometricAuthManager, KeyDerivationManager, KeyHierarchy, PermissionManager, PermissionState,
+    PermissionSummary, SecureStorageManager,
 };
+use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
 
 /// Comprehensive mobile security manager
 pub struct MobileSecurityManager {
@@ -32,14 +30,14 @@ impl MobileSecurityManager {
     pub async fn new(config: MobileSecurityConfig) -> Result<Self> {
         // Initialize storage manager
         let storage_manager = Arc::new(SecureStorageManager::new()?);
-        
+
         // Initialize biometric authentication
         let biometric_manager = Arc::new(BiometricAuthManager::new()?);
-        
+
         // Initialize key derivation (hardware-backed when available)
         let hardware_backed = Self::is_hardware_backed().await?;
         let key_manager = Arc::new(KeyDerivationManager::new(hardware_backed));
-        
+
         // Initialize permission manager with BitCraps-specific permissions
         let required_permissions = PermissionManager::get_bitcraps_required_permissions();
         let optional_permissions = PermissionManager::get_bitcraps_optional_permissions();
@@ -47,7 +45,7 @@ impl MobileSecurityManager {
             required_permissions,
             optional_permissions,
         ));
-        
+
         let manager = Self {
             storage_manager,
             biometric_manager,
@@ -56,55 +54,55 @@ impl MobileSecurityManager {
             security_policy: config.security_policy,
             initialized: Arc::new(Mutex::new(false)),
         };
-        
+
         // Perform initialization
         manager.initialize().await?;
-        
+
         Ok(manager)
     }
-    
+
     /// Initialize the security manager and verify all components
     async fn initialize(&self) -> Result<()> {
         let mut initialized = self.initialized.lock().map_err(|_| {
             Error::InvalidState("Failed to acquire initialization lock".to_string())
         })?;
-        
+
         if *initialized {
             return Ok(());
         }
-        
+
         log::info!("Initializing Mobile Security Manager");
-        
+
         // 1. Check and request essential permissions
         let permission_summary = self.check_and_request_permissions().await?;
         if !permission_summary.can_continue {
             return Err(Error::Security(
-                "Essential permissions not granted - cannot continue".to_string()
+                "Essential permissions not granted - cannot continue".to_string(),
             ));
         }
-        
+
         // 2. Verify biometric authentication availability
         if self.security_policy.require_biometric_auth {
             let biometric_available = self.biometric_manager.is_biometric_configured()?;
             if !biometric_available {
                 return Err(Error::Security(
-                    "Biometric authentication required but not configured".to_string()
+                    "Biometric authentication required but not configured".to_string(),
                 ));
             }
         }
-        
+
         // 3. Initialize application key hierarchy
         let _app_keys = self.initialize_app_key_hierarchy().await?;
-        
+
         // 4. Verify secure storage functionality
         self.verify_secure_storage().await?;
-        
+
         *initialized = true;
         log::info!("Mobile Security Manager initialized successfully");
-        
+
         Ok(())
     }
-    
+
     /// Create secure wallet with biometric protection
     pub async fn create_secure_wallet(
         &self,
@@ -112,32 +110,36 @@ impl MobileSecurityManager {
         initial_entropy: Option<&[u8]>,
     ) -> Result<SecureWallet> {
         self.ensure_initialized().await?;
-        
+
         log::info!("Creating secure wallet: {}", wallet_id);
-        
+
         // 1. Authenticate user with biometrics if required
         if self.security_policy.require_biometric_auth {
-            let auth_session = self.biometric_manager.authenticate_user(
-                &format!("Create secure wallet '{}'", wallet_id)
-            ).await?;
-            
+            let auth_session = self
+                .biometric_manager
+                .authenticate_user(&format!("Create secure wallet '{}'", wallet_id))
+                .await?;
+
             log::info!("Biometric authentication successful for wallet creation");
         }
-        
+
         // 2. Generate wallet master key with hardware backing
         let master_key_id = format!("wallet_master_{}", wallet_id);
         let master_key = self.key_manager.get_master_key(&master_key_id)?;
-        
+
         // 3. Create key hierarchy for wallet operations
         let key_hierarchy = self.key_manager.create_key_hierarchy(wallet_id)?;
-        
+
         // 4. Create biometric-protected signing key if supported
         let signing_key = if self.biometric_manager.is_biometric_configured()? {
-            Some(self.biometric_manager.create_protected_wallet_key(wallet_id)?)
+            Some(
+                self.biometric_manager
+                    .create_protected_wallet_key(wallet_id)?,
+            )
         } else {
             None
         };
-        
+
         // 5. Store wallet metadata securely
         let wallet_metadata = WalletMetadata {
             wallet_id: wallet_id.to_string(),
@@ -148,7 +150,7 @@ impl MobileSecurityManager {
             hardware_backed: self.key_manager.is_hardware_backed().unwrap_or(false),
             version: 1,
         };
-        
+
         self.storage_manager.store_user_credentials(
             wallet_id,
             &crate::mobile::UserCredentials {
@@ -157,14 +159,16 @@ impl MobileSecurityManager {
                 public_key: Vec::new(), // Would derive public key in real implementation
                 created_at: wallet_metadata.created_at,
                 last_used: wallet_metadata.created_at,
-            }
+            },
         )?;
-        
+
         // 6. Store wallet metadata
         let metadata_key = format!("wallet_metadata_{}", wallet_id);
         let metadata_bytes = bincode::serialize(&wallet_metadata)?;
-        self.storage_manager.storage.store(&metadata_key, &metadata_bytes)?;
-        
+        self.storage_manager
+            .storage
+            .store(&metadata_key, &metadata_bytes)?;
+
         Ok(SecureWallet {
             wallet_id: wallet_id.to_string(),
             metadata: wallet_metadata,
@@ -172,32 +176,36 @@ impl MobileSecurityManager {
             signing_key,
         })
     }
-    
+
     /// Unlock existing secure wallet with authentication
     pub async fn unlock_secure_wallet(&self, wallet_id: &str) -> Result<SecureWallet> {
         self.ensure_initialized().await?;
-        
+
         log::info!("Unlocking secure wallet: {}", wallet_id);
-        
+
         // 1. Load wallet metadata
         let metadata_key = format!("wallet_metadata_{}", wallet_id);
-        let metadata_bytes = self.storage_manager.storage.retrieve(&metadata_key)?
+        let metadata_bytes = self
+            .storage_manager
+            .storage
+            .retrieve(&metadata_key)?
             .ok_or_else(|| Error::NotFound(format!("Wallet '{}' not found", wallet_id)))?;
-        
+
         let metadata: WalletMetadata = bincode::deserialize(&metadata_bytes)?;
-        
+
         // 2. Authenticate user
         if self.security_policy.require_biometric_auth || metadata.biometric_protected {
-            let auth_session = self.biometric_manager.authenticate_user(
-                &format!("Unlock wallet '{}'", wallet_id)
-            ).await?;
-            
+            let auth_session = self
+                .biometric_manager
+                .authenticate_user(&format!("Unlock wallet '{}'", wallet_id))
+                .await?;
+
             log::info!("Authentication successful for wallet unlock");
         }
-        
+
         // 3. Reconstruct key hierarchy
         let key_hierarchy = self.key_manager.create_key_hierarchy(wallet_id)?;
-        
+
         // 4. Unlock biometric-protected signing key if available
         let signing_key = if metadata.biometric_protected {
             // Load protected key info and unlock
@@ -206,14 +214,16 @@ impl MobileSecurityManager {
         } else {
             None
         };
-        
+
         // 5. Update last used timestamp
         let mut updated_metadata = metadata.clone();
         updated_metadata.last_used = current_timestamp();
-        
+
         let updated_metadata_bytes = bincode::serialize(&updated_metadata)?;
-        self.storage_manager.storage.store(&metadata_key, &updated_metadata_bytes)?;
-        
+        self.storage_manager
+            .storage
+            .store(&metadata_key, &updated_metadata_bytes)?;
+
         Ok(SecureWallet {
             wallet_id: wallet_id.to_string(),
             metadata: updated_metadata,
@@ -221,7 +231,7 @@ impl MobileSecurityManager {
             signing_key,
         })
     }
-    
+
     /// Secure data encryption with platform-specific protection
     pub async fn encrypt_sensitive_data(
         &self,
@@ -229,7 +239,7 @@ impl MobileSecurityManager {
         context: &str,
     ) -> Result<EncryptedData> {
         self.ensure_initialized().await?;
-        
+
         // Use key derivation for context-specific encryption key
         let encryption_key = self.key_manager.derive_key_hkdf(
             "app_master_bitcraps",
@@ -238,10 +248,10 @@ impl MobileSecurityManager {
             32,
             crate::mobile::HkdfAlgorithm::HkdfSha256,
         )?;
-        
+
         // Encrypt data using AES-GCM
         let encrypted_data = self.aes_gcm_encrypt(data, &encryption_key.key_material)?;
-        
+
         Ok(EncryptedData {
             data: encrypted_data,
             context: context.to_string(),
@@ -249,14 +259,11 @@ impl MobileSecurityManager {
             created_at: current_timestamp(),
         })
     }
-    
+
     /// Secure data decryption with platform-specific protection
-    pub async fn decrypt_sensitive_data(
-        &self,
-        encrypted: &EncryptedData,
-    ) -> Result<Vec<u8>> {
+    pub async fn decrypt_sensitive_data(&self, encrypted: &EncryptedData) -> Result<Vec<u8>> {
         self.ensure_initialized().await?;
-        
+
         // Re-derive the same encryption key
         let encryption_key = self.key_manager.derive_key_hkdf(
             "app_master_bitcraps",
@@ -265,54 +272,62 @@ impl MobileSecurityManager {
             32,
             crate::mobile::HkdfAlgorithm::HkdfSha256,
         )?;
-        
+
         // Decrypt data
         let decrypted_data = self.aes_gcm_decrypt(&encrypted.data, &encryption_key.key_material)?;
-        
+
         Ok(decrypted_data)
     }
-    
+
     /// Get comprehensive security status
     pub async fn get_security_status(&self) -> Result<SecurityStatus> {
         let permission_summary = self.permission_manager.check_all_permissions()?;
         let biometric_available = self.biometric_manager.is_biometric_configured()?;
         let hardware_backed = self.key_manager.is_hardware_backed().unwrap_or(false);
-        
-        let security_level = if hardware_backed && biometric_available && permission_summary.all_required_granted {
-            SecurityLevel::Maximum
-        } else if biometric_available && permission_summary.all_required_granted {
-            SecurityLevel::High
-        } else if permission_summary.all_required_granted {
-            SecurityLevel::Medium
-        } else {
-            SecurityLevel::Low
-        };
-        
+
+        let security_level =
+            if hardware_backed && biometric_available && permission_summary.all_required_granted {
+                SecurityLevel::Maximum
+            } else if biometric_available && permission_summary.all_required_granted {
+                SecurityLevel::High
+            } else if permission_summary.all_required_granted {
+                SecurityLevel::Medium
+            } else {
+                SecurityLevel::Low
+            };
+
         Ok(SecurityStatus {
             security_level,
             permissions_granted: permission_summary.all_required_granted,
             biometric_available,
             hardware_backed,
             can_create_wallets: security_level >= SecurityLevel::Medium,
-            recommended_actions: self.get_security_recommendations(&permission_summary, biometric_available, hardware_backed),
+            recommended_actions: self.get_security_recommendations(
+                &permission_summary,
+                biometric_available,
+                hardware_backed,
+            ),
         })
     }
-    
+
     /// Check and request necessary permissions
     async fn check_and_request_permissions(&self) -> Result<PermissionSummary> {
         log::info!("Checking mobile permissions");
-        
+
         let summary = self.permission_manager.check_all_permissions()?;
-        
+
         if !summary.all_required_granted {
             log::warn!("Required permissions not granted, requesting...");
-            
+
             // Request missing required permissions
-            let results = self.permission_manager.request_permissions(
-                summary.denied_required.clone(),
-                "BitCraps requires these permissions for secure peer-to-peer gaming"
-            ).await?;
-            
+            let results = self
+                .permission_manager
+                .request_permissions(
+                    summary.denied_required.clone(),
+                    "BitCraps requires these permissions for secure peer-to-peer gaming",
+                )
+                .await?;
+
             // Check if all required permissions are now granted
             let mut all_granted = true;
             for permission in &summary.denied_required {
@@ -323,21 +338,23 @@ impl MobileSecurityManager {
                     }
                 }
             }
-            
+
             if !all_granted {
-                return Err(Error::Security("Required permissions not granted".to_string()));
+                return Err(Error::Security(
+                    "Required permissions not granted".to_string(),
+                ));
             }
         }
-        
+
         Ok(summary)
     }
-    
+
     /// Initialize application key hierarchy
     async fn initialize_app_key_hierarchy(&self) -> Result<KeyHierarchy> {
         log::info!("Initializing application key hierarchy");
-        
+
         let app_keys = self.key_manager.create_key_hierarchy("bitcraps")?;
-        
+
         // Store key hierarchy metadata for future use
         let key_info = KeyHierarchyInfo {
             app_id: app_keys.app_id.clone(),
@@ -345,38 +362,45 @@ impl MobileSecurityManager {
             created_at: app_keys.created_at,
             version: 1,
         };
-        
+
         let key_info_bytes = bincode::serialize(&key_info)?;
-        self.storage_manager.storage.store("app_key_hierarchy", &key_info_bytes)?;
-        
+        self.storage_manager
+            .storage
+            .store("app_key_hierarchy", &key_info_bytes)?;
+
         Ok(app_keys)
     }
-    
+
     /// Verify secure storage functionality
     async fn verify_secure_storage(&self) -> Result<()> {
         log::info!("Verifying secure storage functionality");
-        
+
         let test_key = "security_verification_test";
         let test_data = b"secure_storage_verification_data";
-        
+
         // Test store
         self.storage_manager.storage.store(test_key, test_data)?;
-        
+
         // Test retrieve
-        let retrieved = self.storage_manager.storage.retrieve(test_key)?
+        let retrieved = self
+            .storage_manager
+            .storage
+            .retrieve(test_key)?
             .ok_or_else(|| Error::Security("Secure storage verification failed".to_string()))?;
-        
+
         if retrieved != test_data {
-            return Err(Error::Security("Secure storage data integrity check failed".to_string()));
+            return Err(Error::Security(
+                "Secure storage data integrity check failed".to_string(),
+            ));
         }
-        
+
         // Clean up test data
         self.storage_manager.storage.delete(test_key)?;
-        
+
         log::info!("Secure storage verification successful");
         Ok(())
     }
-    
+
     /// Load protected key for wallet
     async fn load_protected_key(&self, wallet_id: &str) -> Result<crate::mobile::ProtectedKey> {
         // In real implementation, would load from secure storage
@@ -389,7 +413,7 @@ impl MobileSecurityManager {
             hardware_backed: true,
         })
     }
-    
+
     /// Check if hardware-backed security is available
     async fn is_hardware_backed() -> Result<bool> {
         #[cfg(target_os = "android")]
@@ -399,11 +423,11 @@ impl MobileSecurityManager {
                 Ok(keystore) => {
                     // Would check keystore attestation in real implementation
                     Ok(true)
-                },
+                }
                 Err(_) => Ok(false),
             }
         }
-        
+
         #[cfg(target_os = "ios")]
         {
             // iOS Secure Enclave availability check
@@ -412,27 +436,29 @@ impl MobileSecurityManager {
                 Err(_) => Ok(false),
             }
         }
-        
+
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
             Ok(false)
         }
     }
-    
+
     /// Ensure manager is initialized
     async fn ensure_initialized(&self) -> Result<()> {
         let initialized = self.initialized.lock().map_err(|_| {
             Error::InvalidState("Failed to acquire initialization lock".to_string())
         })?;
-        
+
         if !*initialized {
             drop(initialized);
-            return Err(Error::InvalidState("Mobile security manager not initialized".to_string()));
+            return Err(Error::InvalidState(
+                "Mobile security manager not initialized".to_string(),
+            ));
         }
-        
+
         Ok(())
     }
-    
+
     /// Get security recommendations
     fn get_security_recommendations(
         &self,
@@ -441,26 +467,30 @@ impl MobileSecurityManager {
         hardware_backed: bool,
     ) -> Vec<String> {
         let mut recommendations = Vec::new();
-        
+
         if !permission_summary.all_required_granted {
             recommendations.push("Grant required permissions for full functionality".to_string());
         }
-        
+
         if !biometric_available {
-            recommendations.push("Enable biometric authentication for enhanced security".to_string());
+            recommendations
+                .push("Enable biometric authentication for enhanced security".to_string());
         }
-        
+
         if !hardware_backed {
-            recommendations.push("Consider upgrading to a device with hardware security module".to_string());
+            recommendations
+                .push("Consider upgrading to a device with hardware security module".to_string());
         }
-        
+
         if !permission_summary.denied_optional.is_empty() {
-            recommendations.push("Consider granting optional permissions for better user experience".to_string());
+            recommendations.push(
+                "Consider granting optional permissions for better user experience".to_string(),
+            );
         }
-        
+
         recommendations
     }
-    
+
     /// AES-GCM encryption (placeholder implementation)
     fn aes_gcm_encrypt(&self, data: &[u8], key: &[u8]) -> Result<Vec<u8>> {
         // In real implementation, would use AES-GCM with proper IV/nonce
@@ -471,7 +501,7 @@ impl MobileSecurityManager {
         }
         Ok(encrypted)
     }
-    
+
     /// AES-GCM decryption (placeholder implementation)
     fn aes_gcm_decrypt(&self, encrypted_data: &[u8], key: &[u8]) -> Result<Vec<u8>> {
         // Same as encryption for XOR
@@ -590,12 +620,12 @@ fn current_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_mobile_security_manager_creation() {
         let config = MobileSecurityConfig::default();
         let manager = MobileSecurityManager::new(config).await;
-        
+
         // May fail on non-mobile platforms but should not panic
         if manager.is_ok() {
             let manager = manager.unwrap();
@@ -603,48 +633,48 @@ mod tests {
             assert!(status.is_ok());
         }
     }
-    
+
     #[tokio::test]
     async fn test_secure_wallet_operations() {
         let config = MobileSecurityConfig {
             require_biometric_auth: false,
             ..Default::default()
         };
-        
+
         if let Ok(manager) = MobileSecurityManager::new(config).await {
             let wallet_id = "test_wallet";
-            
+
             // Create wallet
             let wallet = manager.create_secure_wallet(wallet_id, None).await;
             if wallet.is_ok() {
                 let created_wallet = wallet.unwrap();
                 assert_eq!(created_wallet.wallet_id, wallet_id);
-                
+
                 // Unlock wallet
                 let unlocked = manager.unlock_secure_wallet(wallet_id).await;
                 assert!(unlocked.is_ok());
             }
         }
     }
-    
+
     #[tokio::test]
     async fn test_data_encryption() {
         let config = MobileSecurityConfig {
             require_biometric_auth: false,
             ..Default::default()
         };
-        
+
         if let Ok(manager) = MobileSecurityManager::new(config).await {
             let test_data = b"sensitive_test_data";
             let context = "test_encryption";
-            
+
             // Encrypt data
             let encrypted = manager.encrypt_sensitive_data(test_data, context).await;
             if encrypted.is_ok() {
                 let encrypted_data = encrypted.unwrap();
                 assert_eq!(encrypted_data.context, context);
                 assert_ne!(encrypted_data.data, test_data.to_vec());
-                
+
                 // Decrypt data
                 let decrypted = manager.decrypt_sensitive_data(&encrypted_data).await;
                 if decrypted.is_ok() {

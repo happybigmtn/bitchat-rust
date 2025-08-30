@@ -10,22 +10,22 @@
 //! - Timestamp validation
 //! - Persistent encrypted identity storage
 
+use aes_gcm::{aead::Aead as AesAead, Aes256Gcm, KeyInit, Nonce as AesNonce};
+use chacha20poly1305::{ChaCha20Poly1305, Nonce};
+use hkdf::Hkdf;
+use rand::{rngs::OsRng, RngCore};
+use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::{RwLock, Mutex};
-use zeroize::Zeroize;
+use tokio::sync::{Mutex, RwLock};
 use x25519_dalek::{EphemeralSecret, PublicKey};
-use aes_gcm::{Aes256Gcm, KeyInit, aead::Aead as AesAead, Nonce as AesNonce};
-use chacha20poly1305::{ChaCha20Poly1305, Nonce};
-use hkdf::Hkdf;
-use sha2::Sha256;
-use rand::{RngCore, rngs::OsRng};
-use serde::{Serialize, Deserialize};
+use zeroize::Zeroize;
 
-use crate::protocol::PeerId;
-use crate::error::{Error, Result};
 use crate::crypto::{BitchatIdentity, GameCrypto};
+use crate::error::{Error, Result};
+use crate::protocol::PeerId;
 
 /// BLE message size limit (244 bytes for single packet)
 const BLE_MAX_PAYLOAD_SIZE: usize = 244;
@@ -67,10 +67,10 @@ pub struct BleSecurityConfig {
 impl Default for BleSecurityConfig {
     fn default() -> Self {
         Self {
-            use_aes_gcm: true,  // AES-GCM is preferred for BLE
+            use_aes_gcm: true, // AES-GCM is preferred for BLE
             fragment_large_messages: true,
-            enable_compression: false,  // Disabled by default for low latency
-            max_message_size: BLE_MAX_PAYLOAD_SIZE - 80,  // Leave room for headers and auth
+            enable_compression: false, // Disabled by default for low latency
+            max_message_size: BLE_MAX_PAYLOAD_SIZE - 80, // Leave room for headers and auth
             enable_hmac: true,
             enable_timestamp_validation: true,
             key_rotation_interval_secs: 24 * 60 * 60, // 24 hours
@@ -140,17 +140,17 @@ impl AuthenticatedHeader {
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         if bytes.len() < Self::SIZE {
-            return Err(Error::Crypto("Invalid authenticated header size".to_string()));
+            return Err(Error::Crypto(
+                "Invalid authenticated header size".to_string(),
+            ));
         }
 
         let sequence = u64::from_be_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3],
-            bytes[4], bytes[5], bytes[6], bytes[7]
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         ]);
 
         let timestamp = u64::from_be_bytes([
-            bytes[8], bytes[9], bytes[10], bytes[11],
-            bytes[12], bytes[13], bytes[14], bytes[15]
+            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
         ]);
 
         let message_type = bytes[16];
@@ -174,7 +174,7 @@ impl AuthenticatedHeader {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         let age = now.saturating_sub(self.timestamp);
         age <= max_age.as_secs()
     }
@@ -261,7 +261,7 @@ impl SessionKeys {
     /// Create new session keys from shared secret
     pub fn new(shared_secret: &[u8], version: u16, config: &BleSecurityConfig) -> Result<Self> {
         let hk = Hkdf::<Sha256>::new(None, shared_secret);
-        
+
         // Derive AES key if using AES-GCM
         let aes_key = if config.use_aes_gcm {
             let mut aes_key_bytes = [0u8; 32];
@@ -394,7 +394,9 @@ impl EnhancedTransportSecurity {
         // Verify peer identity if provided
         if let Some(identity) = &peer_identity {
             if !identity.verify_pow() {
-                return Err(Error::Crypto("Peer identity PoW verification failed".to_string()));
+                return Err(Error::Crypto(
+                    "Peer identity PoW verification failed".to_string(),
+                ));
             }
             if identity.peer_id != peer_id {
                 return Err(Error::Crypto("Peer identity mismatch".to_string()));
@@ -403,7 +405,7 @@ impl EnhancedTransportSecurity {
 
         // Generate ephemeral secret for this session
         let ephemeral_secret = EphemeralSecret::random_from_rng(OsRng);
-        
+
         // Perform ECDH
         let shared_secret = ephemeral_secret.diffie_hellman(&peer_public_key);
 
@@ -418,14 +420,26 @@ impl EnhancedTransportSecurity {
         )?;
 
         // Store keys and config
-        self.session_keys.write().await.insert(peer_id, session_keys);
-        self.security_configs.write().await.insert(peer_id, security_config);
+        self.session_keys
+            .write()
+            .await
+            .insert(peer_id, session_keys);
+        self.security_configs
+            .write()
+            .await
+            .insert(peer_id, security_config);
 
         // Initialize sequence counters
         self.send_sequences.write().await.insert(peer_id, 0);
-        self.recv_sequences.write().await.insert(peer_id, HashMap::new());
+        self.recv_sequences
+            .write()
+            .await
+            .insert(peer_id, HashMap::new());
 
-        log::info!("Authenticated key exchange completed for peer {:?}", peer_id);
+        log::info!(
+            "Authenticated key exchange completed for peer {:?}",
+            peer_id
+        );
         Ok(())
     }
 
@@ -437,7 +451,8 @@ impl EnhancedTransportSecurity {
         message_type: u8,
     ) -> Result<Vec<Vec<u8>>> {
         let configs = self.security_configs.read().await;
-        let config = configs.get(&peer_id)
+        let config = configs
+            .get(&peer_id)
             .ok_or_else(|| Error::Crypto("No security config for peer".to_string()))?
             .clone();
         drop(configs);
@@ -451,9 +466,12 @@ impl EnhancedTransportSecurity {
 
         // Fragment if necessary
         if data_to_encrypt.len() > config.max_message_size && config.fragment_large_messages {
-            self.encrypt_fragmented_message(peer_id, &data_to_encrypt, message_type).await
+            self.encrypt_fragmented_message(peer_id, &data_to_encrypt, message_type)
+                .await
         } else {
-            let encrypted = self.encrypt_single_message(peer_id, &data_to_encrypt, message_type).await?;
+            let encrypted = self
+                .encrypt_single_message(peer_id, &data_to_encrypt, message_type)
+                .await?;
             Ok(vec![encrypted])
         }
     }
@@ -466,7 +484,8 @@ impl EnhancedTransportSecurity {
         message_type: u8,
     ) -> Result<Vec<u8>> {
         let mut session_keys = self.session_keys.write().await;
-        let keys = session_keys.get_mut(&peer_id)
+        let keys = session_keys
+            .get_mut(&peer_id)
             .ok_or_else(|| Error::Crypto("No session keys for peer".to_string()))?;
 
         // Get next sequence number
@@ -485,7 +504,7 @@ impl EnhancedTransportSecurity {
             let config = configs.get(&peer_id).unwrap();
             (config.use_aes_gcm, config.enable_hmac)
         };
-        
+
         let (encrypted_data, nonce) = if use_aes_gcm {
             self.encrypt_with_aes_gcm(keys, plaintext)?
         } else {
@@ -522,7 +541,8 @@ impl EnhancedTransportSecurity {
         keys: &SessionKeys,
         plaintext: &[u8],
     ) -> Result<(Vec<u8>, Vec<u8>)> {
-        let aes_key = keys.aes_key
+        let aes_key = keys
+            .aes_key
             .ok_or_else(|| Error::Crypto("AES key not available".to_string()))?;
 
         let cipher = Aes256Gcm::new(&aes_key);
@@ -533,7 +553,8 @@ impl EnhancedTransportSecurity {
         let nonce = AesNonce::from_slice(&nonce_bytes);
 
         // Encrypt
-        let ciphertext = cipher.encrypt(nonce, plaintext)
+        let ciphertext = cipher
+            .encrypt(nonce, plaintext)
             .map_err(|_| Error::Crypto("AES-GCM encryption failed".to_string()))?;
 
         Ok((ciphertext, nonce_bytes.to_vec()))
@@ -545,7 +566,8 @@ impl EnhancedTransportSecurity {
         keys: &SessionKeys,
         plaintext: &[u8],
     ) -> Result<(Vec<u8>, Vec<u8>)> {
-        let chacha_key = keys.chacha_key
+        let chacha_key = keys
+            .chacha_key
             .ok_or_else(|| Error::Crypto("ChaCha20 key not available".to_string()))?;
 
         let cipher = ChaCha20Poly1305::new(&chacha_key);
@@ -556,7 +578,8 @@ impl EnhancedTransportSecurity {
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         // Encrypt
-        let ciphertext = cipher.encrypt(nonce, plaintext)
+        let ciphertext = cipher
+            .encrypt(nonce, plaintext)
             .map_err(|_| Error::Crypto("ChaCha20Poly1305 encryption failed".to_string()))?;
 
         Ok((ciphertext, nonce_bytes.to_vec()))
@@ -577,7 +600,7 @@ impl EnhancedTransportSecurity {
         // Generate unique message ID
         let message_id = rand::random::<u16>();
         let total_fragments = ((plaintext.len() + max_fragment_size - 1) / max_fragment_size) as u8;
-        
+
         let mut encrypted_fragments = Vec::new();
 
         for (i, chunk) in plaintext.chunks(max_fragment_size).enumerate() {
@@ -594,11 +617,9 @@ impl EnhancedTransportSecurity {
             fragment_data.extend_from_slice(chunk);
 
             // Encrypt the fragment
-            let encrypted_fragment = self.encrypt_single_message(
-                peer_id,
-                &fragment_data,
-                message_type,
-            ).await?;
+            let encrypted_fragment = self
+                .encrypt_single_message(peer_id, &fragment_data, message_type)
+                .await?;
 
             encrypted_fragments.push(encrypted_fragment);
         }
@@ -622,9 +643,15 @@ impl EnhancedTransportSecurity {
         // Verify timestamp if enabled
         let (enable_timestamp_validation, enable_hmac, use_aes_gcm, enable_compression) = {
             let configs = self.security_configs.read().await;
-            let config = configs.get(&peer_id)
+            let config = configs
+                .get(&peer_id)
                 .ok_or_else(|| Error::Crypto("No security config for peer".to_string()))?;
-            (config.enable_timestamp_validation, config.enable_hmac, config.use_aes_gcm, config.enable_compression)
+            (
+                config.enable_timestamp_validation,
+                config.enable_hmac,
+                config.use_aes_gcm,
+                config.enable_compression,
+            )
         };
 
         if enable_timestamp_validation && !header.is_fresh(MAX_MESSAGE_AGE) {
@@ -634,7 +661,7 @@ impl EnhancedTransportSecurity {
         // Verify sequence number (replay protection)
         let mut recv_sequences = self.recv_sequences.write().await;
         let peer_sequences = recv_sequences.entry(peer_id).or_insert_with(HashMap::new);
-        
+
         if peer_sequences.contains_key(&header.sequence) {
             return Err(Error::Crypto("Replay attack detected".to_string()));
         }
@@ -649,7 +676,8 @@ impl EnhancedTransportSecurity {
 
         // Verify HMAC if enabled
         let session_keys = self.session_keys.read().await;
-        let keys = session_keys.get(&peer_id)
+        let keys = session_keys
+            .get(&peer_id)
             .ok_or_else(|| Error::Crypto("No session keys for peer".to_string()))?;
 
         let message_data = &ciphertext[AuthenticatedHeader::SIZE..];
@@ -678,9 +706,17 @@ impl EnhancedTransportSecurity {
         // Handle fragmentation
         if plaintext.len() >= FRAGMENT_HEADER_SIZE {
             // Check if this might be a fragment
-            if let Ok(fragment_header) = FragmentHeader::from_bytes(&plaintext[..FRAGMENT_HEADER_SIZE]) {
+            if let Ok(fragment_header) =
+                FragmentHeader::from_bytes(&plaintext[..FRAGMENT_HEADER_SIZE])
+            {
                 if fragment_header.total_fragments > 1 {
-                    return self.handle_fragment(peer_id, fragment_header, &plaintext[FRAGMENT_HEADER_SIZE..]).await;
+                    return self
+                        .handle_fragment(
+                            peer_id,
+                            fragment_header,
+                            &plaintext[FRAGMENT_HEADER_SIZE..],
+                        )
+                        .await;
                 }
             }
         }
@@ -699,10 +735,13 @@ impl EnhancedTransportSecurity {
     /// Decrypt with AES-GCM
     fn decrypt_with_aes_gcm(&self, keys: &SessionKeys, ciphertext: &[u8]) -> Result<Vec<u8>> {
         if ciphertext.len() < SESSION_NONCE_SIZE {
-            return Err(Error::Crypto("Ciphertext too short for AES-GCM".to_string()));
+            return Err(Error::Crypto(
+                "Ciphertext too short for AES-GCM".to_string(),
+            ));
         }
 
-        let aes_key = keys.aes_key
+        let aes_key = keys
+            .aes_key
             .ok_or_else(|| Error::Crypto("AES key not available".to_string()))?;
 
         let cipher = Aes256Gcm::new(&aes_key);
@@ -712,7 +751,8 @@ impl EnhancedTransportSecurity {
         let encrypted_data = &ciphertext[SESSION_NONCE_SIZE..];
 
         // Decrypt
-        let plaintext = cipher.decrypt(nonce, encrypted_data)
+        let plaintext = cipher
+            .decrypt(nonce, encrypted_data)
             .map_err(|_| Error::Crypto("AES-GCM decryption failed".to_string()))?;
 
         Ok(plaintext)
@@ -721,10 +761,13 @@ impl EnhancedTransportSecurity {
     /// Decrypt with ChaCha20Poly1305
     fn decrypt_with_chacha20(&self, keys: &SessionKeys, ciphertext: &[u8]) -> Result<Vec<u8>> {
         if ciphertext.len() < SESSION_NONCE_SIZE {
-            return Err(Error::Crypto("Ciphertext too short for ChaCha20".to_string()));
+            return Err(Error::Crypto(
+                "Ciphertext too short for ChaCha20".to_string(),
+            ));
         }
 
-        let chacha_key = keys.chacha_key
+        let chacha_key = keys
+            .chacha_key
             .ok_or_else(|| Error::Crypto("ChaCha20 key not available".to_string()))?;
 
         let cipher = ChaCha20Poly1305::new(&chacha_key);
@@ -734,7 +777,8 @@ impl EnhancedTransportSecurity {
         let encrypted_data = &ciphertext[SESSION_NONCE_SIZE..];
 
         // Decrypt
-        let plaintext = cipher.decrypt(nonce, encrypted_data)
+        let plaintext = cipher
+            .decrypt(nonce, encrypted_data)
             .map_err(|_| Error::Crypto("ChaCha20Poly1305 decryption failed".to_string()))?;
 
         Ok(plaintext)
@@ -755,15 +799,16 @@ impl EnhancedTransportSecurity {
         peer_fragments.retain(|_, state| state.first_fragment_time > cutoff);
 
         // Get or create assembly state
-        let assembly_state = peer_fragments.entry(header.message_id).or_insert_with(|| {
-            FragmentAssemblyState {
-                fragments: vec![None; header.total_fragments as usize],
-                total_fragments: header.total_fragments,
-                received_fragments: 0,
-                first_fragment_time: Instant::now(),
-                sequence: header.sequence,
-            }
-        });
+        let assembly_state =
+            peer_fragments
+                .entry(header.message_id)
+                .or_insert_with(|| FragmentAssemblyState {
+                    fragments: vec![None; header.total_fragments as usize],
+                    total_fragments: header.total_fragments,
+                    received_fragments: 0,
+                    first_fragment_time: Instant::now(),
+                    sequence: header.sequence,
+                });
 
         // Validate fragment
         if header.fragment_number >= header.total_fragments {
@@ -776,7 +821,8 @@ impl EnhancedTransportSecurity {
 
         // Store fragment if not already received
         if assembly_state.fragments[header.fragment_number as usize].is_none() {
-            assembly_state.fragments[header.fragment_number as usize] = Some(fragment_data.to_vec());
+            assembly_state.fragments[header.fragment_number as usize] =
+                Some(fragment_data.to_vec());
             assembly_state.received_fragments += 1;
         }
 
@@ -812,7 +858,9 @@ impl EnhancedTransportSecurity {
             OsRng.fill_bytes(&mut new_shared_secret);
 
             let configs = self.security_configs.read().await;
-            let config = configs.get(&peer_id).cloned()
+            let config = configs
+                .get(&peer_id)
+                .cloned()
                 .unwrap_or_else(|| self.default_config.clone());
             drop(configs);
 
@@ -821,7 +869,11 @@ impl EnhancedTransportSecurity {
 
             *keys = new_keys;
 
-            log::info!("Rotated keys for peer {:?}, version: {}", peer_id, new_version);
+            log::info!(
+                "Rotated keys for peer {:?}, version: {}",
+                peer_id,
+                new_version
+            );
         }
 
         Ok(())
@@ -882,7 +934,10 @@ impl EnhancedTransportSecurity {
         let aes_gcm_sessions = configs.values().filter(|c| c.use_aes_gcm).count();
         let chacha20_sessions = active_sessions - aes_gcm_sessions;
         let hmac_enabled_sessions = configs.values().filter(|c| c.enable_hmac).count();
-        let fragment_enabled_sessions = configs.values().filter(|c| c.fragment_large_messages).count();
+        let fragment_enabled_sessions = configs
+            .values()
+            .filter(|c| c.fragment_large_messages)
+            .count();
 
         let total_tracked_sequences = recv_seqs.values().map(|seqs| seqs.len()).sum();
         let active_fragment_assemblies = fragments.values().map(|f| f.len()).sum();
@@ -895,12 +950,12 @@ impl EnhancedTransportSecurity {
             fragment_enabled_sessions,
             total_tracked_sequences,
             active_fragment_assemblies,
-            keys_rotated: 0, // TODO: track this
-            messages_encrypted: 0, // TODO: track this
-            messages_decrypted: 0, // TODO: track this
-            fragments_assembled: 0, // TODO: track this
+            keys_rotated: 0,              // TODO: track this
+            messages_encrypted: 0,        // TODO: track this
+            messages_decrypted: 0,        // TODO: track this
+            fragments_assembled: 0,       // TODO: track this
             hmac_verifications_passed: 0, // TODO: track this
-            replay_attacks_prevented: 0, // TODO: track this
+            replay_attacks_prevented: 0,  // TODO: track this
         }
     }
 }
@@ -942,28 +997,31 @@ impl EncryptedIdentityStorage {
     }
 
     /// Encrypt and store identity
-    pub fn encrypt_identity(&self, identity: &BitchatIdentity, password: &[u8]) -> Result<EncryptedIdentity> {
+    pub fn encrypt_identity(
+        &self,
+        identity: &BitchatIdentity,
+        password: &[u8],
+    ) -> Result<EncryptedIdentity> {
         // Derive encryption key from password
         let mut salt = [0u8; 32];
         OsRng.fill_bytes(&mut salt);
 
         let derived_key = crate::crypto::KeyDerivation::derive_key_pbkdf2(
-            password,
-            &salt,
-            100_000, // iterations
+            password, &salt, 100_000, // iterations
             32,      // key length
         )?;
 
         // Encrypt private key
         let cipher = ChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(&derived_key[..32]));
-        
+
         let mut nonce_bytes = [0u8; 12];
         OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let private_key_bytes = identity.keypair.secret_key_bytes();
         let mut encrypted_data = nonce_bytes.to_vec();
-        let ciphertext = cipher.encrypt(nonce, private_key_bytes.as_slice())
+        let ciphertext = cipher
+            .encrypt(nonce, private_key_bytes.as_slice())
             .map_err(|_| Error::Crypto("Identity encryption failed".to_string()))?;
         encrypted_data.extend_from_slice(&ciphertext);
 
@@ -981,7 +1039,11 @@ impl EncryptedIdentityStorage {
     }
 
     /// Decrypt stored identity
-    pub fn decrypt_identity(&self, encrypted: &EncryptedIdentity, password: &[u8]) -> Result<BitchatIdentity> {
+    pub fn decrypt_identity(
+        &self,
+        encrypted: &EncryptedIdentity,
+        password: &[u8],
+    ) -> Result<BitchatIdentity> {
         // Derive decryption key
         let derived_key = crate::crypto::KeyDerivation::derive_key_pbkdf2(
             password,
@@ -1000,7 +1062,8 @@ impl EncryptedIdentityStorage {
 
         // Decrypt
         let cipher = ChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(&derived_key[..32]));
-        let private_key_bytes = cipher.decrypt(nonce, ciphertext)
+        let private_key_bytes = cipher
+            .decrypt(nonce, ciphertext)
             .map_err(|_| Error::Crypto("Identity decryption failed".to_string()))?;
 
         if private_key_bytes.len() != 32 {
@@ -1012,7 +1075,7 @@ impl EncryptedIdentityStorage {
 
         // Reconstruct identity
         let keypair = crate::crypto::BitchatKeypair::from_secret_key(&key_array)?;
-        
+
         let identity = BitchatIdentity {
             peer_id: encrypted.public_key,
             keypair,
@@ -1022,7 +1085,9 @@ impl EncryptedIdentityStorage {
 
         // Verify identity integrity
         if !identity.verify_pow() {
-            return Err(Error::Crypto("Decrypted identity failed PoW verification".to_string()));
+            return Err(Error::Crypto(
+                "Decrypted identity failed PoW verification".to_string(),
+            ));
         }
 
         Ok(identity)
@@ -1032,61 +1097,67 @@ impl EncryptedIdentityStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_enhanced_key_exchange() {
         let security1 = EnhancedTransportSecurity::new();
         let security2 = EnhancedTransportSecurity::new();
-        
+
         let peer_id1 = [1u8; 32];
         let peer_id2 = [2u8; 32];
-        
+
         let public1 = security1.public_key();
         let public2 = security2.public_key();
-        
-        assert!(security1.perform_authenticated_key_exchange(
-            peer_id2, public2, None, None
-        ).await.is_ok());
-        
-        assert!(security2.perform_authenticated_key_exchange(
-            peer_id1, public1, None, None
-        ).await.is_ok());
+
+        assert!(security1
+            .perform_authenticated_key_exchange(peer_id2, public2, None, None)
+            .await
+            .is_ok());
+
+        assert!(security2
+            .perform_authenticated_key_exchange(peer_id1, public1, None, None)
+            .await
+            .is_ok());
     }
-    
+
     #[tokio::test]
     async fn test_message_encryption_and_fragmentation() {
         let security1 = EnhancedTransportSecurity::new();
         let security2 = EnhancedTransportSecurity::new();
-        
+
         let peer_id1 = [1u8; 32];
         let peer_id2 = [2u8; 32];
-        
+
         // Setup keys
         let public1 = security1.public_key();
         let public2 = security2.public_key();
-        
-        security1.perform_authenticated_key_exchange(
-            peer_id2, public2, None, None
-        ).await.unwrap();
-        
-        security2.perform_authenticated_key_exchange(
-            peer_id1, public1, None, None
-        ).await.unwrap();
-        
+
+        security1
+            .perform_authenticated_key_exchange(peer_id2, public2, None, None)
+            .await
+            .unwrap();
+
+        security2
+            .perform_authenticated_key_exchange(peer_id1, public1, None, None)
+            .await
+            .unwrap();
+
         // Test small message
         let small_message = b"Hello, BitCraps!";
-        let encrypted_fragments = security1.encrypt_and_authenticate(
-            peer_id2, small_message, 1
-        ).await.unwrap();
-        
+        let encrypted_fragments = security1
+            .encrypt_and_authenticate(peer_id2, small_message, 1)
+            .await
+            .unwrap();
+
         assert_eq!(encrypted_fragments.len(), 1);
-        
-        let decrypted = security2.decrypt_and_verify(
-            peer_id1, &encrypted_fragments[0]
-        ).await.unwrap();
-        
+
+        let decrypted = security2
+            .decrypt_and_verify(peer_id1, &encrypted_fragments[0])
+            .await
+            .unwrap();
+
         assert_eq!(decrypted.unwrap(), small_message);
-        
+
         // Test large message (should fragment)
         let large_message = vec![42u8; 500]; // Larger than BLE_MAX_PAYLOAD_SIZE
         let config = BleSecurityConfig {
@@ -1094,77 +1165,92 @@ mod tests {
             max_message_size: 100,
             ..Default::default()
         };
-        
-        security1.perform_authenticated_key_exchange(
-            peer_id2, public2, None, Some(config)
-        ).await.unwrap();
-        
-        let encrypted_fragments = security1.encrypt_and_authenticate(
-            peer_id2, &large_message, 2
-        ).await.unwrap();
-        
+
+        security1
+            .perform_authenticated_key_exchange(peer_id2, public2, None, Some(config))
+            .await
+            .unwrap();
+
+        let encrypted_fragments = security1
+            .encrypt_and_authenticate(peer_id2, &large_message, 2)
+            .await
+            .unwrap();
+
         assert!(encrypted_fragments.len() > 1);
-        
+
         // Decrypt fragments
         let mut reassembled = None;
         for fragment in encrypted_fragments {
-            if let Some(partial) = security2.decrypt_and_verify(peer_id1, &fragment).await.unwrap() {
+            if let Some(partial) = security2
+                .decrypt_and_verify(peer_id1, &fragment)
+                .await
+                .unwrap()
+            {
                 reassembled = Some(partial);
                 break;
             }
         }
-        
+
         // Note: This test is simplified - in practice, fragments would be processed separately
         assert!(reassembled.is_some());
     }
-    
+
     #[tokio::test]
     async fn test_replay_protection() {
         let security1 = EnhancedTransportSecurity::new();
         let security2 = EnhancedTransportSecurity::new();
-        
+
         let peer_id1 = [1u8; 32];
         let peer_id2 = [2u8; 32];
-        
+
         // Setup keys
         let public1 = security1.public_key();
         let public2 = security2.public_key();
-        
-        security1.perform_authenticated_key_exchange(
-            peer_id2, public2, None, None
-        ).await.unwrap();
-        
-        security2.perform_authenticated_key_exchange(
-            peer_id1, public1, None, None
-        ).await.unwrap();
-        
+
+        security1
+            .perform_authenticated_key_exchange(peer_id2, public2, None, None)
+            .await
+            .unwrap();
+
+        security2
+            .perform_authenticated_key_exchange(peer_id1, public1, None, None)
+            .await
+            .unwrap();
+
         // Encrypt a message
         let message = b"Test message";
-        let encrypted_fragments = security1.encrypt_and_authenticate(
-            peer_id2, message, 1
-        ).await.unwrap();
-        
+        let encrypted_fragments = security1
+            .encrypt_and_authenticate(peer_id2, message, 1)
+            .await
+            .unwrap();
+
         let ciphertext = &encrypted_fragments[0];
-        
+
         // First decryption should work
-        assert!(security2.decrypt_and_verify(peer_id1, ciphertext).await.is_ok());
-        
+        assert!(security2
+            .decrypt_and_verify(peer_id1, ciphertext)
+            .await
+            .is_ok());
+
         // Replay should fail
-        assert!(security2.decrypt_and_verify(peer_id1, ciphertext).await.is_err());
+        assert!(security2
+            .decrypt_and_verify(peer_id1, ciphertext)
+            .await
+            .is_err());
     }
-    
+
     #[test]
     fn test_identity_encryption() {
         let storage = EncryptedIdentityStorage::new();
         let identity = BitchatIdentity::generate_with_pow(8);
         let password = b"test_password_123";
-        
+
         // Encrypt identity
         let encrypted = storage.encrypt_identity(&identity, password).unwrap();
-        
+
         // Decrypt identity
         let decrypted = storage.decrypt_identity(&encrypted, password).unwrap();
-        
+
         // Verify they match
         assert_eq!(identity.peer_id, decrypted.peer_id);
         assert_eq!(identity.pow_nonce, decrypted.pow_nonce);

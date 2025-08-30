@@ -1,5 +1,5 @@
 //! Android-specific mobile implementations
-//! 
+//!
 //! This module provides Android-specific functionality including:
 //! - JNI bridge for BLE advertising and discovery
 //! - GATT server implementation
@@ -7,19 +7,19 @@
 //! - Android lifecycle integration
 
 pub mod ble_jni;
+pub mod callbacks;
 pub mod gatt_server;
 pub mod lifecycle;
-pub mod callbacks;
 
-use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
 use crate::error::BitCrapsError;
 use crate::transport::bluetooth::BluetoothTransport;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 #[cfg(target_os = "android")]
-use jni::JNIEnv;
+use jni::objects::{GlobalRef, JClass, JObject};
 #[cfg(target_os = "android")]
-use jni::objects::{JClass, JObject, GlobalRef};
+use jni::JNIEnv;
 #[cfg(target_os = "android")]
 use jni::JavaVM;
 
@@ -78,11 +78,12 @@ impl AndroidBleManager {
 
     /// Start BLE advertising
     pub async fn start_advertising(&self) -> Result<(), BitCrapsError> {
-        let mut advertising = self.is_advertising.lock().map_err(|_| {
-            BitCrapsError::BluetoothError {
-                message: "Failed to lock advertising state".to_string(),
-            }
-        })?;
+        let mut advertising =
+            self.is_advertising
+                .lock()
+                .map_err(|_| BitCrapsError::BluetoothError {
+                    message: "Failed to lock advertising state".to_string(),
+                })?;
 
         if *advertising {
             return Ok(()); // Already advertising
@@ -90,28 +91,21 @@ impl AndroidBleManager {
 
         #[cfg(target_os = "android")]
         if let (Some(vm), Some(service)) = (&self.java_vm, &self.ble_service) {
-            let env = vm.attach_current_thread().map_err(|e| {
-                BitCrapsError::BluetoothError {
+            let env = vm
+                .attach_current_thread()
+                .map_err(|e| BitCrapsError::BluetoothError {
                     message: format!("Failed to attach to JVM: {}", e),
-                }
-            })?;
+                })?;
 
             // Call Java method to start advertising
-            let result = env.call_method(
-                service,
-                "startAdvertising",
-                "()Z",
-                &[],
-            ).map_err(|e| {
-                BitCrapsError::BluetoothError {
+            let result = env
+                .call_method(service, "startAdvertising", "()Z", &[])
+                .map_err(|e| BitCrapsError::BluetoothError {
                     message: format!("Failed to call startAdvertising: {}", e),
-                }
-            })?;
+                })?;
 
-            let success = result.z().map_err(|e| {
-                BitCrapsError::BluetoothError {
-                    message: format!("Failed to get boolean result: {}", e),
-                }
+            let success = result.z().map_err(|e| BitCrapsError::BluetoothError {
+                message: format!("Failed to get boolean result: {}", e),
             })?;
 
             if success {
@@ -139,11 +133,12 @@ impl AndroidBleManager {
 
     /// Stop BLE advertising
     pub async fn stop_advertising(&self) -> Result<(), BitCrapsError> {
-        let mut advertising = self.is_advertising.lock().map_err(|_| {
-            BitCrapsError::BluetoothError {
-                message: "Failed to lock advertising state".to_string(),
-            }
-        })?;
+        let mut advertising =
+            self.is_advertising
+                .lock()
+                .map_err(|_| BitCrapsError::BluetoothError {
+                    message: "Failed to lock advertising state".to_string(),
+                })?;
 
         if !*advertising {
             return Ok(()); // Not advertising
@@ -151,28 +146,21 @@ impl AndroidBleManager {
 
         #[cfg(target_os = "android")]
         if let (Some(vm), Some(service)) = (&self.java_vm, &self.ble_service) {
-            let env = vm.attach_current_thread().map_err(|e| {
-                BitCrapsError::BluetoothError {
+            let env = vm
+                .attach_current_thread()
+                .map_err(|e| BitCrapsError::BluetoothError {
                     message: format!("Failed to attach to JVM: {}", e),
-                }
-            })?;
+                })?;
 
             // Call Java method to stop advertising
-            let result = env.call_method(
-                service,
-                "stopAdvertising",
-                "()Z",
-                &[],
-            ).map_err(|e| {
-                BitCrapsError::BluetoothError {
+            let result = env
+                .call_method(service, "stopAdvertising", "()Z", &[])
+                .map_err(|e| BitCrapsError::BluetoothError {
                     message: format!("Failed to call stopAdvertising: {}", e),
-                }
-            })?;
+                })?;
 
-            let success = result.z().map_err(|e| {
-                BitCrapsError::BluetoothError {
-                    message: format!("Failed to get boolean result: {}", e),
-                }
+            let success = result.z().map_err(|e| BitCrapsError::BluetoothError {
+                message: format!("Failed to get boolean result: {}", e),
             })?;
 
             if success {
@@ -200,11 +188,12 @@ impl AndroidBleManager {
 
     /// Start BLE scanning
     pub async fn start_scanning(&self) -> Result<(), BitCrapsError> {
-        let mut scanning = self.is_scanning.lock().map_err(|_| {
-            BitCrapsError::BluetoothError {
+        let mut scanning = self
+            .is_scanning
+            .lock()
+            .map_err(|_| BitCrapsError::BluetoothError {
                 message: "Failed to lock scanning state".to_string(),
-            }
-        })?;
+            })?;
 
         if *scanning {
             return Ok(()); // Already scanning
@@ -212,28 +201,21 @@ impl AndroidBleManager {
 
         #[cfg(target_os = "android")]
         if let (Some(vm), Some(service)) = (&self.java_vm, &self.ble_service) {
-            let env = vm.attach_current_thread().map_err(|e| {
-                BitCrapsError::BluetoothError {
+            let env = vm
+                .attach_current_thread()
+                .map_err(|e| BitCrapsError::BluetoothError {
                     message: format!("Failed to attach to JVM: {}", e),
-                }
-            })?;
+                })?;
 
             // Call Java method to start scanning
-            let result = env.call_method(
-                service,
-                "startScanning",
-                "()Z",
-                &[],
-            ).map_err(|e| {
-                BitCrapsError::BluetoothError {
+            let result = env
+                .call_method(service, "startScanning", "()Z", &[])
+                .map_err(|e| BitCrapsError::BluetoothError {
                     message: format!("Failed to call startScanning: {}", e),
-                }
-            })?;
+                })?;
 
-            let success = result.z().map_err(|e| {
-                BitCrapsError::BluetoothError {
-                    message: format!("Failed to get boolean result: {}", e),
-                }
+            let success = result.z().map_err(|e| BitCrapsError::BluetoothError {
+                message: format!("Failed to get boolean result: {}", e),
             })?;
 
             if success {
@@ -261,11 +243,12 @@ impl AndroidBleManager {
 
     /// Stop BLE scanning
     pub async fn stop_scanning(&self) -> Result<(), BitCrapsError> {
-        let mut scanning = self.is_scanning.lock().map_err(|_| {
-            BitCrapsError::BluetoothError {
+        let mut scanning = self
+            .is_scanning
+            .lock()
+            .map_err(|_| BitCrapsError::BluetoothError {
                 message: "Failed to lock scanning state".to_string(),
-            }
-        })?;
+            })?;
 
         if !*scanning {
             return Ok(()); // Not scanning
@@ -273,28 +256,21 @@ impl AndroidBleManager {
 
         #[cfg(target_os = "android")]
         if let (Some(vm), Some(service)) = (&self.java_vm, &self.ble_service) {
-            let env = vm.attach_current_thread().map_err(|e| {
-                BitCrapsError::BluetoothError {
+            let env = vm
+                .attach_current_thread()
+                .map_err(|e| BitCrapsError::BluetoothError {
                     message: format!("Failed to attach to JVM: {}", e),
-                }
-            })?;
+                })?;
 
             // Call Java method to stop scanning
-            let result = env.call_method(
-                service,
-                "stopScanning",
-                "()Z",
-                &[],
-            ).map_err(|e| {
-                BitCrapsError::BluetoothError {
+            let result = env
+                .call_method(service, "stopScanning", "()Z", &[])
+                .map_err(|e| BitCrapsError::BluetoothError {
                     message: format!("Failed to call stopScanning: {}", e),
-                }
-            })?;
+                })?;
 
-            let success = result.z().map_err(|e| {
-                BitCrapsError::BluetoothError {
-                    message: format!("Failed to get boolean result: {}", e),
-                }
+            let success = result.z().map_err(|e| BitCrapsError::BluetoothError {
+                message: format!("Failed to get boolean result: {}", e),
             })?;
 
             if success {
@@ -322,22 +298,24 @@ impl AndroidBleManager {
 
     /// Get discovered peers
     pub fn get_discovered_peers(&self) -> Result<Vec<AndroidPeerInfo>, BitCrapsError> {
-        let peers = self.discovered_peers.lock().map_err(|_| {
-            BitCrapsError::BluetoothError {
+        let peers = self
+            .discovered_peers
+            .lock()
+            .map_err(|_| BitCrapsError::BluetoothError {
                 message: "Failed to lock discovered peers".to_string(),
-            }
-        })?;
+            })?;
 
         Ok(peers.values().cloned().collect())
     }
 
     /// Add or update discovered peer
     pub fn update_discovered_peer(&self, peer: AndroidPeerInfo) -> Result<(), BitCrapsError> {
-        let mut peers = self.discovered_peers.lock().map_err(|_| {
-            BitCrapsError::BluetoothError {
-                message: "Failed to lock discovered peers".to_string(),
-            }
-        })?;
+        let mut peers =
+            self.discovered_peers
+                .lock()
+                .map_err(|_| BitCrapsError::BluetoothError {
+                    message: "Failed to lock discovered peers".to_string(),
+                })?;
 
         peers.insert(peer.address.clone(), peer);
         Ok(())
@@ -345,7 +323,10 @@ impl AndroidBleManager {
 
     /// Check if advertising is active
     pub fn is_advertising(&self) -> bool {
-        self.is_advertising.lock().map(|state| *state).unwrap_or(false)
+        self.is_advertising
+            .lock()
+            .map(|state| *state)
+            .unwrap_or(false)
     }
 
     /// Check if scanning is active

@@ -1,19 +1,19 @@
-use rustc_hash::FxHashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::{RwLock, mpsc, broadcast};
-use tokio::time::interval;
-use serde::{Serialize, Deserialize};
-use crate::protocol::{PeerId, GameId, BitchatPacket};
-use crate::transport::TransportEvent;
-use crate::error::Result;
+use super::anti_cheat::AntiCheatMonitor;
 use super::components::ComponentManager;
 use super::deduplication::MessageDeduplicator;
-use super::message_queue::MessageQueue;
 use super::game_session::GameSessionManager;
-use super::anti_cheat::AntiCheatMonitor;
+use super::message_queue::MessageQueue;
+use crate::error::Result;
+use crate::gaming::{ConsensusGameManager, GameOrchestrator};
+use crate::protocol::{BitchatPacket, GameId, PeerId};
 use crate::token::ProofOfRelay;
-use crate::gaming::{GameOrchestrator, ConsensusGameManager};
+use crate::transport::TransportEvent;
+use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::time::interval;
 
 /// Configuration for the mesh service
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,7 +46,7 @@ impl Default for MeshConfig {
 }
 
 /// Core mesh service orchestrator
-/// 
+///
 /// Feynman: Think of this as the "control tower" at an airport.
 /// It coordinates all the different services (baggage, fuel, catering)
 /// to ensure planes (messages) get where they need to go safely and efficiently.
@@ -58,19 +58,19 @@ pub struct MeshService {
     game_sessions: Arc<RwLock<GameSessionManager>>,
     anti_cheat: Arc<AntiCheatMonitor>,
     proof_of_relay: Option<Arc<ProofOfRelay>>,
-    
+
     // Gaming components
     pub game_orchestrator: Option<Arc<GameOrchestrator>>,
     pub consensus_manager: Option<Arc<ConsensusGameManager>>,
-    
+
     // Peer management
     peers: Arc<RwLock<FxHashMap<PeerId, PeerInfo>>>,
     _routing_table: Arc<RwLock<RoutingTable>>,
-    
+
     // Event channels
     event_tx: broadcast::Sender<MeshEvent>,
     command_rx: mpsc::Receiver<MeshCommand>,
-    
+
     // Service state
     is_running: Arc<RwLock<bool>>,
     _start_time: Instant,
@@ -126,24 +126,61 @@ struct DirectConnection {
 /// Events emitted by the mesh service
 #[derive(Debug, Clone)]
 pub enum MeshEvent {
-    PeerConnected { peer_id: PeerId, capabilities: PeerCapabilities },
-    PeerDisconnected { peer_id: PeerId, reason: String },
-    MessageReceived { from: PeerId, packet: BitchatPacket },
-    GameSessionStarted { game_id: GameId, participants: Vec<PeerId> },
-    GameSessionEnded { game_id: GameId, reason: String },
-    AntiCheatAlert { peer_id: PeerId, violation: String },
-    TreasuryUpdate { balance: u64, active_games: usize },
+    PeerConnected {
+        peer_id: PeerId,
+        capabilities: PeerCapabilities,
+    },
+    PeerDisconnected {
+        peer_id: PeerId,
+        reason: String,
+    },
+    MessageReceived {
+        from: PeerId,
+        packet: BitchatPacket,
+    },
+    GameSessionStarted {
+        game_id: GameId,
+        participants: Vec<PeerId>,
+    },
+    GameSessionEnded {
+        game_id: GameId,
+        reason: String,
+    },
+    AntiCheatAlert {
+        peer_id: PeerId,
+        violation: String,
+    },
+    TreasuryUpdate {
+        balance: u64,
+        active_games: usize,
+    },
 }
 
 /// Commands that can be sent to the mesh service
 #[derive(Debug)]
 pub enum MeshCommand {
-    SendMessage { to: PeerId, packet: BitchatPacket },
-    BroadcastMessage { packet: BitchatPacket },
-    CreateGameSession { game_id: GameId, participants: Vec<PeerId> },
-    EndGameSession { game_id: GameId },
-    BanPeer { peer_id: PeerId, duration: Duration },
-    UpdateTrustScore { peer_id: PeerId, delta: i32 },
+    SendMessage {
+        to: PeerId,
+        packet: BitchatPacket,
+    },
+    BroadcastMessage {
+        packet: BitchatPacket,
+    },
+    CreateGameSession {
+        game_id: GameId,
+        participants: Vec<PeerId>,
+    },
+    EndGameSession {
+        game_id: GameId,
+    },
+    BanPeer {
+        peer_id: PeerId,
+        duration: Duration,
+    },
+    UpdateTrustScore {
+        peer_id: PeerId,
+        delta: i32,
+    },
 }
 
 /// Statistics tracked by the mesh service
@@ -166,7 +203,7 @@ impl MeshService {
     pub fn new(config: MeshConfig) -> (Self, mpsc::Sender<MeshCommand>) {
         let (event_tx, _) = broadcast::channel(1000);
         let (command_tx, command_rx) = mpsc::channel(100);
-        
+
         let components = Arc::new(ComponentManager::new());
         let deduplicator = Arc::new(MessageDeduplicator::new(config.dedup_window));
         let message_queue = Arc::new(MessageQueue::new(1000));
@@ -175,7 +212,7 @@ impl MeshService {
             config.treasury_participation,
         )));
         let anti_cheat = Arc::new(AntiCheatMonitor::new(config.enable_anti_cheat));
-        
+
         let service = Self {
             config,
             components,
@@ -184,11 +221,11 @@ impl MeshService {
             game_sessions,
             anti_cheat,
             proof_of_relay: None, // Will be set later via set_proof_of_relay
-            
+
             // Gaming components - initially None, will be set via setters
             game_orchestrator: None,
             consensus_manager: None,
-            
+
             peers: Arc::new(RwLock::new(FxHashMap::default())),
             _routing_table: Arc::new(RwLock::new(RoutingTable {
                 routes: FxHashMap::default(),
@@ -200,59 +237,67 @@ impl MeshService {
             _start_time: Instant::now(),
             stats: Arc::new(RwLock::new(MeshStatistics::default())),
         };
-        
+
         (service, command_tx)
     }
-    
+
     /// Set the proof of relay system for mining rewards
     pub fn set_proof_of_relay(&mut self, proof_of_relay: Arc<ProofOfRelay>) {
         self.proof_of_relay = Some(proof_of_relay);
     }
-    
+
     /// Set the game orchestrator
     pub fn set_game_orchestrator(&mut self, orchestrator: Arc<GameOrchestrator>) {
         self.game_orchestrator = Some(orchestrator);
     }
-    
+
     /// Set the consensus game manager
     pub fn set_consensus_manager(&mut self, manager: Arc<ConsensusGameManager>) {
         self.consensus_manager = Some(manager);
     }
-    
+
     /// Start the mesh service
     pub async fn start(&mut self) -> Result<()> {
         *self.is_running.write().await = true;
-        
+
         // Start all components
         self.components.start_all().await?;
-        
+
         // Start background tasks
         self.start_heartbeat_task().await;
         self.start_maintenance_task().await;
         self.start_message_processor().await;
         self.start_command_processor().await;
-        
+
         // Start game session manager
         if self.config.treasury_participation {
-            self.game_sessions.write().await.start_treasury_bot().await?;
+            self.game_sessions
+                .write()
+                .await
+                .start_treasury_bot()
+                .await?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Stop the mesh service
     pub async fn stop(&mut self) -> Result<()> {
         *self.is_running.write().await = false;
-        
+
         // Stop all components
         self.components.stop_all().await?;
-        
+
         // Clean up game sessions
-        self.game_sessions.write().await.cleanup_all_sessions().await;
-        
+        self.game_sessions
+            .write()
+            .await
+            .cleanup_all_sessions()
+            .await;
+
         Ok(())
     }
-    
+
     /// Process an incoming transport event
     pub async fn handle_transport_event(&self, event: TransportEvent) -> Result<()> {
         match event {
@@ -273,7 +318,7 @@ impl MeshService {
         }
         Ok(())
     }
-    
+
     /// Handle a new peer connection
     async fn handle_peer_connected(&self, peer_id: PeerId) -> Result<()> {
         let peer_info = PeerInfo {
@@ -292,65 +337,70 @@ impl MeshService {
             trust_score: 0,
             active_games: Vec::new(),
         };
-        
+
         self.peers.write().await.insert(peer_id, peer_info.clone());
-        
+
         // Notify components
         self.components.notify_peer_connected(peer_id).await;
-        
+
         // Emit event
         let _ = self.event_tx.send(MeshEvent::PeerConnected {
             peer_id,
             capabilities: peer_info.capabilities,
         });
-        
+
         // Update stats
         self.stats.write().await.active_peers += 1;
-        
+
         Ok(())
     }
-    
+
     /// Handle a peer disconnection
     async fn handle_peer_disconnected(&self, peer_id: PeerId, reason: String) -> Result<()> {
         // Remove from peers
         if let Some(peer_info) = self.peers.write().await.remove(&peer_id) {
             // Clean up game sessions
             for game_id in &peer_info.active_games {
-                self.game_sessions.write().await
-                    .handle_player_disconnect(*game_id, peer_id).await;
+                self.game_sessions
+                    .write()
+                    .await
+                    .handle_player_disconnect(*game_id, peer_id)
+                    .await;
             }
         }
-        
+
         // Notify components
         self.components.notify_peer_disconnected(peer_id).await;
-        
+
         // Emit event
-        let _ = self.event_tx.send(MeshEvent::PeerDisconnected { peer_id, reason });
-        
+        let _ = self
+            .event_tx
+            .send(MeshEvent::PeerDisconnected { peer_id, reason });
+
         // Update stats
         let mut stats = self.stats.write().await;
         if stats.active_peers > 0 {
             stats.active_peers -= 1;
         }
-        
+
         Ok(())
     }
-    
+
     /// Handle received data from a peer
     async fn handle_data_received(&self, peer_id: PeerId, data: Vec<u8>) -> Result<()> {
         // Track data size before moving
         let data_len = data.len();
-        
+
         // Deserialize packet
         let mut cursor = std::io::Cursor::new(data);
         let packet = BitchatPacket::deserialize(&mut cursor)?;
-        
+
         // Check for duplicates
         if self.deduplicator.is_duplicate(&packet).await {
             self.stats.write().await.messages_dropped += 1;
             return Ok(());
         }
-        
+
         // Anti-cheat analysis
         if self.config.enable_anti_cheat {
             if let Some(violation) = self.anti_cheat.analyze_packet(&packet, peer_id).await {
@@ -359,10 +409,10 @@ impl MeshService {
                     violation: violation.clone(),
                 });
                 self.stats.write().await.anti_cheat_violations += 1;
-                
+
                 // Adjust trust score
                 self.update_peer_trust(peer_id, -10).await;
-                
+
                 // Severe violations result in immediate ban
                 if violation.contains("severe") {
                     self.ban_peer(peer_id, Duration::from_secs(3600)).await?;
@@ -370,21 +420,24 @@ impl MeshService {
                 }
             }
         }
-        
+
         // Update peer last seen
         if let Some(peer) = self.peers.write().await.get_mut(&peer_id) {
             peer.last_seen = Instant::now();
         }
-        
+
         // Process packet based on type
         match packet.packet_type {
-            0x20..=0x23 => { // Game packets
+            0x20..=0x23 => {
+                // Game packets
                 self.handle_game_packet(peer_id, packet).await?;
             }
-            0x10 => { // Message packet
+            0x10 => {
+                // Message packet
                 self.handle_message_packet(peer_id, packet).await?;
             }
-            0x01 => { // Heartbeat
+            0x01 => {
+                // Heartbeat
                 self.handle_heartbeat(peer_id, packet).await?;
             }
             _ => {
@@ -394,21 +447,24 @@ impl MeshService {
                 }
             }
         }
-        
+
         // Update stats
         self.stats.write().await.messages_received += 1;
         self.stats.write().await.bytes_received += data_len as u64;
-        
+
         Ok(())
     }
-    
+
     /// Handle game-related packets
     async fn handle_game_packet(&self, from: PeerId, packet: BitchatPacket) -> Result<()> {
-        self.game_sessions.write().await
-            .process_game_packet(from, packet).await?;
+        self.game_sessions
+            .write()
+            .await
+            .process_game_packet(from, packet)
+            .await?;
         Ok(())
     }
-    
+
     /// Handle regular message packets
     async fn handle_message_packet(&self, from: PeerId, packet: BitchatPacket) -> Result<()> {
         // Emit event for application layer
@@ -416,15 +472,15 @@ impl MeshService {
             from,
             packet: packet.clone(),
         });
-        
+
         // Forward if necessary based on TTL
         if packet.ttl > 1 {
             self.forward_packet(packet).await?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Handle heartbeat packets
     async fn handle_heartbeat(&self, from: PeerId, _packet: BitchatPacket) -> Result<()> {
         if let Some(peer) = self.peers.write().await.get_mut(&from) {
@@ -433,101 +489,104 @@ impl MeshService {
         }
         Ok(())
     }
-    
+
     /// Forward a packet to its destination
     async fn forward_packet(&self, mut packet: BitchatPacket) -> Result<()> {
         packet.ttl -= 1;
-        
+
         // Extract routing information
         let source = packet.get_sender().unwrap_or([0u8; 32]);
         let destination = packet.get_receiver().unwrap_or([0u8; 32]);
         let hop_count = 8 - packet.ttl; // Calculate how many hops so far
-        
+
         // Generate packet hash for relay tracking
         let packet_hash = self.calculate_packet_hash(&packet);
-        
+
         // Record relay event for mining rewards
         if let Some(proof_of_relay) = &self.proof_of_relay {
-            if let Err(e) = proof_of_relay.record_relay(
-                self.config.peer_id,
-                packet_hash,
-                source,
-                destination,
-                hop_count,
-            ).await {
+            if let Err(e) = proof_of_relay
+                .record_relay(
+                    self.config.peer_id,
+                    packet_hash,
+                    source,
+                    destination,
+                    hop_count,
+                )
+                .await
+            {
                 log::warn!("Failed to record relay for mining: {}", e);
             }
         }
-        
+
         // Extract target from TLV data if present
         // For now, just count as forwarded
         // Full routing logic would examine TLV fields
         self.stats.write().await.messages_forwarded += 1;
-        
+
         Ok(())
     }
-    
+
     /// Calculate packet hash for relay tracking
     fn calculate_packet_hash(&self, packet: &BitchatPacket) -> [u8; 32] {
-        use sha2::{Sha256, Digest};
-        
+        use sha2::{Digest, Sha256};
+
         let mut hasher = Sha256::new();
         hasher.update([packet.version, packet.packet_type, packet.flags, packet.ttl]);
         hasher.update(packet.total_length.to_be_bytes());
         hasher.update(packet.sequence.to_be_bytes());
-        
+
         // Add TLV data to hash
         for tlv in &packet.tlv_data {
             hasher.update([tlv.field_type]);
             hasher.update(tlv.length.to_be_bytes());
             hasher.update(&tlv.value);
         }
-        
+
         let result = hasher.finalize();
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&result);
         hash
     }
-    
+
     /// Handle peer errors
     async fn handle_peer_error(&self, peer_id: PeerId, error: String) -> Result<()> {
         log::error!("Peer {} error: {}", hex::encode(peer_id), error);
-        
+
         // Decrease trust score
         self.update_peer_trust(peer_id, -5).await;
-        
+
         Ok(())
     }
-    
+
     /// Update a peer's trust score
     async fn update_peer_trust(&self, peer_id: PeerId, delta: i32) {
         if let Some(peer) = self.peers.write().await.get_mut(&peer_id) {
             peer.trust_score = (peer.trust_score + delta).max(-100).min(100);
         }
     }
-    
+
     /// Ban a peer for a specified duration
     async fn ban_peer(&self, peer_id: PeerId, duration: Duration) -> Result<()> {
         // Remove from peers
         self.peers.write().await.remove(&peer_id);
-        
+
         // Add to ban list (would be implemented in anti-cheat module)
         self.anti_cheat.ban_peer(peer_id, duration).await;
-        
+
         // Disconnect at transport level
         // transport.disconnect(peer_id).await?;
-        
+
         Ok(())
     }
-    
+
     /// Start heartbeat task
     async fn start_heartbeat_task(&self) {
         let interval_duration = self.config.heartbeat_interval;
         let is_running = self.is_running.clone();
-        
+
         tokio::spawn(async move {
             let mut heartbeat_interval = interval(interval_duration);
-            
+
             while *is_running.read().await {
                 heartbeat_interval.tick().await;
                 // Send heartbeats to all peers
@@ -535,20 +594,20 @@ impl MeshService {
             }
         });
     }
-    
+
     /// Start maintenance task
     async fn start_maintenance_task(&self) {
         let is_running = self.is_running.clone();
         let peers = self.peers.clone();
         let session_timeout = self.config.session_timeout;
         let stats = self.stats.clone();
-        
+
         tokio::spawn(async move {
             let mut maintenance_interval = interval(Duration::from_secs(60));
-            
+
             while *is_running.read().await {
                 maintenance_interval.tick().await;
-                
+
                 // Clean up timed-out peers
                 let now = Instant::now();
                 let mut peers_write = peers.write().await;
@@ -557,7 +616,7 @@ impl MeshService {
                     .filter(|(_, info)| now - info.last_seen > session_timeout)
                     .map(|(id, _)| *id)
                     .collect();
-                
+
                 for peer_id in timed_out {
                     peers_write.remove(&peer_id);
                     if stats.read().await.active_peers > 0 {
@@ -567,17 +626,20 @@ impl MeshService {
             }
         });
     }
-    
+
     /// Start message processor task
     async fn start_message_processor(&self) {
         let is_running = self.is_running.clone();
         let message_queue = self.message_queue.clone();
         let components = self.components.clone();
-        
+
         tokio::spawn(async move {
             while *is_running.read().await {
                 // Use async dequeue to avoid busy-waiting
-                if let Some(packet) = message_queue.dequeue_async_timeout(Duration::from_secs(1)).await {
+                if let Some(packet) = message_queue
+                    .dequeue_async_timeout(Duration::from_secs(1))
+                    .await
+                {
                     // Process with appropriate component
                     let _ = components.process_packet(packet).await;
                 }
@@ -585,11 +647,11 @@ impl MeshService {
             }
         });
     }
-    
+
     /// Start command processor task
     async fn start_command_processor(&mut self) {
         let is_running = self.is_running.clone();
-        
+
         while *is_running.read().await {
             if let Some(command) = self.command_rx.recv().await {
                 match command {
@@ -602,13 +664,18 @@ impl MeshService {
                         // Implement broadcast logic
                         let _ = packet;
                     }
-                    MeshCommand::CreateGameSession { game_id, participants } => {
-                        self.game_sessions.write().await
-                            .create_session(game_id, participants).await;
+                    MeshCommand::CreateGameSession {
+                        game_id,
+                        participants,
+                    } => {
+                        self.game_sessions
+                            .write()
+                            .await
+                            .create_session(game_id, participants)
+                            .await;
                     }
                     MeshCommand::EndGameSession { game_id } => {
-                        self.game_sessions.write().await
-                            .end_session(game_id).await;
+                        self.game_sessions.write().await.end_session(game_id).await;
                     }
                     MeshCommand::BanPeer { peer_id, duration } => {
                         let _ = self.ban_peer(peer_id, duration).await;
@@ -620,12 +687,12 @@ impl MeshService {
             }
         }
     }
-    
+
     /// Get a subscription to mesh events
     pub fn subscribe(&self) -> broadcast::Receiver<MeshEvent> {
         self.event_tx.subscribe()
     }
-    
+
     /// Get current statistics
     pub async fn get_stats(&self) -> MeshStatistics {
         self.stats.read().await.clone()

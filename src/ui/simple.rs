@@ -1,5 +1,5 @@
 //! Simplified UI implementation for BitCraps
-//! 
+//!
 //! This provides a minimal working UI for compilation while maintaining
 //! the core CLI functionality.
 
@@ -11,10 +11,10 @@ use clap::{Parser, Subcommand};
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
-    
+
     #[arg(short, long, default_value = "8080")]
     pub port: u16,
-    
+
     #[arg(short, long)]
     pub config: Option<String>,
 }
@@ -63,7 +63,7 @@ impl SimpleUI {
             current_view: ViewMode::Chat,
         }
     }
-    
+
     pub fn switch_view(&mut self, view: ViewMode) {
         self.current_view = view;
     }

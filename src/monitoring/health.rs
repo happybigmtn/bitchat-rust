@@ -1,6 +1,6 @@
-use std::time::Instant;
-use std::sync::Arc;
 use crate::monitoring::metrics::PerformanceMetrics;
+use std::sync::Arc;
+use std::time::Instant;
 
 #[derive(Debug, Clone)]
 pub struct HealthStatus {
@@ -23,25 +23,27 @@ impl HealthCheck {
             _metrics: metrics,
         }
     }
-    
+
     pub fn check_health(&self) -> HealthStatus {
         let uptime = self.start_time.elapsed();
         let memory_usage = self.get_memory_usage();
         let active_peers = 0; // Placeholder - would get from actual network metrics
-        
+
         HealthStatus {
-            status: if memory_usage < 1024 * 1024 * 1024 { // 1GB limit
+            status: if memory_usage < 1024 * 1024 * 1024 {
+                // 1GB limit
                 "healthy"
             } else {
                 "degraded"
-            }.to_string(),
+            }
+            .to_string(),
             uptime_seconds: uptime.as_secs(),
             memory_mb: memory_usage / 1024 / 1024,
             active_peers,
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
-    
+
     fn get_memory_usage(&self) -> u64 {
         // Simple memory usage estimation
         // In a real implementation, you'd use system APIs

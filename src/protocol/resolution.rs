@@ -1,41 +1,71 @@
 //! Bet resolution logic for all craps bet types
-//! 
+//!
 //! This module contains the complex logic for resolving different
 //! types of bets based on dice rolls and game state.
 
-use std::collections::HashMap;
-use super::{PeerId, BetType, Bet, CrapTokens, DiceRoll};
+use super::{Bet, BetType, CrapTokens, DiceRoll, PeerId};
 use crate::protocol::bet_types::BetResolution;
 use crate::protocol::game_logic::CrapsGame;
+use std::collections::HashMap;
 
 /// Trait for resolving bets based on dice rolls
 pub trait BetResolver {
     /// Resolve come-out roll bets
     fn resolve_comeout_roll(&self, roll: DiceRoll) -> Vec<BetResolution>;
-    
+
     /// Resolve point phase roll bets  
     fn resolve_point_roll(&mut self, roll: DiceRoll) -> Vec<BetResolution>;
-    
+
     /// Resolve one-roll proposition bets
     fn resolve_one_roll_bets(&self, roll: DiceRoll) -> Vec<BetResolution>;
-    
+
     /// Resolve YES bets (player bets number will come before 7)
-    fn resolve_yes_bets(&self, roll: DiceRoll, player: &PeerId, bets: &HashMap<BetType, Bet>) -> Vec<BetResolution>;
-    
+    fn resolve_yes_bets(
+        &self,
+        roll: DiceRoll,
+        player: &PeerId,
+        bets: &HashMap<BetType, Bet>,
+    ) -> Vec<BetResolution>;
+
     /// Resolve NO bets (player bets 7 will come before the number)
-    fn resolve_no_bets(&self, roll: DiceRoll, player: &PeerId, bets: &HashMap<BetType, Bet>) -> Vec<BetResolution>;
-    
+    fn resolve_no_bets(
+        &self,
+        roll: DiceRoll,
+        player: &PeerId,
+        bets: &HashMap<BetType, Bet>,
+    ) -> Vec<BetResolution>;
+
     /// Resolve Hardway bets
-    fn resolve_hardway_bets(&self, roll: DiceRoll, player: &PeerId, bets: &HashMap<BetType, Bet>) -> Vec<BetResolution>;
-    
+    fn resolve_hardway_bets(
+        &self,
+        roll: DiceRoll,
+        player: &PeerId,
+        bets: &HashMap<BetType, Bet>,
+    ) -> Vec<BetResolution>;
+
     /// Resolve Come bets (similar to Pass Line but placed after comeout)
-    fn resolve_come_bets(&mut self, roll: DiceRoll, player: &PeerId, bets: &HashMap<BetType, Bet>) -> Vec<BetResolution>;
-    
+    fn resolve_come_bets(
+        &mut self,
+        roll: DiceRoll,
+        player: &PeerId,
+        bets: &HashMap<BetType, Bet>,
+    ) -> Vec<BetResolution>;
+
     /// Resolve Don't Come bets (opposite of Come)
-    fn resolve_dont_come_bets(&mut self, roll: DiceRoll, player: &PeerId, bets: &HashMap<BetType, Bet>) -> Vec<BetResolution>;
-    
+    fn resolve_dont_come_bets(
+        &mut self,
+        roll: DiceRoll,
+        player: &PeerId,
+        bets: &HashMap<BetType, Bet>,
+    ) -> Vec<BetResolution>;
+
     /// Resolve NEXT bets (one-roll proposition bets)
-    fn resolve_next_bets(&self, roll: DiceRoll, player: &PeerId, bets: &HashMap<BetType, Bet>) -> Vec<BetResolution>;
+    fn resolve_next_bets(
+        &self,
+        roll: DiceRoll,
+        player: &PeerId,
+        bets: &HashMap<BetType, Bet>,
+    ) -> Vec<BetResolution>;
 }
 
 impl BetResolver for CrapsGame {
@@ -43,7 +73,7 @@ impl BetResolver for CrapsGame {
     fn resolve_comeout_roll(&self, roll: DiceRoll) -> Vec<BetResolution> {
         let mut resolutions = Vec::new();
         let total = roll.total();
-        
+
         for (player, bets) in &self.player_bets {
             // Pass Line
             if let Some(bet) = bets.get(&BetType::Pass) {
@@ -56,18 +86,18 @@ impl BetResolver for CrapsGame {
                             amount: bet.amount,
                             payout,
                         });
-                    },
+                    }
                     2 | 3 | 12 => {
                         resolutions.push(BetResolution::Lost {
                             player: *player,
                             bet_type: BetType::Pass,
                             amount: bet.amount,
                         });
-                    },
-                    _ => {}, // Point established, bet remains
+                    }
+                    _ => {} // Point established, bet remains
                 }
             }
-            
+
             // Don't Pass
             if let Some(bet) = bets.get(&BetType::DontPass) {
                 match total {
@@ -79,34 +109,34 @@ impl BetResolver for CrapsGame {
                             amount: bet.amount,
                             payout,
                         });
-                    },
+                    }
                     7 | 11 => {
                         resolutions.push(BetResolution::Lost {
                             player: *player,
                             bet_type: BetType::DontPass,
                             amount: bet.amount,
                         });
-                    },
+                    }
                     12 => {
                         resolutions.push(BetResolution::Push {
                             player: *player,
                             bet_type: BetType::DontPass,
                             amount: bet.amount,
                         });
-                    },
-                    _ => {}, // Point established, bet remains
+                    }
+                    _ => {} // Point established, bet remains
                 }
             }
         }
-        
+
         resolutions
     }
-    
+
     /// Resolve point phase roll bets
     fn resolve_point_roll(&mut self, roll: DiceRoll) -> Vec<BetResolution> {
         let mut resolutions = Vec::new();
         let total = roll.total();
-        
+
         // Ensure we have a valid point for Point phase
         let point = match self.point {
             Some(p) => p,
@@ -115,7 +145,7 @@ impl BetResolver for CrapsGame {
                 return resolutions; // Return empty resolutions
             }
         };
-        
+
         for (player, bets) in &self.player_bets {
             // Check if point made or seven-out
             if total == point {
@@ -129,7 +159,7 @@ impl BetResolver for CrapsGame {
                         payout,
                     });
                 }
-                
+
                 // Don't Pass loses
                 if let Some(bet) = bets.get(&BetType::DontPass) {
                     resolutions.push(BetResolution::Lost {
@@ -138,11 +168,13 @@ impl BetResolver for CrapsGame {
                         amount: bet.amount,
                     });
                 }
-                
+
                 // Resolve Pass Odds bets
                 if let Some(bet) = bets.get(&BetType::OddsPass) {
                     let multiplier = get_odds_multiplier(point, true);
-                    let payout = CrapTokens::new_unchecked(bet.amount.amount() + (bet.amount.amount() * multiplier as u64 / 100));
+                    let payout = CrapTokens::new_unchecked(
+                        bet.amount.amount() + (bet.amount.amount() * multiplier as u64 / 100),
+                    );
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type: BetType::OddsPass,
@@ -159,7 +191,7 @@ impl BetResolver for CrapsGame {
                         amount: bet.amount,
                     });
                 }
-                
+
                 // Don't Pass wins
                 if let Some(bet) = bets.get(&BetType::DontPass) {
                     let payout = CrapTokens::new_unchecked(bet.amount.amount() * 2);
@@ -170,12 +202,22 @@ impl BetResolver for CrapsGame {
                         payout,
                     });
                 }
-                
+
                 // All YES bets lose on 7
-                for bet_type in [BetType::Yes2, BetType::Yes3, BetType::Yes4, 
-                                BetType::Yes5, BetType::Yes6, BetType::Yes8,
-                                BetType::Yes9, BetType::Yes10, BetType::Yes11, 
-                                BetType::Yes12].iter() {
+                for bet_type in [
+                    BetType::Yes2,
+                    BetType::Yes3,
+                    BetType::Yes4,
+                    BetType::Yes5,
+                    BetType::Yes6,
+                    BetType::Yes8,
+                    BetType::Yes9,
+                    BetType::Yes10,
+                    BetType::Yes11,
+                    BetType::Yes12,
+                ]
+                .iter()
+                {
                     if let Some(bet) = bets.get(bet_type) {
                         resolutions.push(BetResolution::Lost {
                             player: *player,
@@ -184,10 +226,16 @@ impl BetResolver for CrapsGame {
                         });
                     }
                 }
-                
+
                 // All hardways lose on 7
-                for bet_type in [BetType::Hard4, BetType::Hard6, 
-                                BetType::Hard8, BetType::Hard10].iter() {
+                for bet_type in [
+                    BetType::Hard4,
+                    BetType::Hard6,
+                    BetType::Hard8,
+                    BetType::Hard10,
+                ]
+                .iter()
+                {
                     if let Some(bet) = bets.get(bet_type) {
                         resolutions.push(BetResolution::Lost {
                             player: *player,
@@ -203,26 +251,26 @@ impl BetResolver for CrapsGame {
                 resolutions.extend(self.resolve_hardway_bets(roll, player, bets));
             }
         }
-        
+
         // Resolve Come/Don't Come bets (need separate loop to avoid borrow conflicts)
         let player_bets_clone = self.player_bets.clone();
         for (player, bets) in &player_bets_clone {
             resolutions.extend(self.resolve_come_bets(roll, player, bets));
             resolutions.extend(self.resolve_dont_come_bets(roll, player, bets));
         }
-        
+
         resolutions
     }
-    
+
     /// Resolve one-roll proposition bets
     fn resolve_one_roll_bets(&self, roll: DiceRoll) -> Vec<BetResolution> {
         let mut resolutions = Vec::new();
         let total = roll.total();
-        
+
         for (player, bets) in &self.player_bets {
             // NEXT bets - win if exact number rolled
             resolutions.extend(self.resolve_next_bets(roll, player, bets));
-            
+
             // Field bet
             if let Some(bet) = bets.get(&BetType::Field) {
                 match total {
@@ -235,7 +283,7 @@ impl BetResolver for CrapsGame {
                             amount: bet.amount,
                             payout,
                         });
-                    },
+                    }
                     3 | 4 | 9 | 10 | 11 => {
                         // Field pays 1:1 on these
                         let payout = CrapTokens::new_unchecked(bet.amount.amount() * 2);
@@ -245,7 +293,7 @@ impl BetResolver for CrapsGame {
                             amount: bet.amount,
                             payout,
                         });
-                    },
+                    }
                     _ => {
                         resolutions.push(BetResolution::Lost {
                             player: *player,
@@ -256,19 +304,33 @@ impl BetResolver for CrapsGame {
                 }
             }
         }
-        
+
         resolutions
     }
-    
+
     /// Resolve YES bets (player bets number will come before 7)
-    fn resolve_yes_bets(&self, roll: DiceRoll, player: &PeerId, bets: &HashMap<BetType, Bet>) -> Vec<BetResolution> {
+    fn resolve_yes_bets(
+        &self,
+        roll: DiceRoll,
+        player: &PeerId,
+        bets: &HashMap<BetType, Bet>,
+    ) -> Vec<BetResolution> {
         let mut resolutions = Vec::new();
         let total = roll.total();
-        
+
         // Check each YES bet type
-        for bet_type in [BetType::Yes2, BetType::Yes3, BetType::Yes4, BetType::Yes5, 
-                         BetType::Yes6, BetType::Yes8, BetType::Yes9, BetType::Yes10,
-                         BetType::Yes11, BetType::Yes12] {
+        for bet_type in [
+            BetType::Yes2,
+            BetType::Yes3,
+            BetType::Yes4,
+            BetType::Yes5,
+            BetType::Yes6,
+            BetType::Yes8,
+            BetType::Yes9,
+            BetType::Yes10,
+            BetType::Yes11,
+            BetType::Yes12,
+        ] {
             if let Some(bet) = bets.get(&bet_type) {
                 // Extract the target number from the bet type
                 let target = match bet_type {
@@ -284,12 +346,14 @@ impl BetResolver for CrapsGame {
                     BetType::Yes12 => 12,
                     _ => continue,
                 };
-                
+
                 if total == target {
                     // Win! Number came up
                     use crate::protocol::payouts::PayoutCalculator;
                     let multiplier = self.get_yes_bet_multiplier(target);
-                    let payout = CrapTokens::new_unchecked(bet.amount.amount() + (bet.amount.amount() * multiplier as u64 / 100));
+                    let payout = CrapTokens::new_unchecked(
+                        bet.amount.amount() + (bet.amount.amount() * multiplier as u64 / 100),
+                    );
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type,
@@ -306,18 +370,32 @@ impl BetResolver for CrapsGame {
                 }
             }
         }
-        
+
         resolutions
     }
-    
+
     /// Resolve NO bets (player bets 7 will come before the number)
-    fn resolve_no_bets(&self, roll: DiceRoll, player: &PeerId, bets: &HashMap<BetType, Bet>) -> Vec<BetResolution> {
+    fn resolve_no_bets(
+        &self,
+        roll: DiceRoll,
+        player: &PeerId,
+        bets: &HashMap<BetType, Bet>,
+    ) -> Vec<BetResolution> {
         let mut resolutions = Vec::new();
         let total = roll.total();
-        
-        for bet_type in [BetType::No2, BetType::No3, BetType::No4, BetType::No5,
-                         BetType::No6, BetType::No8, BetType::No9, BetType::No10,
-                         BetType::No11, BetType::No12] {
+
+        for bet_type in [
+            BetType::No2,
+            BetType::No3,
+            BetType::No4,
+            BetType::No5,
+            BetType::No6,
+            BetType::No8,
+            BetType::No9,
+            BetType::No10,
+            BetType::No11,
+            BetType::No12,
+        ] {
             if let Some(bet) = bets.get(&bet_type) {
                 let target = match bet_type {
                     BetType::No2 => 2,
@@ -332,12 +410,14 @@ impl BetResolver for CrapsGame {
                     BetType::No12 => 12,
                     _ => continue,
                 };
-                
+
                 if total == 7 {
                     // Win! Seven came first
                     use crate::protocol::payouts::PayoutCalculator;
                     let multiplier = self.get_no_bet_multiplier(target);
-                    let payout = CrapTokens::new_unchecked(bet.amount.amount() + (bet.amount.amount() * multiplier as u64 / 100));
+                    let payout = CrapTokens::new_unchecked(
+                        bet.amount.amount() + (bet.amount.amount() * multiplier as u64 / 100),
+                    );
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type,
@@ -354,16 +434,21 @@ impl BetResolver for CrapsGame {
                 }
             }
         }
-        
+
         resolutions
     }
-    
+
     /// Resolve Hardway bets
-    fn resolve_hardway_bets(&self, roll: DiceRoll, player: &PeerId, bets: &HashMap<BetType, Bet>) -> Vec<BetResolution> {
+    fn resolve_hardway_bets(
+        &self,
+        roll: DiceRoll,
+        player: &PeerId,
+        bets: &HashMap<BetType, Bet>,
+    ) -> Vec<BetResolution> {
         let mut resolutions = Vec::new();
         let total = roll.total();
         let is_hard = roll.is_hard_way();
-        
+
         // Hard 4 (2+2)
         if let Some(bet) = bets.get(&BetType::Hard4) {
             if total == 4 {
@@ -393,7 +478,7 @@ impl BetResolver for CrapsGame {
                 });
             }
         }
-        
+
         // Similar logic for Hard 6, 8, 10
         for (bet_type, target, payout_mult) in [
             (BetType::Hard6, 6, 10),
@@ -426,15 +511,20 @@ impl BetResolver for CrapsGame {
                 }
             }
         }
-        
+
         resolutions
     }
-    
+
     /// Resolve Come bets (similar to Pass Line but placed after comeout)
-    fn resolve_come_bets(&mut self, roll: DiceRoll, player: &PeerId, bets: &HashMap<BetType, Bet>) -> Vec<BetResolution> {
+    fn resolve_come_bets(
+        &mut self,
+        roll: DiceRoll,
+        player: &PeerId,
+        bets: &HashMap<BetType, Bet>,
+    ) -> Vec<BetResolution> {
         let mut resolutions = Vec::new();
         let total = roll.total();
-        
+
         if let Some(bet) = bets.get(&BetType::Come) {
             match total {
                 7 | 11 => {
@@ -446,7 +536,7 @@ impl BetResolver for CrapsGame {
                         amount: bet.amount,
                         payout,
                     });
-                },
+                }
                 2 | 3 | 12 => {
                     // Come bet loses immediately
                     resolutions.push(BetResolution::Lost {
@@ -454,18 +544,18 @@ impl BetResolver for CrapsGame {
                         bet_type: BetType::Come,
                         amount: bet.amount,
                     });
-                },
+                }
                 4 | 5 | 6 | 8 | 9 | 10 => {
                     // Establish Come point - move bet to come_points tracking
                     self.come_points
                         .entry(*player)
                         .or_default()
                         .insert(total, bet.amount);
-                },
+                }
                 _ => {}
             }
         }
-        
+
         // Check existing Come points
         if let Some(player_come_points) = self.come_points.get(player) {
             for (&point, &amount) in player_come_points.iter() {
@@ -488,15 +578,20 @@ impl BetResolver for CrapsGame {
                 }
             }
         }
-        
+
         resolutions
     }
-    
+
     /// Resolve Don't Come bets (opposite of Come)
-    fn resolve_dont_come_bets(&mut self, roll: DiceRoll, player: &PeerId, bets: &HashMap<BetType, Bet>) -> Vec<BetResolution> {
+    fn resolve_dont_come_bets(
+        &mut self,
+        roll: DiceRoll,
+        player: &PeerId,
+        bets: &HashMap<BetType, Bet>,
+    ) -> Vec<BetResolution> {
         let mut resolutions = Vec::new();
         let total = roll.total();
-        
+
         if let Some(bet) = bets.get(&BetType::DontCome) {
             match total {
                 2 | 3 => {
@@ -508,7 +603,7 @@ impl BetResolver for CrapsGame {
                         amount: bet.amount,
                         payout,
                     });
-                },
+                }
                 7 | 11 => {
                     // Don't Come bet loses immediately
                     resolutions.push(BetResolution::Lost {
@@ -516,7 +611,7 @@ impl BetResolver for CrapsGame {
                         bet_type: BetType::DontCome,
                         amount: bet.amount,
                     });
-                },
+                }
                 12 => {
                     // Don't Come pushes on 12
                     resolutions.push(BetResolution::Push {
@@ -524,18 +619,18 @@ impl BetResolver for CrapsGame {
                         bet_type: BetType::DontCome,
                         amount: bet.amount,
                     });
-                },
+                }
                 4 | 5 | 6 | 8 | 9 | 10 => {
                     // Establish Don't Come point
                     self.dont_come_points
                         .entry(*player)
                         .or_default()
                         .insert(total, bet.amount);
-                },
+                }
                 _ => {}
             }
         }
-        
+
         // Check existing Don't Come points
         if let Some(player_dont_come_points) = self.dont_come_points.get(player) {
             for (&point, &amount) in player_dont_come_points.iter() {
@@ -558,18 +653,33 @@ impl BetResolver for CrapsGame {
                 }
             }
         }
-        
+
         resolutions
     }
-    
+
     /// Resolve NEXT bets (one-roll proposition bets)
-    fn resolve_next_bets(&self, roll: DiceRoll, player: &PeerId, bets: &HashMap<BetType, Bet>) -> Vec<BetResolution> {
+    fn resolve_next_bets(
+        &self,
+        roll: DiceRoll,
+        player: &PeerId,
+        bets: &HashMap<BetType, Bet>,
+    ) -> Vec<BetResolution> {
         let mut resolutions = Vec::new();
         let total = roll.total();
-        
-        for bet_type in [BetType::Next2, BetType::Next3, BetType::Next4, BetType::Next5,
-                         BetType::Next6, BetType::Next7, BetType::Next8, BetType::Next9,
-                         BetType::Next10, BetType::Next11, BetType::Next12] {
+
+        for bet_type in [
+            BetType::Next2,
+            BetType::Next3,
+            BetType::Next4,
+            BetType::Next5,
+            BetType::Next6,
+            BetType::Next7,
+            BetType::Next8,
+            BetType::Next9,
+            BetType::Next10,
+            BetType::Next11,
+            BetType::Next12,
+        ] {
             if let Some(bet) = bets.get(&bet_type) {
                 let target = match bet_type {
                     BetType::Next2 => 2,
@@ -585,12 +695,14 @@ impl BetResolver for CrapsGame {
                     BetType::Next12 => 12,
                     _ => continue,
                 };
-                
+
                 if total == target {
                     // Win!
                     use crate::protocol::payouts::PayoutCalculator;
                     let multiplier = self.get_next_bet_multiplier(target);
-                    let payout = CrapTokens::new_unchecked(bet.amount.amount() + (bet.amount.amount() * multiplier as u64 / 100));
+                    let payout = CrapTokens::new_unchecked(
+                        bet.amount.amount() + (bet.amount.amount() * multiplier as u64 / 100),
+                    );
                     resolutions.push(BetResolution::Won {
                         player: *player,
                         bet_type,
@@ -607,7 +719,7 @@ impl BetResolver for CrapsGame {
                 }
             }
         }
-        
+
         resolutions
     }
 }
@@ -615,12 +727,12 @@ impl BetResolver for CrapsGame {
 /// Get true odds multiplier for odds bets
 pub fn get_odds_multiplier(point: u8, is_pass: bool) -> u32 {
     match (point, is_pass) {
-        (4 | 10, true) => 200,  // 2:1 for pass
-        (5 | 9, true) => 150,   // 3:2 for pass
-        (6 | 8, true) => 120,   // 6:5 for pass
-        (4 | 10, false) => 50,  // 1:2 for don't pass
-        (5 | 9, false) => 67,   // 2:3 for don't pass
-        (6 | 8, false) => 83,   // 5:6 for don't pass
+        (4 | 10, true) => 200, // 2:1 for pass
+        (5 | 9, true) => 150,  // 3:2 for pass
+        (6 | 8, true) => 120,  // 6:5 for pass
+        (4 | 10, false) => 50, // 1:2 for don't pass
+        (5 | 9, false) => 67,  // 2:3 for don't pass
+        (6 | 8, false) => 83,  // 5:6 for don't pass
         _ => 100,
     }
 }
@@ -629,33 +741,33 @@ pub fn get_odds_multiplier(point: u8, is_pass: bool) -> u32 {
 mod tests {
     use super::*;
     use crate::protocol::game_logic::CrapsGame;
-    
+
     #[test]
     fn test_comeout_pass_line_win() {
         let game = CrapsGame::new([1; 16], [2; 32]);
         let roll = DiceRoll::new(4, 3).unwrap(); // Total 7
-        
+
         let resolutions = game.resolve_comeout_roll(roll);
         // Would need to set up bets to test properly
         assert!(resolutions.is_empty()); // No bets placed yet
     }
-    
-    #[test] 
+
+    #[test]
     fn test_odds_multipliers() {
-        assert_eq!(get_odds_multiplier(4, true), 200);  // 2:1
-        assert_eq!(get_odds_multiplier(5, true), 150);  // 3:2
-        assert_eq!(get_odds_multiplier(6, true), 120);  // 6:5
-        assert_eq!(get_odds_multiplier(4, false), 50);  // 1:2
+        assert_eq!(get_odds_multiplier(4, true), 200); // 2:1
+        assert_eq!(get_odds_multiplier(5, true), 150); // 3:2
+        assert_eq!(get_odds_multiplier(6, true), 120); // 6:5
+        assert_eq!(get_odds_multiplier(4, false), 50); // 1:2
     }
-    
+
     #[test]
     fn test_field_bet_resolution() {
         let game = CrapsGame::new([1; 16], [2; 32]);
-        
+
         // Field pays 2:1 on 2 and 12
         let roll2 = DiceRoll::new(1, 1).unwrap();
         let roll12 = DiceRoll::new(6, 6).unwrap();
-        
+
         // Would need game setup with actual bets to test properly
         let _ = game.resolve_one_roll_bets(roll2);
         let _ = game.resolve_one_roll_bets(roll12);

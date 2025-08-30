@@ -16,10 +16,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  +/- - Adjust bet amount");
     println!("  q - Quit");
     println!();
-    
+
     // Run the TUI
     run_tui().await?;
-    
+
     println!("Thanks for playing BitCraps!");
     Ok(())
 }

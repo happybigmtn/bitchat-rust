@@ -1,31 +1,31 @@
 //! State and memory benchmarks for BitCraps
 
-use std::time::{Duration, Instant};
-use std::collections::HashMap;
 use criterion::{black_box, Criterion};
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use crate::protocol::efficient_game_state::CompactGameState;
 use crate::protocol::efficient_history::{EfficientGameHistory, HistoryConfig};
 // Removed unused import: EfficientBetResolver
 // Removed unused imports: BetType, CrapTokens, DiceRoll
 
-use super::{BenchmarkResults, BenchmarkConfig, MemoryBenchmarkStats};
+use super::{BenchmarkConfig, BenchmarkResults, MemoryBenchmarkStats};
 
 /// Benchmark history storage
 pub fn benchmark_history_storage(config: &BenchmarkConfig) -> Vec<BenchmarkResults> {
     let mut results = Vec::new();
-    
+
     println!("\n📚 Benchmarking History Storage...");
-    
+
     // Benchmark ring buffer operations
     results.push(bench_ring_buffer_ops(config));
-    
+
     // Benchmark delta encoding
     results.push(bench_delta_encoding(config));
-    
+
     // Benchmark compression
     results.push(bench_history_compression(config));
-    
+
     results
 }
 
@@ -36,9 +36,9 @@ fn bench_ring_buffer_ops(config: &BenchmarkConfig) -> BenchmarkResults {
         ..Default::default()
     };
     let mut history = EfficientGameHistory::new(history_config);
-    
+
     let mut times = Vec::new();
-    
+
     // Create test game histories
     let mut test_games = Vec::new();
     for i in 0..config.large_dataset {
@@ -70,31 +70,33 @@ fn bench_ring_buffer_ops(config: &BenchmarkConfig) -> BenchmarkResults {
         };
         test_games.push(game_history);
     }
-    
+
     // Warmup
     for i in 0..config.warmup_iterations {
-        history.store_game(test_games[i % test_games.len()].clone()).unwrap();
+        history
+            .store_game(test_games[i % test_games.len()].clone())
+            .unwrap();
     }
-    
+
     // Benchmark ring buffer storage and retrieval
     for i in 0..config.iterations {
         let start = Instant::now();
-        
+
         let game = &test_games[i % test_games.len()];
         black_box(history.store_game(game.clone()).unwrap());
         let _retrieved = black_box(history.get_game(game.game_id).unwrap());
-        
+
         let duration = start.elapsed();
         times.push(duration);
     }
-    
+
     let avg_time = times.iter().sum::<Duration>() / times.len() as u32;
     let min_time = *times.iter().min().unwrap();
     let max_time = *times.iter().max().unwrap();
     let throughput = (config.iterations * 2) as f64 / avg_time.as_secs_f64(); // store + retrieve
-    
+
     let metrics = history.get_metrics();
-    
+
     BenchmarkResults {
         name: "Ring Buffer Operations".to_string(),
         avg_time,
@@ -105,7 +107,7 @@ fn bench_ring_buffer_ops(config: &BenchmarkConfig) -> BenchmarkResults {
             peak_memory_bytes: metrics.total_memory_bytes,
             avg_memory_bytes: metrics.total_memory_bytes,
             allocations: config.iterations as u64,
-            deallocations: 0, // Ring buffer reuses slots
+            deallocations: 0,     // Ring buffer reuses slots
             cache_hit_rate: 0.95, // High hit rate for recent games
         },
         improvement_factor: 6.0, // vs linear search
@@ -116,50 +118,51 @@ fn bench_ring_buffer_ops(config: &BenchmarkConfig) -> BenchmarkResults {
 fn bench_delta_encoding(config: &BenchmarkConfig) -> BenchmarkResults {
     let history_config = HistoryConfig::default();
     let mut history = EfficientGameHistory::new(history_config);
-    
+
     // Create sequence of game states
     let mut states = Vec::new();
     let base_state = CompactGameState::new([1; 16], [2; 32]);
     states.push(base_state.clone());
-    
+
     for i in 1..config.medium_dataset {
         let mut state = base_state.clone();
         state.set_roll_count(i as u32);
         state.set_point(Some((i % 6 + 4) as u8));
         states.push(state);
     }
-    
+
     let mut times = Vec::new();
     let mut compression_ratios = Vec::new();
-    
+
     // Warmup
     for _ in 0..config.warmup_iterations {
         let _deltas = history.create_delta_chain(&states[..10]).unwrap();
     }
-    
+
     // Benchmark delta encoding
     for _ in 0..config.iterations {
         let start = Instant::now();
-        
+
         let deltas = black_box(history.create_delta_chain(&states).unwrap());
         let _reconstructed = black_box(history.reconstruct_from_deltas(None, &deltas).unwrap());
-        
+
         let duration = start.elapsed();
         times.push(duration);
-        
+
         // Calculate compression ratio (simplified)
         let original_size = states.len() * std::mem::size_of::<CompactGameState>();
         let delta_size = deltas.len() * 50; // Estimated delta size
         compression_ratios.push(delta_size as f64 / original_size as f64);
     }
-    
+
     let avg_time = times.iter().sum::<Duration>() / times.len() as u32;
     let min_time = *times.iter().min().unwrap();
     let max_time = *times.iter().max().unwrap();
     let throughput = (config.iterations * config.medium_dataset) as f64 / avg_time.as_secs_f64();
-    
-    let avg_compression_ratio = compression_ratios.iter().sum::<f64>() / compression_ratios.len() as f64;
-    
+
+    let avg_compression_ratio =
+        compression_ratios.iter().sum::<f64>() / compression_ratios.len() as f64;
+
     BenchmarkResults {
         name: format!("Delta Encoding ({} states)", config.medium_dataset),
         avg_time,
@@ -180,7 +183,7 @@ fn bench_delta_encoding(config: &BenchmarkConfig) -> BenchmarkResults {
 /// Benchmark history compression
 fn bench_history_compression(config: &BenchmarkConfig) -> BenchmarkResults {
     let history = EfficientGameHistory::new(HistoryConfig::default());
-    
+
     // Create test states of varying sizes
     let mut test_states = Vec::new();
     for i in 0..config.medium_dataset {
@@ -189,41 +192,42 @@ fn bench_history_compression(config: &BenchmarkConfig) -> BenchmarkResults {
         state.set_series_id((i / 10) as u32);
         test_states.push(state);
     }
-    
+
     let mut times = Vec::new();
     let mut compression_stats = Vec::new();
-    
+
     // Warmup
     for _ in 0..config.warmup_iterations {
         let state = &test_states[0];
         let compressed = history.compress_game_state(state).unwrap();
         let _decompressed = history.decompress_game_state(&compressed).unwrap();
     }
-    
+
     // Benchmark compression/decompression
     for i in 0..config.iterations {
         let state = &test_states[i % test_states.len()];
-        
+
         let start = Instant::now();
-        
+
         let compressed = black_box(history.compress_game_state(state).unwrap());
         let _decompressed = black_box(history.decompress_game_state(&compressed).unwrap());
-        
+
         let duration = start.elapsed();
         times.push(duration);
-        
+
         // Track compression ratio
         let original_size = std::mem::size_of::<CompactGameState>();
         compression_stats.push(compressed.compressed_size as f64 / original_size as f64);
     }
-    
+
     let avg_time = times.iter().sum::<Duration>() / times.len() as u32;
     let min_time = *times.iter().min().unwrap();
     let max_time = *times.iter().max().unwrap();
     let throughput = (config.iterations * 2) as f64 / avg_time.as_secs_f64(); // compress + decompress
-    
-    let avg_compression_ratio = compression_stats.iter().sum::<f64>() / compression_stats.len() as f64;
-    
+
+    let avg_compression_ratio =
+        compression_stats.iter().sum::<f64>() / compression_stats.len() as f64;
+
     BenchmarkResults {
         name: "History Compression".to_string(),
         avg_time,
@@ -244,15 +248,15 @@ fn bench_history_compression(config: &BenchmarkConfig) -> BenchmarkResults {
 /// Benchmark memory efficiency
 pub fn benchmark_memory_efficiency(config: &BenchmarkConfig) -> Vec<BenchmarkResults> {
     let mut results = Vec::new();
-    
+
     println!("\n💾 Benchmarking Memory Efficiency...");
-    
+
     // Memory usage comparison
     results.push(bench_memory_usage_comparison(config));
-    
+
     // Memory allocation patterns
     results.push(bench_memory_allocation_patterns(config));
-    
+
     results
 }
 
@@ -262,28 +266,28 @@ fn bench_memory_usage_comparison(config: &BenchmarkConfig) -> BenchmarkResults {
     let mut compact_memory = 0;
     let mut naive_memory = 0;
     let mut times = Vec::new();
-    
+
     for i in 0..config.iterations {
         let start = Instant::now();
-        
+
         // Compact game state
         let compact_state = black_box(CompactGameState::new([i as u8; 16], [(i % 256) as u8; 32]));
         compact_memory += compact_state.memory_usage().total_bytes;
-        
+
         // Naive would be much larger (estimated)
         naive_memory += 2048; // Estimated naive struct size
-        
+
         let duration = start.elapsed();
         times.push(duration);
     }
-    
+
     let avg_time = times.iter().sum::<Duration>() / times.len() as u32;
     let min_time = *times.iter().min().unwrap();
     let max_time = *times.iter().max().unwrap();
     let throughput = config.iterations as f64 / avg_time.as_secs_f64();
-    
+
     let memory_reduction = naive_memory as f64 / compact_memory as f64;
-    
+
     BenchmarkResults {
         name: "Memory Usage Comparison".to_string(),
         avg_time,
@@ -305,39 +309,39 @@ fn bench_memory_usage_comparison(config: &BenchmarkConfig) -> BenchmarkResults {
 fn bench_memory_allocation_patterns(config: &BenchmarkConfig) -> BenchmarkResults {
     let mut times = Vec::new();
     let mut allocation_count = 0;
-    
+
     // Warmup
     for _ in 0..config.warmup_iterations {
         let _state = CompactGameState::new([1; 16], [2; 32]);
         allocation_count += 1;
     }
     allocation_count = 0; // Reset after warmup
-    
+
     // Test allocation patterns
     for i in 0..config.iterations {
         let start = Instant::now();
-        
+
         // Create state with copy-on-write semantics
         let state1 = black_box(CompactGameState::new([i as u8; 16], [2; 32]));
         let state2 = black_box(state1.clone()); // Should share memory
         let mut state3 = black_box(state2.clone());
-        
+
         // This should trigger copy-on-write
         state3.make_mutable();
         allocation_count += 1; // Only one additional allocation expected
-        
+
         let duration = start.elapsed();
         times.push(duration);
     }
-    
+
     let avg_time = times.iter().sum::<Duration>() / times.len() as u32;
     let min_time = *times.iter().min().unwrap();
     let max_time = *times.iter().max().unwrap();
     let throughput = config.iterations as f64 / avg_time.as_secs_f64();
-    
+
     // Memory efficiency = fewer allocations per operation
     let allocations_per_op = allocation_count as f64 / config.iterations as f64;
-    
+
     BenchmarkResults {
         name: "Memory Allocation Patterns".to_string(),
         avg_time,
@@ -363,7 +367,7 @@ pub fn criterion_state_benchmarks(c: &mut Criterion, _config: &BenchmarkConfig) 
             ..Default::default()
         };
         let mut history = EfficientGameHistory::new(history_config);
-        
+
         let game_history = crate::protocol::efficient_history::CompactGameHistory {
             game_id: [1; 16],
             initial_state: crate::protocol::efficient_history::CompressedGameState {
@@ -390,12 +394,10 @@ pub fn criterion_state_benchmarks(c: &mut Criterion, _config: &BenchmarkConfig) 
             },
             estimated_size: 200,
         };
-        
-        b.iter(|| {
-            black_box(history.store_game(game_history.clone()).unwrap())
-        })
+
+        b.iter(|| black_box(history.store_game(game_history.clone()).unwrap()))
     });
-    
+
     // Memory benchmarks
     c.bench_function("memory_allocation", |b| {
         b.iter(|| {

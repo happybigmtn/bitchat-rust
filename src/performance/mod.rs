@@ -7,4 +7,4 @@ pub mod benchmarking;
 pub mod optimizer;
 
 pub use benchmarking::*;
-pub use optimizer::{PerformanceOptimizer, PerformanceMetrics, OptimizationStrategy};
+pub use optimizer::{OptimizationStrategy, PerformanceMetrics, PerformanceOptimizer};

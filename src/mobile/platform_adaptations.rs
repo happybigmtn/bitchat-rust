@@ -1,7 +1,7 @@
 //! Platform-specific adaptations for mobile devices
 
 use super::*;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Platform type enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -30,13 +30,13 @@ impl PlatformAdaptationManager {
     /// Create a new platform adaptation manager
     pub fn new() -> Self {
         let platform_type = PlatformDetection::detect_platform();
-        
+
         let android_adapter = if matches!(platform_type, PlatformType::Android) {
             Some(AndroidAdapter::new())
         } else {
             None
         };
-        
+
         let ios_adapter = if matches!(platform_type, PlatformType::Ios) {
             Some(IOSAdapter::new())
         } else {
@@ -57,33 +57,39 @@ impl PlatformAdaptationManager {
                 if let Some(adapter) = &self.android_adapter {
                     adapter.initialize().await?;
                 }
-            },
+            }
             PlatformType::Ios => {
                 if let Some(adapter) = &self.ios_adapter {
                     adapter.initialize().await?;
                 }
-            },
+            }
             _ => {
-                log::info!("No platform-specific initialization needed for {:?}", self.platform_type);
+                log::info!(
+                    "No platform-specific initialization needed for {:?}",
+                    self.platform_type
+                );
             }
         }
-        
+
         Ok(())
     }
 
     /// Handle app lifecycle changes
-    pub async fn handle_lifecycle_change(&self, state: AppLifecycleState) -> Result<(), BitCrapsError> {
+    pub async fn handle_lifecycle_change(
+        &self,
+        state: AppLifecycleState,
+    ) -> Result<(), BitCrapsError> {
         match self.platform_type {
             PlatformType::Android => {
                 if let Some(adapter) = &self.android_adapter {
                     adapter.handle_lifecycle_change(state).await?;
                 }
-            },
+            }
             PlatformType::Ios => {
                 if let Some(adapter) = &self.ios_adapter {
                     adapter.handle_lifecycle_change(state).await?;
                 }
-            },
+            }
             _ => {}
         }
 
@@ -99,15 +105,15 @@ impl PlatformAdaptationManager {
                 } else {
                     Ok(PermissionStatus::Granted)
                 }
-            },
+            }
             PlatformType::Ios => {
                 if let Some(adapter) = &self.ios_adapter {
                     adapter.request_permissions().await
                 } else {
                     Ok(PermissionStatus::Granted)
                 }
-            },
-            _ => Ok(PermissionStatus::Granted)
+            }
+            _ => Ok(PermissionStatus::Granted),
         }
     }
 
@@ -118,12 +124,12 @@ impl PlatformAdaptationManager {
                 if let Some(adapter) = &self.android_adapter {
                     adapter.configure_battery_optimization().await?;
                 }
-            },
+            }
             PlatformType::Ios => {
                 if let Some(adapter) = &self.ios_adapter {
                     adapter.configure_battery_optimization().await?;
                 }
-            },
+            }
             _ => {}
         }
 
@@ -139,15 +145,15 @@ impl PlatformAdaptationManager {
                 } else {
                     BluetoothPlatformConfig::default_android()
                 }
-            },
+            }
             PlatformType::Ios => {
                 if let Some(adapter) = &self.ios_adapter {
                     adapter.get_bluetooth_config()
                 } else {
                     BluetoothPlatformConfig::default_ios()
                 }
-            },
-            _ => BluetoothPlatformConfig::default_desktop()
+            }
+            _ => BluetoothPlatformConfig::default_desktop(),
         }
     }
 
@@ -160,15 +166,15 @@ impl PlatformAdaptationManager {
                 } else {
                     false
                 }
-            },
+            }
             PlatformType::Ios => {
                 if let Some(adapter) = &self.ios_adapter {
                     adapter.is_background_operation_available().await
                 } else {
                     false
                 }
-            },
-            _ => true // Desktop platforms generally support background operation
+            }
+            _ => true, // Desktop platforms generally support background operation
         }
     }
 }
@@ -185,20 +191,20 @@ impl AndroidAdapter {
 
     async fn initialize(&self) -> Result<(), BitCrapsError> {
         log::info!("Initializing Android-specific features");
-        
+
         // Initialize logging
         #[cfg(target_os = "android")]
         {
             android_logger::init_once(
                 android_logger::Config::default()
                     .with_min_level(log::Level::Info)
-                    .with_tag("BitCraps")
+                    .with_tag("BitCraps"),
             );
         }
 
         // Configure foreground service
         self.configure_foreground_service().await?;
-        
+
         Ok(())
     }
 
@@ -207,32 +213,34 @@ impl AndroidAdapter {
             AppLifecycleState::Foreground => {
                 log::info!("App moved to foreground - enabling full features");
                 // Enable full scanning and networking
-            },
+            }
             AppLifecycleState::Background => {
                 log::info!("App moved to background - enabling power saving");
                 // Switch to background service mode
                 self.enable_background_service().await?;
-            },
+            }
             AppLifecycleState::Suspended => {
                 log::info!("App suspended - minimal operation");
                 // Stop non-essential operations
-            },
+            }
         }
-        
+
         Ok(())
     }
 
     async fn request_permissions(&self) -> Result<PermissionStatus, BitCrapsError> {
         // TODO: Implement via JNI calls to Android permission system
         log::info!("Requesting Android permissions");
-        
-        let required_permissions = ["android.permission.BLUETOOTH",
+
+        let required_permissions = [
+            "android.permission.BLUETOOTH",
             "android.permission.BLUETOOTH_ADMIN",
             "android.permission.BLUETOOTH_ADVERTISE",
             "android.permission.BLUETOOTH_CONNECT",
             "android.permission.BLUETOOTH_SCAN",
             "android.permission.ACCESS_FINE_LOCATION",
-            "android.permission.POST_NOTIFICATIONS"];
+            "android.permission.POST_NOTIFICATIONS",
+        ];
 
         // For now, assume permissions are granted
         // In a real implementation, this would make JNI calls to check and request permissions
@@ -241,33 +249,33 @@ impl AndroidAdapter {
 
     async fn configure_battery_optimization(&self) -> Result<(), BitCrapsError> {
         log::info!("Configuring Android battery optimization");
-        
+
         // Check if app is whitelisted
         let is_whitelisted = self.check_battery_whitelist().await;
-        
+
         if !is_whitelisted {
             // Request user to whitelist the app
             self.request_battery_whitelist().await?;
         }
-        
+
         Ok(())
     }
 
     async fn configure_foreground_service(&self) -> Result<(), BitCrapsError> {
         log::info!("Configuring Android foreground service");
-        
+
         // TODO: Implement via JNI calls to start foreground service
         // This would create a persistent notification and keep the service running
-        
+
         Ok(())
     }
 
     async fn enable_background_service(&self) -> Result<(), BitCrapsError> {
         log::info!("Enabling Android background service");
-        
+
         // TODO: Implement transition to background service mode
         // This might involve starting a foreground service or scheduling jobs
-        
+
         Ok(())
     }
 
@@ -300,7 +308,7 @@ impl AndroidAdapter {
         // Check if background restrictions are in place
         let has_restrictions = self.check_background_restrictions().await;
         let is_whitelisted = self.check_battery_whitelist().await;
-        
+
         !has_restrictions || is_whitelisted
     }
 
@@ -322,10 +330,10 @@ impl IOSAdapter {
 
     async fn initialize(&self) -> Result<(), BitCrapsError> {
         log::info!("Initializing iOS-specific features");
-        
+
         // Configure Core Bluetooth for background operation
         self.configure_core_bluetooth().await?;
-        
+
         Ok(())
     }
 
@@ -334,29 +342,29 @@ impl IOSAdapter {
             AppLifecycleState::Foreground => {
                 log::info!("App moved to foreground - enabling full features");
                 // iOS allows full BLE operations in foreground
-            },
+            }
             AppLifecycleState::Background => {
                 log::info!("App moved to background - switching to background mode");
                 // iOS severely limits background BLE operations
                 self.enable_background_mode().await?;
-            },
+            }
             AppLifecycleState::Suspended => {
                 log::info!("App suspended - BLE operations will be terminated");
                 // iOS terminates most operations when app is suspended
-            },
+            }
         }
-        
+
         Ok(())
     }
 
     async fn request_permissions(&self) -> Result<PermissionStatus, BitCrapsError> {
         // TODO: Implement via FFI calls to iOS permission system
         log::info!("Requesting iOS permissions");
-        
+
         // iOS automatically prompts for Bluetooth permissions when needed
         // Check current authorization status
         let bluetooth_authorized = self.check_bluetooth_authorization().await;
-        
+
         if bluetooth_authorized {
             Ok(PermissionStatus::Granted)
         } else {
@@ -366,32 +374,32 @@ impl IOSAdapter {
 
     async fn configure_battery_optimization(&self) -> Result<(), BitCrapsError> {
         log::info!("Configuring iOS battery optimization");
-        
+
         // Check if Background App Refresh is enabled
         let background_refresh_enabled = self.check_background_app_refresh().await;
-        
+
         if !background_refresh_enabled {
             log::warn!("Background App Refresh is disabled - background operation will be limited");
         }
-        
+
         Ok(())
     }
 
     async fn configure_core_bluetooth(&self) -> Result<(), BitCrapsError> {
         log::info!("Configuring iOS Core Bluetooth");
-        
+
         // TODO: Implement via FFI calls to configure CBCentralManager for background operation
         // This would set up service UUID filtering and background modes
-        
+
         Ok(())
     }
 
     async fn enable_background_mode(&self) -> Result<(), BitCrapsError> {
         log::info!("Enabling iOS background mode");
-        
+
         // TODO: Implement transition to background BLE mode
         // This involves switching to service UUID filtering and accepting connection limitations
-        
+
         Ok(())
     }
 
@@ -422,7 +430,7 @@ impl IOSAdapter {
     async fn is_background_operation_available(&self) -> bool {
         let background_refresh = self.check_background_app_refresh().await;
         let bluetooth_authorized = self.check_bluetooth_authorization().await;
-        
+
         background_refresh && bluetooth_authorized
     }
 }
@@ -527,30 +535,47 @@ impl NotificationManager {
     }
 
     /// Show a notification to the user
-    pub async fn show_notification(&self, notification: PlatformNotification) -> Result<(), BitCrapsError> {
+    pub async fn show_notification(
+        &self,
+        notification: PlatformNotification,
+    ) -> Result<(), BitCrapsError> {
         match self.platform_type {
-            PlatformType::Android => {
-                self.show_android_notification(notification).await
-            },
-            PlatformType::Ios => {
-                self.show_ios_notification(notification).await
-            },
+            PlatformType::Android => self.show_android_notification(notification).await,
+            PlatformType::Ios => self.show_ios_notification(notification).await,
             _ => {
-                log::info!("Notification: {} - {}", notification.title, notification.body);
+                log::info!(
+                    "Notification: {} - {}",
+                    notification.title,
+                    notification.body
+                );
                 Ok(())
             }
         }
     }
 
-    async fn show_android_notification(&self, notification: PlatformNotification) -> Result<(), BitCrapsError> {
+    async fn show_android_notification(
+        &self,
+        notification: PlatformNotification,
+    ) -> Result<(), BitCrapsError> {
         // TODO: Implement via JNI calls to Android NotificationManager
-        log::info!("Android notification: {} - {}", notification.title, notification.body);
+        log::info!(
+            "Android notification: {} - {}",
+            notification.title,
+            notification.body
+        );
         Ok(())
     }
 
-    async fn show_ios_notification(&self, notification: PlatformNotification) -> Result<(), BitCrapsError> {
+    async fn show_ios_notification(
+        &self,
+        notification: PlatformNotification,
+    ) -> Result<(), BitCrapsError> {
         // TODO: Implement via FFI calls to iOS UserNotifications framework
-        log::info!("iOS notification: {} - {}", notification.title, notification.body);
+        log::info!(
+            "iOS notification: {} - {}",
+            notification.title,
+            notification.body
+        );
         Ok(())
     }
 }

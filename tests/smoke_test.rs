@@ -1,11 +1,11 @@
 //! Basic smoke tests to verify core functionality compiles and works
-//! 
+//!
 //! These tests ensure that the basic library modules can be imported
 //! and basic operations function correctly.
 
 use bitcraps::{
-    error::{BitCrapsError, Result},
     crypto,
+    error::{BitCrapsError, Result},
 };
 
 #[test]
@@ -38,11 +38,11 @@ fn test_result_type_works() {
     fn success_function() -> Result<String> {
         Ok("success".to_string())
     }
-    
+
     fn error_function() -> Result<String> {
         Err(BitCrapsError::ValidationError("test error".to_string()))
     }
-    
+
     assert!(success_function().is_ok());
     assert!(error_function().is_err());
 }
@@ -60,7 +60,7 @@ async fn test_async_operations() {
     async fn async_success() -> Result<()> {
         Ok(())
     }
-    
+
     let result = async_success().await;
     assert!(result.is_ok());
 }

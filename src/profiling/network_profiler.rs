@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::time::interval;
 
 use crate::error::BitCrapsError;
@@ -26,39 +26,39 @@ impl NetworkProfiler {
             sample_interval: Duration::from_millis(500),
         })
     }
-    
+
     pub async fn start(&mut self) -> Result<(), BitCrapsError> {
         *self.profiling_active.write() = true;
-        
+
         let metrics = Arc::clone(&self.metrics);
         let profiling_active = Arc::clone(&self.profiling_active);
         let sample_interval = self.sample_interval;
-        
+
         tokio::spawn(async move {
             let mut interval = interval(sample_interval);
-            
+
             while *profiling_active.read() {
                 interval.tick().await;
-                
+
                 // Update metrics periodically
                 let mut metrics = metrics.write();
                 metrics.update_timestamp();
             }
         });
-        
+
         tracing::debug!("Network profiling started");
         Ok(())
     }
-    
+
     pub async fn stop(&mut self) -> Result<NetworkProfile, BitCrapsError> {
         *self.profiling_active.write() = false;
-        
+
         tokio::time::sleep(Duration::from_millis(600)).await;
-        
+
         let metrics = self.metrics.read().clone();
         let latency_stats = self.latency_tracker.read().get_statistics();
         let throughput_stats = self.throughput_tracker.read().get_statistics();
-        
+
         // Reset for next session
         {
             let mut metrics_guard = self.metrics.write();
@@ -66,7 +66,7 @@ impl NetworkProfiler {
         }
         self.latency_tracker.write().reset();
         self.throughput_tracker.write().reset();
-        
+
         Ok(NetworkProfile {
             total_connections: metrics.total_connections,
             active_connections: metrics.active_connections,
@@ -85,102 +85,115 @@ impl NetworkProfiler {
             profiling_duration: metrics.profiling_duration(),
         })
     }
-    
+
     pub async fn current_metrics(&self) -> Result<NetworkMetrics, BitCrapsError> {
         Ok(self.metrics.read().clone())
     }
-    
+
     /// Record a connection event
     pub fn record_connection(&self, peer_id: PeerId, success: bool) {
         let mut metrics = self.metrics.write();
-        
+
         if success {
             metrics.total_connections += 1;
             metrics.active_connections += 1;
         } else {
             metrics.connection_errors += 1;
         }
-        
+
         metrics.connection_events.push(ConnectionEvent {
             peer_id,
-            event_type: if success { ConnectionEventType::Connected } else { ConnectionEventType::Failed },
+            event_type: if success {
+                ConnectionEventType::Connected
+            } else {
+                ConnectionEventType::Failed
+            },
             timestamp: Instant::now(),
         });
-        
+
         // Keep only recent events
         if metrics.connection_events.len() > 1000 {
             metrics.connection_events.remove(0);
         }
     }
-    
+
     /// Record a disconnection event
     pub fn record_disconnection(&self, peer_id: PeerId) {
         let mut metrics = self.metrics.write();
-        
+
         if metrics.active_connections > 0 {
             metrics.active_connections -= 1;
         }
-        
+
         metrics.connection_events.push(ConnectionEvent {
             peer_id,
             event_type: ConnectionEventType::Disconnected,
             timestamp: Instant::now(),
         });
     }
-    
+
     /// Record a message send event
     pub fn record_message_sent(&self, peer_id: PeerId, size_bytes: usize, success: bool) {
-        self.throughput_tracker.write().record_sent(size_bytes, success);
-        
+        self.throughput_tracker
+            .write()
+            .record_sent(size_bytes, success);
+
         if !success {
             let mut metrics = self.metrics.write();
             metrics.send_errors += 1;
         }
-        
+
         // Track per-peer statistics
         self.latency_tracker.write().update_peer_activity(peer_id);
     }
-    
+
     /// Record a message receive event
     pub fn record_message_received(&self, peer_id: PeerId, size_bytes: usize) {
         self.throughput_tracker.write().record_received(size_bytes);
         self.latency_tracker.write().update_peer_activity(peer_id);
     }
-    
+
     /// Record round-trip time for a message
     pub fn record_round_trip_time(&self, peer_id: PeerId, rtt: Duration) {
         self.latency_tracker.write().record_latency(peer_id, rtt);
     }
-    
+
     /// Record a timeout event
     pub fn record_timeout(&self, peer_id: PeerId) {
         let mut metrics = self.metrics.write();
         metrics.timeout_errors += 1;
-        
+
         self.latency_tracker.write().record_timeout(peer_id);
     }
-    
+
     /// Profile network operation
-    pub async fn profile_operation<F, R>(&mut self, peer_id: PeerId, operation_name: &str, operation: F) -> Result<(R, NetworkOperationProfile), BitCrapsError>
+    pub async fn profile_operation<F, R>(
+        &mut self,
+        peer_id: PeerId,
+        operation_name: &str,
+        operation: F,
+    ) -> Result<(R, NetworkOperationProfile), BitCrapsError>
     where
         F: std::future::Future<Output = R>,
     {
         let start_time = Instant::now();
-        
+
         let result = operation.await;
-        
+
         let duration = start_time.elapsed();
-        
+
         let profile = NetworkOperationProfile {
             peer_id,
             operation_name: operation_name.to_string(),
             duration,
             success: true, // Simplified - in real implementation, would detect failures
         };
-        
+
         // Update latency tracker
-        self.latency_tracker.write().record_latency(peer_id, duration);
-        
+        self.latency_tracker
+            .write()
+            .record_latency(peer_id, duration);
+
         Ok((result, profile))
     }
 }
@@ -211,20 +224,20 @@ impl NetworkMetrics {
             last_update: Some(Instant::now()),
         }
     }
-    
+
     pub fn update_timestamp(&mut self) {
         self.last_update = Some(Instant::now());
     }
-    
+
     pub fn calculate_packet_loss_rate(&self) -> f64 {
         if self.total_connections == 0 {
             return 0.0;
         }
-        
+
         let total_errors = self.connection_errors + self.send_errors + self.timeout_errors;
         total_errors as f64 / (self.total_connections as f64 + total_errors as f64)
     }
-    
+
     pub fn profiling_duration(&self) -> Duration {
         if let (Some(start), Some(last)) = (self.start_time, self.last_update) {
             last - start
@@ -266,63 +279,74 @@ impl LatencyTracker {
             global_latencies: Vec::new(),
         }
     }
-    
+
     pub fn record_latency(&mut self, peer_id: PeerId, latency: Duration) {
         // Record per-peer latency
         let peer_latencies = self.peer_latencies.entry(peer_id).or_insert_with(Vec::new);
         peer_latencies.push(latency);
-        
+
         // Keep only recent latencies (last 1000 per peer)
         if peer_latencies.len() > 1000 {
             peer_latencies.remove(0);
         }
-        
+
         // Record global latency
         self.global_latencies.push(latency);
         if self.global_latencies.len() > 10000 {
             self.global_latencies.remove(0);
         }
-        
+
         // Update activity timestamp
         self.peer_last_activity.insert(peer_id, Instant::now());
     }
-    
+
     pub fn record_timeout(&mut self, peer_id: PeerId) {
         *self.peer_timeouts.entry(peer_id).or_insert(0) += 1;
     }
-    
+
     pub fn update_peer_activity(&mut self, peer_id: PeerId) {
         self.peer_last_activity.insert(peer_id, Instant::now());
     }
-    
+
     pub fn get_statistics(&self) -> LatencyStatistics {
         let average_latency = if self.global_latencies.is_empty() {
             Duration::from_nanos(0)
         } else {
-            let total_nanos: u64 = self.global_latencies.iter().map(|d| d.as_nanos() as u64).sum();
+            let total_nanos: u64 = self
+                .global_latencies
+                .iter()
+                .map(|d| d.as_nanos() as u64)
+                .sum();
             Duration::from_nanos(total_nanos / self.global_latencies.len() as u64)
         };
-        
+
         // Calculate percentiles
         let mut sorted_latencies = self.global_latencies.clone();
         sorted_latencies.sort();
-        
+
         let p95_latency = if sorted_latencies.is_empty() {
             Duration::from_nanos(0)
         } else {
             let index = (sorted_latencies.len() as f64 * 0.95) as usize;
-            sorted_latencies.get(index).copied().unwrap_or(Duration::from_nanos(0))
+            sorted_latencies
+                .get(index)
+                .copied()
+                .unwrap_or(Duration::from_nanos(0))
         };
-        
+
         let p99_latency = if sorted_latencies.is_empty() {
             Duration::from_nanos(0)
         } else {
             let index = (sorted_latencies.len() as f64 * 0.99) as usize;
-            sorted_latencies.get(index).copied().unwrap_or(Duration::from_nanos(0))
+            sorted_latencies
+                .get(index)
+                .copied()
+                .unwrap_or(Duration::from_nanos(0))
         };
-        
+
         // Calculate per-peer statistics
-        let peer_statistics = self.peer_latencies
+        let peer_statistics = self
+            .peer_latencies
             .iter()
             .map(|(peer_id, latencies)| {
                 let peer_average = if latencies.is_empty() {
@@ -331,10 +355,10 @@ impl LatencyTracker {
                     let total_nanos: u64 = latencies.iter().map(|d| d.as_nanos() as u64).sum();
                     Duration::from_nanos(total_nanos / latencies.len() as u64)
                 };
-                
+
                 let timeouts = self.peer_timeouts.get(peer_id).copied().unwrap_or(0);
                 let last_activity = self.peer_last_activity.get(peer_id).copied();
-                
+
                 PeerLatencyStatistics {
                     peer_id: *peer_id,
                     average_latency: peer_average,
@@ -344,7 +368,7 @@ impl LatencyTracker {
                 }
             })
             .collect();
-        
+
         LatencyStatistics {
             average_latency,
             p95_latency,
@@ -353,7 +377,7 @@ impl LatencyTracker {
             peer_statistics,
         }
     }
-    
+
     pub fn reset(&mut self) {
         self.peer_latencies.clear();
         self.peer_timeouts.clear();
@@ -385,7 +409,7 @@ impl ThroughputTracker {
             throughput_samples: Vec::new(),
         }
     }
-    
+
     pub fn record_sent(&mut self, size_bytes: usize, success: bool) {
         if success {
             self.total_bytes_sent += size_bytes as u64;
@@ -393,7 +417,7 @@ impl ThroughputTracker {
         } else {
             self.send_failures += 1;
         }
-        
+
         // Record throughput sample
         self.throughput_samples.push(ThroughputSample {
             bytes: size_bytes,
@@ -401,17 +425,17 @@ impl ThroughputTracker {
             success,
             timestamp: Instant::now(),
         });
-        
+
         // Keep only recent samples
         if self.throughput_samples.len() > 5000 {
             self.throughput_samples.remove(0);
         }
     }
-    
+
     pub fn record_received(&mut self, size_bytes: usize) {
         self.total_bytes_received += size_bytes as u64;
         self.total_messages_received += 1;
-        
+
         self.throughput_samples.push(ThroughputSample {
             bytes: size_bytes,
             direction: ThroughputDirection::Received,
@@ -419,10 +443,10 @@ impl ThroughputTracker {
             timestamp: Instant::now(),
         });
     }
-    
+
     pub fn get_statistics(&self) -> ThroughputStatistics {
         let duration = self.start_time.elapsed();
-        
+
         ThroughputStatistics {
             total_messages_sent: self.total_messages_sent,
             total_messages_received: self.total_messages_received,
@@ -432,7 +456,7 @@ impl ThroughputTracker {
             duration,
         }
     }
-    
+
     pub fn reset(&mut self) {
         self.total_bytes_sent = 0;
         self.total_bytes_received = 0;
@@ -514,11 +538,11 @@ impl ThroughputStatistics {
         if self.duration.as_secs_f64() == 0.0 {
             return 0.0;
         }
-        
+
         let total_bytes = self.total_bytes_sent + self.total_bytes_received;
         let bits = (total_bytes * 8) as f64;
         let megabits = bits / 1_000_000.0;
-        
+
         megabits / self.duration.as_secs_f64()
     }
 }

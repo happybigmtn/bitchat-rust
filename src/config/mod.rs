@@ -1,5 +1,5 @@
 //! Production-grade configuration management for BitCraps
-//! 
+//!
 //! This module provides centralized configuration with:
 //! - Environment-based loading (dev, staging, prod)
 //! - Runtime validation
@@ -8,14 +8,14 @@
 
 pub mod performance;
 
+use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
+use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use crate::error::{Error, Result};
-use std::fs;
-use std::env;
 
-pub use performance::{PerformanceProfile, PerformanceConfig, PerformanceTuner};
+pub use performance::{PerformanceConfig, PerformanceProfile, PerformanceTuner};
 
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,162 +149,176 @@ impl Config {
     /// Load configuration from file and environment
     pub fn load() -> Result<Self> {
         // Determine environment
-        let env = env::var("BITCRAPS_ENV")
-            .unwrap_or_else(|_| "development".to_string());
-        
+        let env = env::var("BITCRAPS_ENV").unwrap_or_else(|_| "development".to_string());
+
         let environment = match env.to_lowercase().as_str() {
             "production" | "prod" => Environment::Production,
             "staging" | "stage" => Environment::Staging,
             "testing" | "test" => Environment::Testing,
             _ => Environment::Development,
         };
-        
+
         // Load base configuration
         let config_path = Self::get_config_path(&environment)?;
         let mut config = Self::load_from_file(&config_path)?;
-        
+
         // Override with environment variables
         config.override_from_env()?;
-        
+
         // Validate configuration
         config.validate()?;
-        
+
         Ok(config)
     }
-    
+
     /// Load configuration from a specific file
     pub fn load_from_file(path: &Path) -> Result<Self> {
         let contents = fs::read_to_string(path)
             .map_err(|e| Error::Config(format!("Failed to read config file: {}", e)))?;
-        
+
         let config: Config = toml::from_str(&contents)
             .map_err(|e| Error::Config(format!("Failed to parse config: {}", e)))?;
-        
+
         Ok(config)
     }
-    
+
     /// Get configuration file path based on environment
     fn get_config_path(environment: &Environment) -> Result<PathBuf> {
-        let base_path = env::var("BITCRAPS_CONFIG_PATH")
-            .unwrap_or_else(|_| "config".to_string());
-        
+        let base_path = env::var("BITCRAPS_CONFIG_PATH").unwrap_or_else(|_| "config".to_string());
+
         let filename = match environment {
             Environment::Production => "production.toml",
             Environment::Staging => "staging.toml",
             Environment::Testing => "testing.toml",
             Environment::Development => "development.toml",
         };
-        
+
         Ok(PathBuf::from(base_path).join(filename))
     }
-    
+
     /// Override configuration with environment variables
     fn override_from_env(&mut self) -> Result<()> {
         // Network overrides
         if let Ok(val) = env::var("BITCRAPS_LISTEN_PORT") {
-            self.network.listen_port = val.parse()
+            self.network.listen_port = val
+                .parse()
                 .map_err(|_| Error::Config("Invalid listen port".to_string()))?;
         }
-        
+
         if let Ok(val) = env::var("BITCRAPS_MAX_CONNECTIONS") {
-            self.network.max_connections = val.parse()
+            self.network.max_connections = val
+                .parse()
                 .map_err(|_| Error::Config("Invalid max connections".to_string()))?;
         }
-        
+
         // Database overrides
         if let Ok(val) = env::var("BITCRAPS_DATABASE_URL") {
             self.database.url = val;
         }
-        
+
         // Security overrides
         if let Ok(val) = env::var("BITCRAPS_POW_DIFFICULTY") {
-            self.security.pow_difficulty = val.parse()
+            self.security.pow_difficulty = val
+                .parse()
                 .map_err(|_| Error::Config("Invalid PoW difficulty".to_string()))?;
         }
-        
+
         // Monitoring overrides
         if let Ok(val) = env::var("BITCRAPS_METRICS_PORT") {
-            self.monitoring.metrics_port = val.parse()
+            self.monitoring.metrics_port = val
+                .parse()
                 .map_err(|_| Error::Config("Invalid metrics port".to_string()))?;
         }
-        
+
         if let Ok(val) = env::var("BITCRAPS_ALERT_WEBHOOK") {
             self.monitoring.alert_webhook = Some(val);
         }
-        
+
         Ok(())
     }
-    
+
     /// Validate configuration values
     pub fn validate(&self) -> Result<()> {
         // Network validation
         if self.network.max_connections == 0 {
             return Err(Error::Config("Max connections must be > 0".to_string()));
         }
-        
+
         if self.network.max_packet_size < 1024 {
             return Err(Error::Config("Max packet size must be >= 1024".to_string()));
         }
-        
+
         // Consensus validation
         if self.consensus.min_participants < 1 {
             return Err(Error::Config("Min participants must be >= 1".to_string()));
         }
-        
+
         if self.consensus.finality_threshold < 0.5 || self.consensus.finality_threshold > 1.0 {
-            return Err(Error::Config("Finality threshold must be between 0.5 and 1.0".to_string()));
+            return Err(Error::Config(
+                "Finality threshold must be between 0.5 and 1.0".to_string(),
+            ));
         }
-        
+
         // Database validation
         if self.database.url.is_empty() {
             return Err(Error::Config("Database URL cannot be empty".to_string()));
         }
-        
+
         if self.database.max_connections == 0 {
-            return Err(Error::Config("Database max connections must be > 0".to_string()));
+            return Err(Error::Config(
+                "Database max connections must be > 0".to_string(),
+            ));
         }
-        
+
         // Security validation
         if self.security.pow_difficulty == 0 {
             return Err(Error::Config("PoW difficulty must be > 0".to_string()));
         }
-        
+
         if self.security.enable_rate_limiting && self.security.rate_limit_requests == 0 {
-            return Err(Error::Config("Rate limit requests must be > 0 when enabled".to_string()));
+            return Err(Error::Config(
+                "Rate limit requests must be > 0 when enabled".to_string(),
+            ));
         }
-        
+
         // Game validation
         if self.game.min_bet > self.game.max_bet {
             return Err(Error::Config("Min bet cannot exceed max bet".to_string()));
         }
-        
+
         if self.game.house_edge < 0.0 || self.game.house_edge > 0.1 {
-            return Err(Error::Config("House edge must be between 0 and 10%".to_string()));
+            return Err(Error::Config(
+                "House edge must be between 0 and 10%".to_string(),
+            ));
         }
-        
+
         // Treasury validation
         if self.treasury.rake_percentage < 0.0 || self.treasury.rake_percentage > 0.1 {
-            return Err(Error::Config("Rake percentage must be between 0 and 10%".to_string()));
+            return Err(Error::Config(
+                "Rake percentage must be between 0 and 10%".to_string(),
+            ));
         }
-        
+
         if self.treasury.min_reserve > self.treasury.initial_supply {
-            return Err(Error::Config("Min reserve cannot exceed initial supply".to_string()));
+            return Err(Error::Config(
+                "Min reserve cannot exceed initial supply".to_string(),
+            ));
         }
-        
+
         Ok(())
     }
-    
+
     /// Save configuration to file
     pub fn save(&self, path: &Path) -> Result<()> {
         let contents = toml::to_string_pretty(self)
             .map_err(|e| Error::Config(format!("Failed to serialize config: {}", e)))?;
-        
+
         fs::write(path, contents)
             .map_err(|e| Error::Config(format!("Failed to write config: {}", e)))?;
-        
+
         Ok(())
     }
-    
+
     /// Generate default configuration for an environment
     pub fn default_for_environment(environment: Environment) -> Self {
         match environment {
@@ -314,7 +328,7 @@ impl Config {
             Environment::Development => Self::development_defaults(),
         }
     }
-    
+
     fn production_defaults() -> Self {
         Config {
             app: AppConfig {
@@ -401,7 +415,7 @@ impl Config {
             performance: PerformanceProfile::Balanced,
         }
     }
-    
+
     fn development_defaults() -> Self {
         let mut config = Self::production_defaults();
         config.app.environment = Environment::Development;
@@ -420,7 +434,7 @@ impl Config {
         config.monitoring.tracing_endpoint = None;
         config
     }
-    
+
     fn staging_defaults() -> Self {
         let mut config = Self::production_defaults();
         config.app.environment = Environment::Staging;
@@ -429,7 +443,7 @@ impl Config {
         config.security.pow_difficulty = 16;
         config
     }
-    
+
     fn testing_defaults() -> Self {
         let mut config = Self::development_defaults();
         config.app.environment = Environment::Testing;
@@ -448,9 +462,8 @@ impl Config {
 use once_cell::sync::Lazy;
 use std::sync::RwLock;
 
-static CONFIG: Lazy<RwLock<Config>> = Lazy::new(|| {
-    RwLock::new(Config::load().expect("Failed to load configuration"))
-});
+static CONFIG: Lazy<RwLock<Config>> =
+    Lazy::new(|| RwLock::new(Config::load().expect("Failed to load configuration")));
 
 /// Get the global configuration instance
 pub fn get_config() -> Config {
@@ -466,28 +479,28 @@ pub fn set_config(config: Config) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_config_validation() {
         let mut config = Config::development_defaults();
         assert!(config.validate().is_ok());
-        
+
         // Test invalid configurations
         config.network.max_connections = 0;
         assert!(config.validate().is_err());
-        
+
         config = Config::development_defaults();
         config.game.min_bet = 1000;
         config.game.max_bet = 100;
         assert!(config.validate().is_err());
     }
-    
+
     #[test]
     fn test_environment_defaults() {
         let dev = Config::development_defaults();
         assert_eq!(dev.app.environment, Environment::Development);
         assert_eq!(dev.security.pow_difficulty, 8);
-        
+
         let prod = Config::production_defaults();
         assert_eq!(prod.app.environment, Environment::Production);
         assert_eq!(prod.security.pow_difficulty, 20);

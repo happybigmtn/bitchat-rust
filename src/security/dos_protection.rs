@@ -9,9 +9,9 @@
 
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// DoS protection configuration
 #[derive(Debug, Clone)]
@@ -37,14 +37,14 @@ pub struct DosProtectionConfig {
 impl Default for DosProtectionConfig {
     fn default() -> Self {
         Self {
-            max_request_size: 64 * 1024,        // 64KB max request
-            max_requests_per_minute: 1000,      // 1000 requests per minute
+            max_request_size: 64 * 1024,                // 64KB max request
+            max_requests_per_minute: 1000,              // 1000 requests per minute
             max_bandwidth_per_minute: 10 * 1024 * 1024, // 10MB per minute
-            max_connections_per_ip: 20,          // 20 concurrent connections
-            block_duration: Duration::from_secs(3600), // 1 hour block
-            max_memory_usage: 100 * 1024 * 1024, // 100MB for tracking
+            max_connections_per_ip: 20,                 // 20 concurrent connections
+            block_duration: Duration::from_secs(3600),  // 1 hour block
+            max_memory_usage: 100 * 1024 * 1024,        // 100MB for tracking
             cleanup_interval: Duration::from_secs(60),  // 1 minute cleanup
-            suspicious_threshold: 100,            // 100 requests triggers monitoring
+            suspicious_threshold: 100,                  // 100 requests triggers monitoring
         }
     }
 }
@@ -53,8 +53,14 @@ impl Default for DosProtectionConfig {
 #[derive(Debug, Clone)]
 pub enum ProtectionResult {
     Allowed,
-    Blocked { reason: String, retry_after: Duration },
-    Suspicious { reason: String, monitoring_level: u8 },
+    Blocked {
+        reason: String,
+        retry_after: Duration,
+    },
+    Suspicious {
+        reason: String,
+        monitoring_level: u8,
+    },
 }
 
 impl ProtectionResult {
@@ -200,18 +206,25 @@ impl DosProtection {
         let result = {
             let mut trackers = self.ip_trackers.write().unwrap();
             let tracker = trackers.entry(ip).or_insert_with(IpTracker::new);
-            
+
             tracker.last_request = Instant::now();
             tracker.reset_if_window_expired();
 
             // Check if IP is blocked
             if tracker.is_blocked() {
-                let reason = tracker.block_reason.clone().unwrap_or_else(|| "IP blocked".to_string());
-                let retry_after = tracker.blocked_until
+                let reason = tracker
+                    .block_reason
+                    .clone()
+                    .unwrap_or_else(|| "IP blocked".to_string());
+                let retry_after = tracker
+                    .blocked_until
                     .map(|until| until.duration_since(Instant::now()))
                     .unwrap_or(Duration::from_secs(3600));
-                    
-                return ProtectionResult::Blocked { reason, retry_after };
+
+                return ProtectionResult::Blocked {
+                    reason,
+                    retry_after,
+                };
             }
 
             // Check request rate limit
@@ -226,7 +239,10 @@ impl DosProtection {
 
             // Check bandwidth limit
             if tracker.bandwidth_used + request_size > self.config.max_bandwidth_per_minute {
-                tracker.block(self.config.block_duration, "Bandwidth limit exceeded".to_string());
+                tracker.block(
+                    self.config.block_duration,
+                    "Bandwidth limit exceeded".to_string(),
+                );
                 self.blocked_requests.fetch_add(1, Ordering::Relaxed);
                 return ProtectionResult::Blocked {
                     reason: "Bandwidth limit exceeded".to_string(),
@@ -264,19 +280,26 @@ impl DosProtection {
 
         // Check if IP is blocked
         if tracker.is_blocked() {
-            let reason = tracker.block_reason.clone().unwrap_or_else(|| "IP blocked".to_string());
-            let retry_after = tracker.blocked_until
+            let reason = tracker
+                .block_reason
+                .clone()
+                .unwrap_or_else(|| "IP blocked".to_string());
+            let retry_after = tracker
+                .blocked_until
                 .map(|until| until.duration_since(Instant::now()))
                 .unwrap_or(Duration::from_secs(3600));
-                
-            return ProtectionResult::Blocked { reason, retry_after };
+
+            return ProtectionResult::Blocked {
+                reason,
+                retry_after,
+            };
         }
 
         // Check connection limit
         if tracker.active_connections >= self.config.max_connections_per_ip {
             tracker.block(
-                self.config.block_duration, 
-                "Too many connections".to_string()
+                self.config.block_duration,
+                "Too many connections".to_string(),
             );
             self.blocked_requests.fetch_add(1, Ordering::Relaxed);
             return ProtectionResult::Blocked {
@@ -317,14 +340,17 @@ impl DosProtection {
     pub fn get_blocked_ips(&self) -> Vec<(IpAddr, Duration, String)> {
         let trackers = self.ip_trackers.read().unwrap();
         let now = Instant::now();
-        
+
         trackers
             .iter()
             .filter_map(|(&ip, tracker)| {
                 if let Some(blocked_until) = tracker.blocked_until {
                     if now < blocked_until {
                         let remaining = blocked_until.duration_since(now);
-                        let reason = tracker.block_reason.clone().unwrap_or_else(|| "Unknown".to_string());
+                        let reason = tracker
+                            .block_reason
+                            .clone()
+                            .unwrap_or_else(|| "Unknown".to_string());
                         Some((ip, remaining, reason))
                     } else {
                         None
@@ -373,25 +399,31 @@ impl DosProtection {
 
         // Check memory limit
         if estimated_usage > self.config.max_memory_usage {
-            log::warn!("DoS protection memory usage {} exceeds limit {}", 
-                      estimated_usage, self.config.max_memory_usage);
+            log::warn!(
+                "DoS protection memory usage {} exceeds limit {}",
+                estimated_usage,
+                self.config.max_memory_usage
+            );
         }
     }
 
     /// Cleanup expired tracking entries
     pub fn cleanup_expired_entries(&self) {
         let ttl = Duration::from_secs(3600); // 1 hour TTL
-        
+
         let mut trackers = self.ip_trackers.write().unwrap();
         let initial_count = trackers.len();
-        
+
         trackers.retain(|_, tracker| !tracker.is_expired(ttl));
-        
+
         let removed_count = initial_count - trackers.len();
         if removed_count > 0 {
-            log::debug!("Cleaned up {} expired DoS protection entries", removed_count);
+            log::debug!(
+                "Cleaned up {} expired DoS protection entries",
+                removed_count
+            );
         }
-        
+
         *self.last_cleanup.write().unwrap() = Instant::now();
         self.update_memory_usage();
     }
@@ -411,12 +443,12 @@ impl DosProtection {
     /// Emergency cleanup when memory usage is too high
     pub fn emergency_cleanup(&self) {
         log::warn!("Performing emergency DoS protection cleanup");
-        
+
         let target_size = {
             let trackers = self.ip_trackers.read().unwrap();
             trackers.len() / 2 // Remove half the entries
         };
-        
+
         // Keep only the most recently active and blocked entries
         let entries_to_keep: Vec<(IpAddr, IpTracker)> = {
             let trackers = self.ip_trackers.read().unwrap();
@@ -430,23 +462,27 @@ impl DosProtection {
                     (1, std::cmp::Reverse(tracker.last_request))
                 }
             });
-            
-            entries.into_iter().take(target_size).map(|(ip, tracker)| {
-                // Clone the tracker data
-                let mut new_tracker = IpTracker::new();
-                new_tracker.request_count = tracker.request_count;
-                new_tracker.bandwidth_used = tracker.bandwidth_used;
-                new_tracker.active_connections = tracker.active_connections;
-                new_tracker.last_request = tracker.last_request;
-                new_tracker.window_start = tracker.window_start;
-                new_tracker.suspicious_count = tracker.suspicious_count;
-                new_tracker.blocked_until = tracker.blocked_until;
-                new_tracker.block_reason = tracker.block_reason.clone();
-                
-                (*ip, new_tracker)
-            }).collect()
+
+            entries
+                .into_iter()
+                .take(target_size)
+                .map(|(ip, tracker)| {
+                    // Clone the tracker data
+                    let mut new_tracker = IpTracker::new();
+                    new_tracker.request_count = tracker.request_count;
+                    new_tracker.bandwidth_used = tracker.bandwidth_used;
+                    new_tracker.active_connections = tracker.active_connections;
+                    new_tracker.last_request = tracker.last_request;
+                    new_tracker.window_start = tracker.window_start;
+                    new_tracker.suspicious_count = tracker.suspicious_count;
+                    new_tracker.blocked_until = tracker.blocked_until;
+                    new_tracker.block_reason = tracker.block_reason.clone();
+
+                    (*ip, new_tracker)
+                })
+                .collect()
         };
-        
+
         // Replace the trackers map
         {
             let mut trackers = self.ip_trackers.write().unwrap();
@@ -455,7 +491,7 @@ impl DosProtection {
                 trackers.insert(ip, tracker);
             }
         }
-        
+
         self.update_memory_usage();
     }
 }
@@ -495,11 +531,11 @@ mod tests {
         let config = create_test_config();
         let dos_protection = DosProtection::new(config);
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
+
         // Request within limit should be allowed
         let result = dos_protection.check_request(ip, 512);
         assert!(result.is_allowed());
-        
+
         // Request exceeding limit should be blocked
         let result = dos_protection.check_request(ip, 2048);
         assert!(result.is_blocked());
@@ -510,7 +546,7 @@ mod tests {
         let config = create_test_config();
         let dos_protection = DosProtection::new(config);
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
+
         // First few requests should be allowed
         for i in 0..5 {
             let result = dos_protection.check_request(ip, 100);
@@ -518,12 +554,12 @@ mod tests {
                 assert!(result.is_allowed() || result.is_suspicious());
             }
         }
-        
+
         // Requests exceeding rate limit should be blocked
         for _ in 0..10 {
             dos_protection.check_request(ip, 100);
         }
-        
+
         let result = dos_protection.check_request(ip, 100);
         assert!(result.is_blocked());
     }
@@ -533,11 +569,11 @@ mod tests {
         let config = create_test_config();
         let dos_protection = DosProtection::new(config);
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
+
         // Consume most of the bandwidth
         let result = dos_protection.check_request(ip, 9000);
         assert!(result.is_allowed());
-        
+
         // Next request should exceed bandwidth limit
         let result = dos_protection.check_request(ip, 2000);
         assert!(result.is_blocked());
@@ -548,20 +584,20 @@ mod tests {
         let config = create_test_config();
         let dos_protection = DosProtection::new(config);
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
+
         // Register up to the limit
         for _ in 0..5 {
             let result = dos_protection.register_connection(ip);
             assert!(result.is_allowed());
         }
-        
+
         // Next connection should be blocked
         let result = dos_protection.register_connection(ip);
         assert!(result.is_blocked());
-        
+
         // Unregister a connection
         dos_protection.unregister_connection(ip);
-        
+
         // Should be able to connect again
         let result = dos_protection.register_connection(ip);
         assert!(result.is_allowed());
@@ -572,21 +608,21 @@ mod tests {
         let config = create_test_config();
         let dos_protection = DosProtection::new(config);
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
+
         // Should be allowed initially
         let result = dos_protection.check_request(ip, 100);
         assert!(result.is_allowed());
-        
+
         // Block manually
         dos_protection.block_ip(ip, Duration::from_secs(60), "Manual block".to_string());
-        
+
         // Should now be blocked
         let result = dos_protection.check_request(ip, 100);
         assert!(result.is_blocked());
-        
+
         // Unblock
         dos_protection.unblock_ip(ip);
-        
+
         // Should be allowed again
         let result = dos_protection.check_request(ip, 100);
         assert!(result.is_allowed());
@@ -597,7 +633,7 @@ mod tests {
         let config = create_test_config();
         let dos_protection = DosProtection::new(config);
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
+
         // Make requests up to suspicious threshold
         for _ in 0..6 {
             let result = dos_protection.check_request(ip, 100);
@@ -605,7 +641,7 @@ mod tests {
                 break;
             }
         }
-        
+
         let stats = dos_protection.get_stats();
         assert!(stats.suspicious_requests > 0);
     }
@@ -615,10 +651,10 @@ mod tests {
         let config = create_test_config();
         let dos_protection = DosProtection::new(config);
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
+
         // Block IP
         dos_protection.block_ip(ip, Duration::from_secs(60), "Test block".to_string());
-        
+
         let blocked_ips = dos_protection.get_blocked_ips();
         assert_eq!(blocked_ips.len(), 1);
         assert_eq!(blocked_ips[0].0, ip);
@@ -630,7 +666,7 @@ mod tests {
         let config = create_test_config();
         let dos_protection = DosProtection::new(config);
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
+
         // Make some requests
         for i in 0..15 {
             dos_protection.check_request(ip, 100);
@@ -639,7 +675,7 @@ mod tests {
                 break;
             }
         }
-        
+
         let stats = dos_protection.get_stats();
         assert!(stats.total_requests > 0);
         assert!(stats.blocked_requests > 0);
@@ -651,16 +687,16 @@ mod tests {
         let config = create_test_config();
         let dos_protection = DosProtection::new(config);
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
+
         // Create some tracked data
         dos_protection.check_request(ip, 100);
-        
+
         let stats_before = dos_protection.get_stats();
         assert_eq!(stats_before.tracked_ips, 1);
-        
+
         // Force cleanup (though entries won't be expired yet)
         dos_protection.cleanup_expired_entries();
-        
+
         let stats_after = dos_protection.get_stats();
         // Entry should still exist since it's not expired
         assert_eq!(stats_after.tracked_ips, 1);

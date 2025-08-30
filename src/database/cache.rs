@@ -1,22 +1,22 @@
 //! Database caching layer for performance optimization
-//! 
+//!
 //! Provides multi-tier caching with LRU eviction, write-through/write-back
 //! strategies, and intelligent cache warming.
 
-use std::sync::Arc;
+use crate::error::{Error, Result};
+use lru::LruCache;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use lru::LruCache;
-use serde::{Serialize, Deserialize};
-use crate::error::{Error, Result};
 
 /// Cache configuration
 #[derive(Debug, Clone)]
 pub struct CacheConfig {
-    pub l1_size: usize,           // In-memory cache size
-    pub l2_size: usize,           // Disk cache size
-    pub ttl_seconds: u64,         // Time to live
+    pub l1_size: usize,   // In-memory cache size
+    pub l2_size: usize,   // Disk cache size
+    pub ttl_seconds: u64, // Time to live
     pub write_strategy: WriteStrategy,
     pub enable_compression: bool,
     pub enable_metrics: bool,
@@ -37,9 +37,9 @@ impl Default for CacheConfig {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum WriteStrategy {
-    WriteThrough,  // Write to cache and database simultaneously
-    WriteBack,     // Write to cache first, database later
-    WriteAround,   // Skip cache, write directly to database
+    WriteThrough, // Write to cache and database simultaneously
+    WriteBack,    // Write to cache first, database later
+    WriteAround,  // Skip cache, write directly to database
 }
 
 /// Multi-tier cache implementation
@@ -100,14 +100,16 @@ impl CacheEntry {
 
     /// Compress data using flate2
     fn compress(data: &[u8]) -> Result<Vec<u8>> {
-        use flate2::Compression;
         use flate2::write::GzEncoder;
+        use flate2::Compression;
         use std::io::Write;
 
         let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
-        encoder.write_all(data)
+        encoder
+            .write_all(data)
             .map_err(|e| Error::Cache(format!("Compression failed: {}", e)))?;
-        encoder.finish()
+        encoder
+            .finish()
             .map_err(|e| Error::Cache(format!("Compression finalize failed: {}", e)))
     }
 
@@ -118,7 +120,8 @@ impl CacheEntry {
 
         let mut decoder = GzDecoder::new(data);
         let mut decompressed = Vec::new();
-        decoder.read_to_end(&mut decompressed)
+        decoder
+            .read_to_end(&mut decompressed)
             .map_err(|e| Error::Cache(format!("Decompression failed: {}", e)))?;
         Ok(decompressed)
     }
@@ -163,7 +166,9 @@ impl DatabaseCache {
     /// Create a new database cache
     pub fn new(config: CacheConfig) -> Self {
         Self {
-            l1_cache: Arc::new(RwLock::new(LruCache::new(std::num::NonZeroUsize::new(config.l1_size).unwrap()))),
+            l1_cache: Arc::new(RwLock::new(LruCache::new(
+                std::num::NonZeroUsize::new(config.l1_size).unwrap(),
+            ))),
             l2_cache: Arc::new(RwLock::new(HashMap::with_capacity(config.l2_size))),
             config,
             metrics: Arc::new(RwLock::new(CacheMetrics::default())),
@@ -208,7 +213,7 @@ impl DatabaseCache {
                         let mut metrics = self.metrics.write().await;
                         metrics.l2_hits += 1;
                     }
-                    
+
                     // Promote to L1
                     let data = entry.get_data()?;
                     self.promote_to_l1(key, entry.clone()).await;
@@ -239,7 +244,7 @@ impl DatabaseCache {
             if let Some((evicted_key, evicted_entry)) = l1.push(key.clone(), entry.clone()) {
                 // Demote evicted entry to L2
                 self.demote_to_l2(evicted_key, evicted_entry).await;
-                
+
                 if self.config.enable_metrics {
                     let mut metrics = self.metrics.write().await;
                     metrics.evictions += 1;
@@ -314,7 +319,7 @@ impl DatabaseCache {
         // This would typically fetch from database
         // For now, we'll just mark these keys as warmed
         let mut warmed = 0;
-        
+
         for key in keys {
             // In a real implementation, you'd fetch from the database
             // and populate the cache with the actual data
@@ -338,7 +343,7 @@ impl DatabaseCache {
     /// Demote entry to L2 cache
     async fn demote_to_l2(&self, key: String, entry: CacheEntry) {
         let mut l2 = self.l2_cache.write().await;
-        
+
         // Check if L2 is full
         if l2.len() >= self.config.l2_size {
             // Remove oldest entry (simple FIFO for L2)
@@ -346,7 +351,7 @@ impl DatabaseCache {
                 l2.remove(&oldest_key);
             }
         }
-        
+
         l2.insert(key, entry);
     }
 
@@ -358,7 +363,8 @@ impl DatabaseCache {
         // Clean L1
         {
             let mut l1 = self.l1_cache.write().await;
-            let expired_keys: Vec<String> = l1.iter()
+            let expired_keys: Vec<String> = l1
+                .iter()
                 .filter(|(_, entry)| entry.expires_at < now)
                 .map(|(key, _)| key.clone())
                 .collect();
@@ -372,7 +378,8 @@ impl DatabaseCache {
         // Clean L2
         {
             let mut l2 = self.l2_cache.write().await;
-            let expired_keys: Vec<String> = l2.iter()
+            let expired_keys: Vec<String> = l2
+                .iter()
                 .filter(|(_, entry)| entry.expires_at < now)
                 .map(|(key, _)| key.clone())
                 .collect();
@@ -442,12 +449,16 @@ impl CachedQueryBuilder {
         for param in params {
             param.hash(&mut hasher);
         }
-        
+
         format!("{}:{:x}", self.query_prefix, hasher.finish())
     }
 
     /// Execute a cached query
-    pub async fn execute<T>(&self, key: String, fetch_fn: impl std::future::Future<Output = Result<T>>) -> Result<T>
+    pub async fn execute<T>(
+        &self,
+        key: String,
+        fetch_fn: impl std::future::Future<Output = Result<T>>,
+    ) -> Result<T>
     where
         T: Serialize + for<'de> Deserialize<'de>,
     {
@@ -465,7 +476,7 @@ impl CachedQueryBuilder {
 
         // Fetch from database
         let data = fetch_fn.await?;
-        
+
         // Cache the result
         if let Ok(serialized) = bincode::serialize(&data) {
             if let Err(e) = self.cache.put(key, serialized).await {
@@ -490,18 +501,21 @@ mod tests {
             ttl_seconds: 1,
             ..Default::default()
         };
-        
+
         let cache = DatabaseCache::new(config);
-        
+
         // Test put and get
-        cache.put("key1".to_string(), b"value1".to_vec()).await.unwrap();
+        cache
+            .put("key1".to_string(), b"value1".to_vec())
+            .await
+            .unwrap();
         let value = cache.get("key1").await.unwrap();
         assert_eq!(value, Some(b"value1".to_vec()));
-        
+
         // Test cache miss
         let missing = cache.get("missing").await.unwrap();
         assert_eq!(missing, None);
-        
+
         // Test metrics
         let metrics = cache.metrics().await;
         assert!(metrics.total_requests > 0);
@@ -515,12 +529,15 @@ mod tests {
             ttl_seconds: 0, // Immediate expiration
             ..Default::default()
         };
-        
+
         let cache = DatabaseCache::new(config);
-        
-        cache.put("key1".to_string(), b"value1".to_vec()).await.unwrap();
+
+        cache
+            .put("key1".to_string(), b"value1".to_vec())
+            .await
+            .unwrap();
         sleep(Duration::from_millis(10)).await; // Wait for expiration
-        
+
         let value = cache.get("key1").await.unwrap();
         assert_eq!(value, None);
     }
@@ -533,13 +550,22 @@ mod tests {
             ttl_seconds: 60,
             ..Default::default()
         };
-        
+
         let cache = DatabaseCache::new(config);
-        
-        cache.put("key1".to_string(), b"value1".to_vec()).await.unwrap();
-        cache.put("key2".to_string(), b"value2".to_vec()).await.unwrap();
-        cache.put("key3".to_string(), b"value3".to_vec()).await.unwrap();
-        
+
+        cache
+            .put("key1".to_string(), b"value1".to_vec())
+            .await
+            .unwrap();
+        cache
+            .put("key2".to_string(), b"value2".to_vec())
+            .await
+            .unwrap();
+        cache
+            .put("key3".to_string(), b"value3".to_vec())
+            .await
+            .unwrap();
+
         let stats = cache.stats().await;
         assert!(stats.evictions > 0);
     }

@@ -1,5 +1,5 @@
 //! Smart Contract Integration Module
-//! 
+//!
 //! This module provides interfaces and implementations for integrating with
 //! various blockchain smart contracts, enabling cross-chain operations and
 //! bridging for the BitCraps ecosystem:
@@ -10,22 +10,22 @@
 //! - Automated market maker contract integration
 //! - Oracle price feeds and external data sources
 
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
-use crate::protocol::{CrapTokens, Hash256};
-use crate::error::{Error, Result};
-use crate::treasury::TreasuryManager;
 use crate::economics::TokenEconomics;
+use crate::error::{Error, Result};
+use crate::protocol::{CrapTokens, Hash256};
+use crate::treasury::TreasuryManager;
 
-pub mod token_contracts;
-pub mod staking_contracts;
 pub mod bridge_contracts;
 pub mod oracle_integration;
+pub mod staking_contracts;
+pub mod token_contracts;
 
 /// Supported blockchain networks
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
@@ -36,7 +36,7 @@ pub enum BlockchainNetwork {
     Arbitrum,
     Optimism,
     Avalanche,
-    Bitcoin,    // For Bitcoin bridge
+    Bitcoin, // For Bitcoin bridge
     BitcoinCash,
     Litecoin,
 }
@@ -55,7 +55,7 @@ impl BlockchainNetwork {
             BlockchainNetwork::Litecoin => 0,
         }
     }
-    
+
     pub fn native_currency(&self) -> &'static str {
         match self {
             BlockchainNetwork::Ethereum => "ETH",
@@ -114,7 +114,7 @@ pub struct StakingContract {
     pub reward_token: String,
     pub min_stake_amount: u64,
     pub lock_periods: Vec<u64>,
-    pub reward_rates: HashMap<u64, f64>, // lock_period -> APY
+    pub reward_rates: HashMap<u64, f64>,  // lock_period -> APY
     pub penalty_rates: HashMap<u64, f64>, // lock_period -> penalty
     pub compound_frequency: u64,
     pub total_staked: u64,
@@ -250,7 +250,7 @@ impl ContractManager {
             rpc_endpoints: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-    
+
     /// Deploy token contract on specified network
     pub async fn deploy_token_contract(
         &self,
@@ -266,9 +266,9 @@ impl ContractManager {
         // 3. Submit deployment transaction
         // 4. Wait for confirmation
         // 5. Verify contract on block explorer
-        
+
         let contract_address = self.generate_contract_address(&network).await;
-        
+
         let interface = ContractInterface {
             contract_address: contract_address.clone(),
             network: network.clone(),
@@ -283,7 +283,7 @@ impl ContractManager {
             deployed_block: Some(self.get_current_block_number(&network).await),
             verification_status: VerificationStatus::Unverified,
         };
-        
+
         let token_contract = TokenContract {
             interface,
             token_name: token_name.clone(),
@@ -293,19 +293,26 @@ impl ContractManager {
             mint_capability: true,
             burn_capability: true,
             pause_capability: true,
-            upgrade_capability: false, // Immutable contract
+            upgrade_capability: false,            // Immutable contract
             owner: Some("0x1234...".to_string()), // Treasury multisig
             admin_roles: vec!["0x5678...".to_string()], // Additional admins
         };
-        
-        self.token_contracts.write().await.insert(contract_address.clone(), token_contract);
-        
-        log::info!("Deployed {} token contract on {:?} at address {}",
-                  token_name, network, contract_address);
-        
+
+        self.token_contracts
+            .write()
+            .await
+            .insert(contract_address.clone(), token_contract);
+
+        log::info!(
+            "Deployed {} token contract on {:?} at address {}",
+            token_name,
+            network,
+            contract_address
+        );
+
         Ok(contract_address)
     }
-    
+
     /// Create staking contract with reward mechanisms
     pub async fn deploy_staking_contract(
         &self,
@@ -315,7 +322,7 @@ impl ContractManager {
         reward_rates: HashMap<u64, f64>,
     ) -> Result<String> {
         let contract_address = self.generate_contract_address(&network).await;
-        
+
         let interface = ContractInterface {
             contract_address: contract_address.clone(),
             network: network.clone(),
@@ -328,19 +335,19 @@ impl ContractManager {
             deployed_block: Some(self.get_current_block_number(&network).await),
             verification_status: VerificationStatus::Unverified,
         };
-        
+
         let mut penalty_rates = HashMap::new();
         for &lock_period in reward_rates.keys() {
             // Higher rewards = higher penalties for early withdrawal
             let penalty = match lock_period {
-                86400..=604800 => 0.05,      // 5% for 1-7 days
-                604801..=2592000 => 0.10,    // 10% for 1 week - 1 month
-                2592001..=31536000 => 0.15,  // 15% for 1 month - 1 year
-                _ => 0.20,                   // 20% for over 1 year
+                86400..=604800 => 0.05,     // 5% for 1-7 days
+                604801..=2592000 => 0.10,   // 10% for 1 week - 1 month
+                2592001..=31536000 => 0.15, // 15% for 1 month - 1 year
+                _ => 0.20,                  // 20% for over 1 year
             };
             penalty_rates.insert(lock_period, penalty);
         }
-        
+
         let staking_contract = StakingContract {
             interface,
             staking_token,
@@ -354,15 +361,21 @@ impl ContractManager {
             total_rewards_distributed: 0,
             emergency_withdrawal: false,
         };
-        
-        self.staking_contracts.write().await.insert(contract_address.clone(), staking_contract);
-        
-        log::info!("Deployed staking contract on {:?} at address {}",
-                  network, contract_address);
-        
+
+        self.staking_contracts
+            .write()
+            .await
+            .insert(contract_address.clone(), staking_contract);
+
+        log::info!(
+            "Deployed staking contract on {:?} at address {}",
+            network,
+            contract_address
+        );
+
         Ok(contract_address)
     }
-    
+
     /// Create bridge contract for cross-chain transfers
     pub async fn deploy_bridge_contract(
         &self,
@@ -372,20 +385,25 @@ impl ContractManager {
         validator_addresses: Vec<String>,
     ) -> Result<String> {
         let contract_address = self.generate_contract_address(&source_network).await;
-        
+
         let interface = ContractInterface {
             contract_address: contract_address.clone(),
             network: source_network.clone(),
             abi: self.get_bridge_abi(),
             bytecode: Some(self.get_bridge_bytecode()),
             constructor_args: Some(vec![
-                Value::Array(validator_addresses.iter().map(|v| Value::String(v.clone())).collect()),
+                Value::Array(
+                    validator_addresses
+                        .iter()
+                        .map(|v| Value::String(v.clone()))
+                        .collect(),
+                ),
                 Value::Number(serde_json::Number::from(2)), // 2/3 threshold
             ]),
             deployed_block: Some(self.get_current_block_number(&source_network).await),
             verification_status: VerificationStatus::Unverified,
         };
-        
+
         let mut confirmation_blocks = HashMap::new();
         for network in &target_networks {
             let confirmations = match network {
@@ -397,30 +415,37 @@ impl ContractManager {
             };
             confirmation_blocks.insert(network.clone(), confirmations);
         }
-        
+
         let bridge_contract = BridgeContract {
             interface,
             source_network: source_network.clone(),
             target_networks,
             supported_tokens,
-            bridge_fee: 0.001, // 0.1% bridge fee
-            min_bridge_amount: 1_000_000,   // 0.001 CRAP minimum
+            bridge_fee: 0.001,                    // 0.1% bridge fee
+            min_bridge_amount: 1_000_000,         // 0.001 CRAP minimum
             max_bridge_amount: 1_000_000_000_000, // 1M CRAP maximum
             confirmation_blocks,
             validator_threshold: ((validator_addresses.len() * 2) / 3) as u8 + 1,
             validator_addresses,
             pause_status: false,
         };
-        
+
         let target_networks_len = bridge_contract.target_networks.len();
-        self.bridge_contracts.write().await.insert(contract_address.clone(), bridge_contract);
-        
-        log::info!("Deployed bridge contract on {:?} at address {} supporting {} networks",
-                  source_network, contract_address, target_networks_len);
-        
+        self.bridge_contracts
+            .write()
+            .await
+            .insert(contract_address.clone(), bridge_contract);
+
+        log::info!(
+            "Deployed bridge contract on {:?} at address {} supporting {} networks",
+            source_network,
+            contract_address,
+            target_networks_len
+        );
+
         Ok(contract_address)
     }
-    
+
     /// Initiate cross-chain bridge transfer
     pub async fn bridge_tokens(
         &self,
@@ -431,25 +456,28 @@ impl ContractManager {
         recipient: String,
     ) -> Result<Hash256> {
         let bridge_contracts = self.bridge_contracts.read().await;
-        let bridge_contract = bridge_contracts.get(&bridge_contract_address)
+        let bridge_contract = bridge_contracts
+            .get(&bridge_contract_address)
             .ok_or_else(|| Error::InvalidData("Bridge contract not found".to_string()))?;
-        
+
         // Validate bridge operation
         if amount < bridge_contract.min_bridge_amount {
             return Err(Error::InvalidData("Amount below minimum".to_string()));
         }
-        
+
         if amount > bridge_contract.max_bridge_amount {
             return Err(Error::InvalidData("Amount above maximum".to_string()));
         }
-        
+
         if !bridge_contract.target_networks.contains(&target_network) {
-            return Err(Error::InvalidData("Target network not supported".to_string()));
+            return Err(Error::InvalidData(
+                "Target network not supported".to_string(),
+            ));
         }
-        
+
         let operation_id = self.generate_operation_id();
         let bridge_fee = (amount as f64 * bridge_contract.bridge_fee) as u64;
-        
+
         // Create contract transaction to lock tokens
         let lock_tx = ContractTransaction {
             tx_id: self.generate_tx_id(),
@@ -471,7 +499,7 @@ impl ContractManager {
             block_number: None,
             timestamp: Self::current_timestamp(),
         };
-        
+
         // Create bridge operation
         let bridge_operation = BridgeOperation {
             operation_id,
@@ -489,19 +517,27 @@ impl ContractManager {
             confirmed_at: None,
             validator_signatures: Vec::new(),
         };
-        
+
         // Store pending transaction and bridge operation
-        self.pending_transactions.write().await.insert(lock_tx.tx_id, lock_tx);
-        self.bridge_operations.write().await.insert(operation_id, bridge_operation);
-        
-        log::info!("Initiated bridge operation {} for {} tokens to {:?}",
-                  hex::encode(&operation_id[..8]),
-                  CrapTokens::from(amount).to_crap(),
-                  target_network);
-        
+        self.pending_transactions
+            .write()
+            .await
+            .insert(lock_tx.tx_id, lock_tx);
+        self.bridge_operations
+            .write()
+            .await
+            .insert(operation_id, bridge_operation);
+
+        log::info!(
+            "Initiated bridge operation {} for {} tokens to {:?}",
+            hex::encode(&operation_id[..8]),
+            CrapTokens::from(amount).to_crap(),
+            target_network
+        );
+
         Ok(operation_id)
     }
-    
+
     /// Set up oracle price feed
     pub async fn setup_oracle_feed(
         &self,
@@ -521,28 +557,36 @@ impl ContractManager {
             heartbeat_interval: Duration::from_secs(3600), // 1 hour heartbeat
             aggregation_method: AggregationMethod::Median,
         };
-        
-        self.oracle_feeds.write().await.insert(oracle_address.clone(), feed);
-        
-        log::info!("Set up oracle price feed for {} on {:?} at {}",
-                  price_pair, network, oracle_address);
-        
+
+        self.oracle_feeds
+            .write()
+            .await
+            .insert(oracle_address.clone(), feed);
+
+        log::info!(
+            "Set up oracle price feed for {} on {:?} at {}",
+            price_pair,
+            network,
+            oracle_address
+        );
+
         Ok(())
     }
-    
+
     /// Get latest price from oracle
     pub async fn get_oracle_price(&self, oracle_address: &str) -> Result<(f64, u64)> {
         let feeds = self.oracle_feeds.read().await;
-        let feed = feeds.get(oracle_address)
+        let feed = feeds
+            .get(oracle_address)
             .ok_or_else(|| Error::InvalidData("Oracle feed not found".to_string()))?;
-        
+
         // In a real implementation, this would call the oracle contract
         let mock_price = self.fetch_mock_price(&feed.price_pair).await;
         let timestamp = Self::current_timestamp();
-        
+
         Ok((mock_price, timestamp))
     }
-    
+
     /// Get comprehensive contract statistics
     pub async fn get_contract_stats(&self) -> ContractStats {
         let token_contracts = self.token_contracts.read().await;
@@ -550,25 +594,23 @@ impl ContractManager {
         let bridge_contracts = self.bridge_contracts.read().await;
         let oracle_feeds = self.oracle_feeds.read().await;
         let bridge_operations = self.bridge_operations.read().await;
-        
-        let total_staked: u64 = staking_contracts.values()
-            .map(|s| s.total_staked)
-            .sum();
-        
-        let completed_bridges = bridge_operations.values()
+
+        let total_staked: u64 = staking_contracts.values().map(|s| s.total_staked).sum();
+
+        let completed_bridges = bridge_operations
+            .values()
             .filter(|op| matches!(op.status, BridgeStatus::Completed))
             .count();
-        
-        let bridge_volume: u64 = bridge_operations.values()
-            .map(|op| op.amount)
-            .sum();
-        
-        let networks_supported: std::collections::HashSet<_> = token_contracts.values()
+
+        let bridge_volume: u64 = bridge_operations.values().map(|op| op.amount).sum();
+
+        let networks_supported: std::collections::HashSet<_> = token_contracts
+            .values()
             .map(|t| &t.interface.network)
             .chain(staking_contracts.values().map(|s| &s.interface.network))
             .chain(bridge_contracts.values().map(|b| &b.source_network))
             .collect();
-        
+
         ContractStats {
             total_token_contracts: token_contracts.len(),
             total_staking_contracts: staking_contracts.len(),
@@ -580,45 +622,45 @@ impl ContractManager {
             networks_supported: networks_supported.len(),
         }
     }
-    
+
     // Helper functions
-    
+
     async fn generate_contract_address(&self, network: &BlockchainNetwork) -> String {
         // In a real implementation, this would use the proper address derivation
         format!("0x{:040x}", rand::random::<u64>())
     }
-    
+
     async fn get_current_block_number(&self, _network: &BlockchainNetwork) -> u64 {
         // Mock implementation - would call RPC endpoint
         rand::random::<u64>() % 20_000_000 + 15_000_000
     }
-    
+
     fn generate_operation_id(&self) -> Hash256 {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(b"bridge_operation");
         hasher.update(Self::current_timestamp().to_be_bytes());
         hasher.update(rand::random::<[u8; 16]>());
-        
+
         let result = hasher.finalize();
         let mut id = [0u8; 32];
         id.copy_from_slice(&result);
         id
     }
-    
+
     fn generate_tx_id(&self) -> Hash256 {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(b"contract_tx");
         hasher.update(Self::current_timestamp().to_be_bytes());
         hasher.update(rand::random::<[u8; 16]>());
-        
+
         let result = hasher.finalize();
         let mut id = [0u8; 32];
         id.copy_from_slice(&result);
         id
     }
-    
+
     async fn fetch_mock_price(&self, price_pair: &str) -> f64 {
         // Mock price feed - in production, would fetch from real oracles
         match price_pair {
@@ -628,7 +670,7 @@ impl ContractManager {
             _ => 1.0,
         }
     }
-    
+
     fn get_erc20_abi(&self) -> Value {
         serde_json::json!([
             {
@@ -640,11 +682,11 @@ impl ContractManager {
             }
         ])
     }
-    
+
     fn get_erc20_bytecode(&self) -> String {
         "0x608060405234801561001057600080fd5b50...".to_string() // Truncated for brevity
     }
-    
+
     fn get_staking_abi(&self) -> Value {
         serde_json::json!([
             {
@@ -656,11 +698,11 @@ impl ContractManager {
             }
         ])
     }
-    
+
     fn get_staking_bytecode(&self) -> String {
         "0x608060405234801561001057600080fd5b50...".to_string()
     }
-    
+
     fn get_bridge_abi(&self) -> Value {
         serde_json::json!([
             {
@@ -672,11 +714,11 @@ impl ContractManager {
             }
         ])
     }
-    
+
     fn get_bridge_bytecode(&self) -> String {
         "0x608060405234801561001057600080fd5b50...".to_string()
     }
-    
+
     fn current_timestamp() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -701,40 +743,43 @@ pub struct ContractStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::economics::TokenEconomics;
     use crate::token::TokenLedger;
     use crate::treasury::TreasuryManager;
-    use crate::economics::TokenEconomics;
-    
+
     #[tokio::test]
     async fn test_contract_manager_creation() {
         let ledger = Arc::new(TokenLedger::new());
         let treasury = Arc::new(TreasuryManager::new(ledger.clone()));
         let economics = Arc::new(TokenEconomics::new(ledger));
-        
+
         let contract_manager = ContractManager::new(treasury, economics);
         let stats = contract_manager.get_contract_stats().await;
-        
+
         assert_eq!(stats.total_token_contracts, 0);
         assert_eq!(stats.networks_supported, 0);
     }
-    
+
     #[tokio::test]
     async fn test_token_contract_deployment() {
         let ledger = Arc::new(TokenLedger::new());
         let treasury = Arc::new(TreasuryManager::new(ledger.clone()));
         let economics = Arc::new(TokenEconomics::new(ledger));
         let contract_manager = ContractManager::new(treasury, economics);
-        
-        let contract_address = contract_manager.deploy_token_contract(
-            BlockchainNetwork::Ethereum,
-            "BitCraps Token".to_string(),
-            "CRAP".to_string(),
-            21_000_000_000_000,
-            12,
-        ).await.unwrap();
-        
+
+        let contract_address = contract_manager
+            .deploy_token_contract(
+                BlockchainNetwork::Ethereum,
+                "BitCraps Token".to_string(),
+                "CRAP".to_string(),
+                21_000_000_000_000,
+                12,
+            )
+            .await
+            .unwrap();
+
         assert!(contract_address.starts_with("0x"));
-        
+
         let stats = contract_manager.get_contract_stats().await;
         assert_eq!(stats.total_token_contracts, 1);
     }

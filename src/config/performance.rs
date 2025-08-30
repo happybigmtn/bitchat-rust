@@ -1,5 +1,5 @@
 //! Performance tuning configuration for BitCraps
-//! 
+//!
 //! Provides runtime-adjustable performance parameters optimized for different scenarios
 
 use serde::{Deserialize, Serialize};
@@ -23,22 +23,22 @@ pub enum PerformanceProfile {
 pub struct PerformanceConfig {
     /// Network performance settings
     pub network: NetworkPerformanceConfig,
-    
+
     /// Consensus performance settings
     pub consensus: ConsensusPerformanceConfig,
-    
+
     /// Database performance settings
     pub database: DatabasePerformanceConfig,
-    
+
     /// Bluetooth/BLE performance settings
     pub bluetooth: BluetoothPerformanceConfig,
-    
+
     /// CPU utilization settings
     pub cpu: CpuPerformanceConfig,
-    
+
     /// Memory management settings
     pub memory: MemoryPerformanceConfig,
-    
+
     /// Battery optimization settings
     pub battery: BatteryOptimizationConfig,
 }
@@ -48,28 +48,28 @@ pub struct PerformanceConfig {
 pub struct NetworkPerformanceConfig {
     /// Maximum concurrent connections
     pub max_connections: usize,
-    
+
     /// Connection timeout
     pub connection_timeout: Duration,
-    
+
     /// Message batch size for efficiency
     pub message_batch_size: usize,
-    
+
     /// Enable message compression for large payloads
     pub enable_compression: bool,
-    
+
     /// Compression threshold in bytes
     pub compression_threshold: usize,
-    
+
     /// Network buffer size
     pub buffer_size: usize,
-    
+
     /// Keepalive interval
     pub keepalive_interval: Duration,
-    
+
     /// Maximum retry attempts
     pub max_retries: u32,
-    
+
     /// Retry backoff multiplier
     pub retry_backoff_multiplier: f64,
 }
@@ -79,28 +79,28 @@ pub struct NetworkPerformanceConfig {
 pub struct ConsensusPerformanceConfig {
     /// Consensus round timeout
     pub round_timeout: Duration,
-    
+
     /// Vote collection timeout
     pub vote_timeout: Duration,
-    
+
     /// Maximum operations per batch
     pub batch_size: usize,
-    
+
     /// Enable parallel signature validation
     pub parallel_validation: bool,
-    
+
     /// Signature validation thread pool size
     pub validation_threads: usize,
-    
+
     /// Vote cache size
     pub vote_cache_size: usize,
-    
+
     /// Enable fast-path for unanimous decisions
     pub enable_fast_path: bool,
-    
+
     /// Quorum calculation optimization
     pub optimized_quorum: bool,
-    
+
     /// Fork detection interval
     pub fork_detection_interval: Duration,
 }
@@ -110,25 +110,25 @@ pub struct ConsensusPerformanceConfig {
 pub struct DatabasePerformanceConfig {
     /// Connection pool size
     pub connection_pool_size: usize,
-    
+
     /// Cache size in MB
     pub cache_size_mb: usize,
-    
+
     /// Memory-mapped I/O size in MB
     pub mmap_size_mb: usize,
-    
+
     /// Write-ahead log auto-checkpoint interval
     pub wal_checkpoint_interval: Duration,
-    
+
     /// Transaction batch size
     pub transaction_batch_size: usize,
-    
+
     /// Enable query optimization
     pub enable_query_optimization: bool,
-    
+
     /// Index cache size
     pub index_cache_size: usize,
-    
+
     /// Vacuum schedule interval
     pub vacuum_interval: Duration,
 }
@@ -138,31 +138,31 @@ pub struct DatabasePerformanceConfig {
 pub struct BluetoothPerformanceConfig {
     /// BLE scan interval
     pub scan_interval: Duration,
-    
+
     /// BLE scan window
     pub scan_window: Duration,
-    
+
     /// Advertisement interval
     pub advertisement_interval: Duration,
-    
+
     /// Connection interval min
     pub connection_interval_min: Duration,
-    
+
     /// Connection interval max
     pub connection_interval_max: Duration,
-    
+
     /// Connection latency (number of intervals that can be skipped)
     pub connection_latency: u16,
-    
+
     /// Supervision timeout
     pub supervision_timeout: Duration,
-    
+
     /// MTU size for BLE connections
     pub mtu_size: u16,
-    
+
     /// Enable adaptive scanning
     pub adaptive_scanning: bool,
-    
+
     /// Power level (0-100)
     pub tx_power_level: u8,
 }
@@ -172,22 +172,22 @@ pub struct BluetoothPerformanceConfig {
 pub struct CpuPerformanceConfig {
     /// Target CPU utilization percentage
     pub target_utilization: f64,
-    
+
     /// Worker thread pool size
     pub worker_threads: usize,
-    
+
     /// Async runtime threads
     pub async_threads: usize,
-    
+
     /// Enable CPU affinity
     pub enable_affinity: bool,
-    
+
     /// Task priority levels
     pub enable_priority_scheduling: bool,
-    
+
     /// Batch processing threshold
     pub batch_threshold: usize,
-    
+
     /// Sleep duration when idle
     pub idle_sleep_duration: Duration,
 }
@@ -197,22 +197,22 @@ pub struct CpuPerformanceConfig {
 pub struct MemoryPerformanceConfig {
     /// Maximum heap size in MB
     pub max_heap_mb: usize,
-    
+
     /// Object pool sizes
     pub pool_sizes: ObjectPoolConfig,
-    
+
     /// Cache eviction policy
     pub eviction_policy: EvictionPolicy,
-    
+
     /// Memory pressure threshold (percentage)
     pub pressure_threshold: f64,
-    
+
     /// Enable memory compression
     pub enable_compression: bool,
-    
+
     /// Garbage collection interval
     pub gc_interval: Duration,
-    
+
     /// Pre-allocation sizes
     pub preallocate_buffers: bool,
 }
@@ -222,13 +222,13 @@ pub struct MemoryPerformanceConfig {
 pub struct ObjectPoolConfig {
     /// Message pool size
     pub message_pool: usize,
-    
+
     /// Connection pool size
     pub connection_pool: usize,
-    
+
     /// Buffer pool size
     pub buffer_pool: usize,
-    
+
     /// Transaction pool size
     pub transaction_pool: usize,
 }
@@ -251,25 +251,25 @@ pub enum EvictionPolicy {
 pub struct BatteryOptimizationConfig {
     /// Enable battery optimization
     pub enabled: bool,
-    
+
     /// Low battery threshold (percentage)
     pub low_battery_threshold: u8,
-    
+
     /// Critical battery threshold (percentage)
     pub critical_battery_threshold: u8,
-    
+
     /// Reduce activity when on battery
     pub reduce_on_battery: bool,
-    
+
     /// Suspend threshold (percentage)
     pub suspend_threshold: u8,
-    
+
     /// Wake lock strategy
     pub wake_lock_strategy: WakeLockStrategy,
-    
+
     /// Doze mode compatibility
     pub doze_compatible: bool,
-    
+
     /// Background execution limits
     pub background_limits: BackgroundLimits,
 }
@@ -292,10 +292,10 @@ pub enum WakeLockStrategy {
 pub struct BackgroundLimits {
     /// Maximum background CPU time per hour (seconds)
     pub max_cpu_seconds: u32,
-    
+
     /// Maximum network requests per hour
     pub max_network_requests: u32,
-    
+
     /// Maximum database operations per hour
     pub max_db_operations: u32,
 }
@@ -316,7 +316,7 @@ impl PerformanceProfile {
             Self::Custom(config) => config.clone(),
         }
     }
-    
+
     /// Power saving configuration for mobile devices
     fn power_saving_config() -> PerformanceConfig {
         PerformanceConfig {
@@ -403,7 +403,7 @@ impl PerformanceProfile {
             },
         }
     }
-    
+
     /// Balanced configuration for general use
     fn balanced_config() -> PerformanceConfig {
         PerformanceConfig {
@@ -490,7 +490,7 @@ impl PerformanceProfile {
             },
         }
     }
-    
+
     /// High performance configuration for powerful devices
     fn high_performance_config() -> PerformanceConfig {
         PerformanceConfig {
@@ -596,37 +596,36 @@ impl PerformanceTuner {
             auto_tune: true,
         }
     }
-    
+
     /// Enable or disable auto-tuning
     pub fn set_auto_tune(&mut self, enabled: bool) {
         self.auto_tune = enabled;
     }
-    
+
     /// Get the current configuration
     pub fn get_config(&self) -> &PerformanceConfig {
         &self.config
     }
-    
+
     /// Update configuration based on system metrics
     pub fn tune(&mut self, metrics: &crate::performance::PerformanceMetrics) {
         if !self.auto_tune {
             return;
         }
-        
+
         // Adjust network parameters based on latency
         if metrics.network_latency.p95_ms > 500.0 {
             self.config.network.enable_compression = true;
-            self.config.network.message_batch_size = 
+            self.config.network.message_batch_size =
                 (self.config.network.message_batch_size * 2).min(1000);
         }
-        
+
         // Adjust consensus parameters based on throughput
         if metrics.consensus_performance.throughput_ops_per_sec < 50.0 {
-            self.config.consensus.batch_size = 
-                (self.config.consensus.batch_size * 2).min(500);
+            self.config.consensus.batch_size = (self.config.consensus.batch_size * 2).min(500);
             self.config.consensus.parallel_validation = true;
         }
-        
+
         // Adjust memory parameters based on usage
         if metrics.memory_usage.heap_used_mb > self.config.memory.max_heap_mb as f64 * 0.9 {
             // Trigger more aggressive GC
@@ -635,7 +634,7 @@ impl PerformanceTuner {
             self.config.memory.pool_sizes.message_pool /= 2;
             self.config.memory.pool_sizes.buffer_pool /= 2;
         }
-        
+
         // Adjust CPU parameters based on utilization
         if metrics.cpu_usage.utilization_percent > self.config.cpu.target_utilization {
             // Reduce activity

@@ -1,11 +1,11 @@
 //! Validation logic and dispute resolution
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
-use crate::protocol::{PeerId, Signature};
-use crate::protocol::craps::{Bet, DiceRoll, CrapTokens};
 use crate::crypto::SecureKeystore;
 use crate::error::Result;
+use crate::protocol::craps::{Bet, CrapTokens, DiceRoll};
+use crate::protocol::{PeerId, Signature};
 
 use super::{DisputeId, RoundId};
 
@@ -87,31 +87,27 @@ pub struct DisputeVote {
 pub enum DisputeVoteType {
     /// Dispute is valid, punish the accused
     Uphold,
-    
+
     /// Dispute is invalid, punish the disputer
     Reject,
-    
+
     /// Not enough evidence to decide
     Abstain,
-    
+
     /// Require additional evidence
     NeedMoreEvidence,
 }
 
 impl Dispute {
     /// Create new dispute
-    pub fn new(
-        disputer: PeerId,
-        disputed_state: super::StateHash,
-        claim: DisputeClaim,
-    ) -> Self {
+    pub fn new(disputer: PeerId, disputed_state: super::StateHash, claim: DisputeClaim) -> Self {
         let id = Self::generate_dispute_id(&disputer, &disputed_state, &claim);
         let created_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
         let resolution_deadline = created_at + 3600; // 1 hour
-        
+
         Self {
             id,
             disputer,
@@ -122,55 +118,63 @@ impl Dispute {
             resolution_deadline,
         }
     }
-    
+
     /// Generate dispute ID
     fn generate_dispute_id(
         disputer: &PeerId,
         disputed_state: &super::StateHash,
         claim: &DisputeClaim,
     ) -> DisputeId {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
-        
+
         hasher.update(disputer);
         hasher.update(disputed_state);
-        
+
         // Add claim-specific data
         match claim {
             DisputeClaim::InvalidBet { player, bet, .. } => {
                 hasher.update(b"invalid_bet");
                 hasher.update(player);
                 hasher.update(bet.amount.0.to_le_bytes());
-            },
-            DisputeClaim::InvalidRoll { round_id, claimed_roll, .. } => {
+            }
+            DisputeClaim::InvalidRoll {
+                round_id,
+                claimed_roll,
+                ..
+            } => {
                 hasher.update(b"invalid_roll");
                 hasher.update(round_id.to_le_bytes());
                 hasher.update([claimed_roll.die1, claimed_roll.die2]);
-            },
-            DisputeClaim::InvalidPayout { player, expected, actual } => {
+            }
+            DisputeClaim::InvalidPayout {
+                player,
+                expected,
+                actual,
+            } => {
                 hasher.update(b"invalid_payout");
                 hasher.update(player);
                 hasher.update(expected.0.to_le_bytes());
                 hasher.update(actual.0.to_le_bytes());
-            },
+            }
             DisputeClaim::DoubleSpending { player, .. } => {
                 hasher.update(b"double_spending");
                 hasher.update(player);
-            },
+            }
             DisputeClaim::ConsensusViolation { violated_rule, .. } => {
                 hasher.update(b"consensus_violation");
                 hasher.update(violated_rule.as_bytes());
-            },
+            }
         }
-        
+
         hasher.finalize().into()
     }
-    
+
     /// Add evidence to dispute
     pub fn add_evidence(&mut self, evidence: DisputeEvidence) {
         self.evidence.push(evidence);
     }
-    
+
     /// Check if dispute is expired
     pub fn is_expired(&self) -> bool {
         let now = std::time::SystemTime::now()
@@ -179,31 +183,37 @@ impl Dispute {
             .as_secs();
         now > self.resolution_deadline
     }
-    
+
     /// Validate dispute claim
     pub fn validate_claim(&self) -> bool {
         match &self.claim {
             DisputeClaim::InvalidBet { bet, .. } => {
                 // Validate bet parameters
                 bet.amount.0 > 0 && bet.amount.0 <= 1000000 // Max bet limit
-            },
+            }
             DisputeClaim::InvalidRoll { claimed_roll, .. } => {
                 // Validate dice roll
-                claimed_roll.die1 >= 1 && claimed_roll.die1 <= 6 &&
-                claimed_roll.die2 >= 1 && claimed_roll.die2 <= 6
-            },
-            DisputeClaim::InvalidPayout { expected, actual, .. } => {
+                claimed_roll.die1 >= 1
+                    && claimed_roll.die1 <= 6
+                    && claimed_roll.die2 >= 1
+                    && claimed_roll.die2 <= 6
+            }
+            DisputeClaim::InvalidPayout {
+                expected, actual, ..
+            } => {
                 // Check if payout amounts are reasonable
                 expected.0 != actual.0 && expected.0 > 0
-            },
-            DisputeClaim::DoubleSpending { conflicting_bets, .. } => {
+            }
+            DisputeClaim::DoubleSpending {
+                conflicting_bets, ..
+            } => {
                 // Check if there are actually conflicting bets
                 conflicting_bets.len() >= 2
-            },
+            }
             DisputeClaim::ConsensusViolation { violated_rule, .. } => {
                 // Check if rule name is valid
                 !violated_rule.is_empty()
-            },
+            }
         }
     }
 }
@@ -221,7 +231,7 @@ impl DisputeVote {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         // Create signature data
         let mut signature_data = Vec::new();
         signature_data.extend_from_slice(&voter);
@@ -229,10 +239,10 @@ impl DisputeVote {
         signature_data.extend_from_slice(&(vote as u8).to_le_bytes());
         signature_data.extend_from_slice(reasoning.as_bytes());
         signature_data.extend_from_slice(&timestamp.to_le_bytes());
-        
+
         // Sign with dispute context key
         let signature = keystore.sign(&signature_data)?;
-        
+
         Ok(Self {
             voter,
             dispute_id,
@@ -242,7 +252,7 @@ impl DisputeVote {
             signature,
         })
     }
-    
+
     /// Verify vote signature with proper cryptographic validation
     pub fn verify_signature(&self, voter_public_key: &[u8; 32]) -> Result<bool> {
         // Reconstruct signature data
@@ -252,7 +262,7 @@ impl DisputeVote {
         signature_data.extend_from_slice(&(self.vote as u8).to_le_bytes());
         signature_data.extend_from_slice(self.reasoning.as_bytes());
         signature_data.extend_from_slice(&self.timestamp.to_le_bytes());
-        
+
         // Verify signature
         SecureKeystore::verify_signature(&signature_data, &self.signature, voter_public_key)
     }
@@ -268,39 +278,39 @@ impl DisputeValidator {
         if !dispute.validate_claim() {
             return false;
         }
-        
+
         // Validate evidence
         for evidence in &dispute.evidence {
             if !Self::validate_evidence(evidence) {
                 return false;
             }
         }
-        
+
         true
     }
-    
+
     /// Validate individual evidence
     fn validate_evidence(evidence: &DisputeEvidence) -> bool {
         match evidence {
             DisputeEvidence::SignedTransaction { data, signature: _ } => {
                 // Validate transaction data and signature
                 !data.is_empty()
-            },
+            }
             DisputeEvidence::StateProof { merkle_proof, .. } => {
                 // Validate merkle proof
                 !merkle_proof.is_empty()
-            },
+            }
             DisputeEvidence::TimestampProof { timestamp, proof } => {
                 // Validate timestamp and proof
                 *timestamp > 0 && !proof.is_empty()
-            },
+            }
             DisputeEvidence::WitnessTestimony { testimony, .. } => {
                 // Validate testimony content
                 !testimony.is_empty()
-            },
+            }
         }
     }
-    
+
     /// Resolve dispute based on votes
     pub fn resolve_dispute(
         _dispute: &Dispute,
@@ -310,13 +320,13 @@ impl DisputeValidator {
         if votes.len() < min_votes {
             return None;
         }
-        
+
         // Count votes
         let mut uphold_count = 0;
         let mut reject_count = 0;
         let mut _abstain_count = 0; // Prefixed with _ to indicate intentionally unused
         let mut need_evidence_count = 0;
-        
+
         for vote in votes {
             match vote.vote {
                 DisputeVoteType::Uphold => uphold_count += 1,
@@ -325,11 +335,11 @@ impl DisputeValidator {
                 DisputeVoteType::NeedMoreEvidence => need_evidence_count += 1,
             }
         }
-        
+
         // Determine majority vote
         let total_votes = votes.len();
         let majority_threshold = total_votes / 2 + 1;
-        
+
         if uphold_count >= majority_threshold {
             Some(DisputeVoteType::Uphold)
         } else if reject_count >= majority_threshold {

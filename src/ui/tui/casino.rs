@@ -1,21 +1,18 @@
 //! Casino module for BitCraps UI
-//! 
+//!
 //! This module implements the user interface components for BitCraps
 //! including CLI, TUI, and specialized casino widgets.
 
+use crate::protocol::craps::GamePhase;
+use crate::protocol::BetType;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{
-        Block, Borders, List, ListItem, Paragraph, 
-        Wrap,
-    },
+    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
     Frame,
 };
-use serde::{Serialize, Deserialize};
-use crate::protocol::craps::GamePhase;
-use crate::protocol::BetType;
+use serde::{Deserialize, Serialize};
 // use ratatui::widgets::Wrap; // Already imported from prelude
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,7 +126,7 @@ impl CasinoUI {
             bet_amount: 50, // Default bet amount
         }
     }
-    
+
     pub fn handle_enter(&mut self) {
         match self.current_view {
             CasinoView::BettingInterface => self.place_current_bet(),
@@ -137,45 +134,45 @@ impl CasinoUI {
             _ => {}
         }
     }
-    
+
     pub fn handle_up(&mut self) {
         match self.current_view {
             CasinoView::BettingInterface | CasinoView::ActiveGame => {
                 self.previous_bet_type();
-            },
+            }
             _ => {}
         }
     }
-    
+
     pub fn handle_down(&mut self) {
         match self.current_view {
             CasinoView::BettingInterface | CasinoView::ActiveGame => {
                 self.next_bet_type();
-            },
+            }
             _ => {}
         }
     }
-    
+
     pub fn handle_left(&mut self) {
         self.decrease_bet_amount();
     }
-    
+
     pub fn handle_right(&mut self) {
         self.increase_bet_amount();
     }
-    
+
     pub fn handle_bet_input(&mut self) {
         self.place_current_bet();
     }
-    
+
     pub fn increase_bet_amount(&mut self) {
         self.bet_amount = (self.bet_amount + 10).min(self.wallet_balance.min(1000));
     }
-    
+
     pub fn decrease_bet_amount(&mut self) {
         self.bet_amount = self.bet_amount.saturating_sub(10).max(10);
     }
-    
+
     fn place_current_bet(&mut self) {
         if let Some(bet_type) = self.selected_bet_type {
             if self.bet_amount <= self.wallet_balance {
@@ -192,19 +189,19 @@ impl CasinoUI {
                         .unwrap_or_default()
                         .as_secs(),
                 };
-                
+
                 // Add to history
                 self.bet_history.push(bet_record);
-                
+
                 // Deduct from wallet
                 self.wallet_balance -= self.bet_amount;
-                
+
                 // Update statistics
                 self.game_statistics.total_wagered += self.bet_amount;
             }
         }
     }
-    
+
     fn next_bet_type(&mut self) {
         let all_bet_types = [
             BetType::Pass,
@@ -221,7 +218,7 @@ impl CasinoUI {
             BetType::Next2,
             BetType::Next12,
         ];
-        
+
         if let Some(current) = self.selected_bet_type {
             if let Some(pos) = all_bet_types.iter().position(|&x| x == current) {
                 let next_pos = (pos + 1) % all_bet_types.len();
@@ -231,7 +228,7 @@ impl CasinoUI {
             self.selected_bet_type = Some(all_bet_types[0]);
         }
     }
-    
+
     fn previous_bet_type(&mut self) {
         let all_bet_types = [
             BetType::Pass,
@@ -248,7 +245,7 @@ impl CasinoUI {
             BetType::Next2,
             BetType::Next12,
         ];
-        
+
         if let Some(current) = self.selected_bet_type {
             if let Some(pos) = all_bet_types.iter().position(|&x| x == current) {
                 let prev_pos = if pos == 0 {
@@ -267,9 +264,9 @@ impl CasinoUI {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),  // Header
-                Constraint::Min(0),     // Main content
-                Constraint::Length(3),  // Footer/Status
+                Constraint::Length(3), // Header
+                Constraint::Min(0),    // Main content
+                Constraint::Length(3), // Footer/Status
             ])
             .split(f.area());
 
@@ -290,7 +287,11 @@ impl CasinoUI {
 
         // Title
         let title = Paragraph::new("🎲 BitCraps Casino 🎲")
-            .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(title, header_chunks[0]);
 
@@ -303,16 +304,24 @@ impl CasinoUI {
             CasinoView::WalletManager => "Wallet",
             CasinoView::Statistics => "Statistics",
         };
-        
+
         let current_view = Paragraph::new(format!("Current: {}", view_name))
             .style(Style::default().fg(Color::Cyan))
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(current_view, header_chunks[1]);
 
         // Wallet balance
-        let balance_color = if self.wallet_balance > 500 { Color::Green } else { Color::Red };
+        let balance_color = if self.wallet_balance > 500 {
+            Color::Green
+        } else {
+            Color::Red
+        };
         let wallet = Paragraph::new(format!("Balance: {} bits", self.wallet_balance))
-            .style(Style::default().fg(balance_color).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(balance_color)
+                    .add_modifier(Modifier::BOLD),
+            )
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(wallet, header_chunks[2]);
     }
@@ -332,44 +341,64 @@ impl CasinoUI {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(8),   // Header info
-                Constraint::Min(0),      // Games list
-                Constraint::Length(6),   // Controls
+                Constraint::Length(8), // Header info
+                Constraint::Min(0),    // Games list
+                Constraint::Length(6), // Controls
             ])
             .split(area);
 
         // Lobby header with stats
         let lobby_header = vec![
-            Line::from(vec![
-                Span::styled("🏛️ BitCraps Game Lobby", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            ]),
+            Line::from(vec![Span::styled(
+                "🏛️ BitCraps Game Lobby",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )]),
             Line::from(""),
             Line::from(vec![
                 Span::raw("🎮 Active Games: "),
-                Span::styled(self.active_games.len().to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    self.active_games.len().to_string(),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("  |  🎲 Total Players: "),
                 Span::styled(
-                    self.active_games.iter().map(|g| g.players.len()).sum::<usize>().to_string(),
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                    self.active_games
+                        .iter()
+                        .map(|g| g.players.len())
+                        .sum::<usize>()
+                        .to_string(),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  |  💰 Total Pot: "),
                 Span::styled(
-                    format!("{} CRAP", self.active_games.iter().map(|g| g.pot_size).sum::<u64>()),
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    format!(
+                        "{} CRAP",
+                        self.active_games.iter().map(|g| g.pot_size).sum::<u64>()
+                    ),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(""),
             Line::from("Select a game to join or create a new one:"),
         ];
-        
+
         let header_widget = Paragraph::new(lobby_header)
             .block(Block::default().borders(Borders::ALL).title("Welcome"))
             .wrap(Wrap { trim: true });
-        
+
         f.render_widget(header_widget, chunks[0]);
 
         // Enhanced games list with more details
-        let games: Vec<ListItem> = self.active_games
+        let games: Vec<ListItem> = self
+            .active_games
             .iter()
             .enumerate()
             .map(|(i, game)| {
@@ -378,14 +407,14 @@ impl CasinoUI {
                 } else {
                     Color::Red
                 };
-                
+
                 let phase_color = match game.current_phase {
                     GamePhase::ComeOut => Color::Yellow,
                     GamePhase::Point => Color::Blue,
                     GamePhase::Ended => Color::Gray,
                     GamePhase::GameEnded => Color::DarkGray,
                 };
-                
+
                 let status_text = if game.players.len() < game.max_players {
                     "🟢 Open"
                 } else {
@@ -394,7 +423,12 @@ impl CasinoUI {
 
                 ListItem::new(vec![
                     Line::from(vec![
-                        Span::styled(format!("{}. {}", i + 1, game.game_id), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            format!("{}. {}", i + 1, game.game_id),
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
                         Span::raw(" "),
                         Span::styled(status_text, Style::default().fg(status_color)),
                     ]),
@@ -402,15 +436,18 @@ impl CasinoUI {
                         Span::raw("   Players: "),
                         Span::styled(
                             format!("{}/{}", game.players.len(), game.max_players),
-                            Style::default().fg(status_color)
+                            Style::default().fg(status_color),
                         ),
                         Span::raw("  |  Phase: "),
                         Span::styled(
                             format!("{:?}", game.current_phase),
-                            Style::default().fg(phase_color)
+                            Style::default().fg(phase_color),
                         ),
                         if let Some(point) = game.point {
-                            Span::styled(format!(" (Point: {})", point), Style::default().fg(Color::Magenta))
+                            Span::styled(
+                                format!(" (Point: {})", point),
+                                Style::default().fg(Color::Magenta),
+                            )
                         } else {
                             Span::raw("")
                         },
@@ -419,13 +456,15 @@ impl CasinoUI {
                         Span::raw("   Pot: "),
                         Span::styled(
                             format!("{} CRAP", game.pot_size),
-                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
                         ),
                         Span::raw(format!("  |  Round: {}", game.round_number)),
                         if let Some((d1, d2)) = game.dice_result {
                             Span::styled(
                                 format!("  |  Last roll: {}+{}={}", d1, d2, d1 + d2),
-                                Style::default().fg(Color::White)
+                                Style::default().fg(Color::White),
                             )
                         } else {
                             Span::raw("  |  No roll yet")
@@ -437,11 +476,17 @@ impl CasinoUI {
             .collect();
 
         let games_list = List::new(games)
-            .block(Block::default()
-                .title("🎯 Available Games")
-                .borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .title("🎯 Available Games")
+                    .borders(Borders::ALL),
+            )
             .style(Style::default().fg(Color::White))
-            .highlight_style(Style::default().bg(Color::Blue).add_modifier(Modifier::BOLD))
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Blue)
+                    .add_modifier(Modifier::BOLD),
+            )
             .highlight_symbol("► ");
 
         f.render_widget(games_list, chunks[1]);
@@ -451,17 +496,27 @@ impl CasinoUI {
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(chunks[2]);
-        
+
         let game_controls = vec![
-            Line::from(vec![Span::styled("🎮 Game Controls", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))]),
+            Line::from(vec![Span::styled(
+                "🎮 Game Controls",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )]),
             Line::from(""),
             Line::from("n - Create new game"),
             Line::from("j - Join selected game"),
             Line::from("r - Refresh game list"),
         ];
-        
+
         let nav_controls = vec![
-            Line::from(vec![Span::styled("🧭 Navigation", Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD))]),
+            Line::from(vec![Span::styled(
+                "🧭 Navigation",
+                Style::default()
+                    .fg(Color::Blue)
+                    .add_modifier(Modifier::BOLD),
+            )]),
             Line::from(""),
             Line::from("w - Open wallet"),
             Line::from("h - View bet history"),
@@ -471,7 +526,7 @@ impl CasinoUI {
         let game_panel = Paragraph::new(game_controls)
             .block(Block::default().borders(Borders::ALL))
             .wrap(Wrap { trim: true });
-            
+
         let nav_panel = Paragraph::new(nav_controls)
             .block(Block::default().borders(Borders::ALL))
             .wrap(Wrap { trim: true });
@@ -484,9 +539,9 @@ impl CasinoUI {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(10),  // Enhanced game state
-                Constraint::Min(8),      // Betting area
-                Constraint::Length(8),   // Players and bets
+                Constraint::Length(10), // Enhanced game state
+                Constraint::Min(8),     // Betting area
+                Constraint::Length(8),  // Players and bets
             ])
             .split(area);
 
@@ -494,14 +549,11 @@ impl CasinoUI {
         if let Some(game) = self.active_games.first() {
             let state_chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(60),
-                    Constraint::Percentage(40),
-                ])
+                .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
                 .split(chunks[0]);
-            
+
             let dice_widget = self.create_dice_widget(game.dice_result);
-            
+
             let game_state = self.create_game_status_widget(game);
 
             f.render_widget(dice_widget, state_chunks[0]);
@@ -518,15 +570,35 @@ impl CasinoUI {
     /// Get betting options data with odds and descriptions
     fn get_betting_options() -> [(BetType, &'static str, &'static str, &'static str); 13] {
         [
-            (BetType::Pass, "Pass Line", "1:1", "Win on 7/11, lose on 2/3/12"),
-            (BetType::DontPass, "Don't Pass", "1:1", "Opposite of Pass Line"),
+            (
+                BetType::Pass,
+                "Pass Line",
+                "1:1",
+                "Win on 7/11, lose on 2/3/12",
+            ),
+            (
+                BetType::DontPass,
+                "Don't Pass",
+                "1:1",
+                "Opposite of Pass Line",
+            ),
             (BetType::Come, "Come", "1:1", "Like Pass but after point"),
             (BetType::DontCome, "Don't Come", "1:1", "Opposite of Come"),
-            (BetType::Field, "Field", "1:1/2:1", "One roll: 2,3,4,9,10,11,12"),
+            (
+                BetType::Field,
+                "Field",
+                "1:1/2:1",
+                "One roll: 2,3,4,9,10,11,12",
+            ),
             (BetType::Hard4, "Hard 4", "7:1", "Two 2s before any 4 or 7"),
             (BetType::Hard6, "Hard 6", "9:1", "Two 3s before any 6 or 7"),
             (BetType::Hard8, "Hard 8", "9:1", "Two 4s before any 8 or 7"),
-            (BetType::Hard10, "Hard 10", "7:1", "Two 5s before any 10 or 7"),
+            (
+                BetType::Hard10,
+                "Hard 10",
+                "7:1",
+                "Two 5s before any 10 or 7",
+            ),
             (BetType::Next7, "Any 7", "4:1", "Next roll is 7"),
             (BetType::Next11, "Any 11", "15:1", "Next roll is 11"),
             (BetType::Next2, "Snake Eyes", "30:1", "Next roll is 2"),
@@ -541,26 +613,30 @@ impl CasinoUI {
             .map(|(bet_type, name, odds, desc)| {
                 let is_selected = self.selected_bet_type == Some(*bet_type);
                 let style = if is_selected {
-                    Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .bg(Color::Blue)
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(Color::White)
                 };
-                
+
                 ListItem::new(vec![
-                    Line::from(vec![
-                        Span::styled(format!("{} ({})", name, odds), style),
-                    ]),
-                    Line::from(vec![
-                        Span::styled(format!("  {}", desc), Style::default().fg(Color::Gray)),
-                    ]),
+                    Line::from(vec![Span::styled(format!("{} ({})", name, odds), style)]),
+                    Line::from(vec![Span::styled(
+                        format!("  {}", desc),
+                        Style::default().fg(Color::Gray),
+                    )]),
                 ])
             })
             .collect();
 
         List::new(bet_items)
-            .block(Block::default()
-                .title("🎯 Available Bets (↑/↓ to select)")
-                .borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .title("🎯 Available Bets (↑/↓ to select)")
+                    .borders(Borders::ALL),
+            )
             .highlight_style(Style::default())
             .highlight_symbol("")
     }
@@ -581,39 +657,58 @@ impl CasinoUI {
         let dice_display = if let Some((d1, d2)) = dice_result {
             let total = d1 + d2;
             let dice_faces = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
-            let d1_face = if (1..=6).contains(&d1) { dice_faces[(d1-1) as usize] } else { "?" };
-            let d2_face = if (1..=6).contains(&d2) { dice_faces[(d2-1) as usize] } else { "?" };
-            
+            let d1_face = if (1..=6).contains(&d1) {
+                dice_faces[(d1 - 1) as usize]
+            } else {
+                "?"
+            };
+            let d2_face = if (1..=6).contains(&d2) {
+                dice_faces[(d2 - 1) as usize]
+            } else {
+                "?"
+            };
+
             let (total_color, result_text) = match total {
                 7 | 11 => (Color::Green, "🎉 NATURAL!"),
                 2 | 3 | 12 => (Color::Red, "💥 CRAPS!"),
                 _ => (Color::Yellow, "🎯 POINT"),
             };
-            
+
             vec![
-                Line::from(vec![
-                    Span::styled("🎲 DICE RESULT 🎲", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                ]),
+                Line::from(vec![Span::styled(
+                    "🎲 DICE RESULT 🎲",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )]),
                 Line::from(""),
-                Line::from(vec![
-                    Span::styled(format!("{} {} = {}", d1_face, d2_face, total), 
-                               Style::default().fg(total_color).add_modifier(Modifier::BOLD)),
-                ]),
-                Line::from(vec![
-                    Span::styled(result_text, Style::default().fg(total_color).add_modifier(Modifier::BOLD)),
-                ]),
+                Line::from(vec![Span::styled(
+                    format!("{} {} = {}", d1_face, d2_face, total),
+                    Style::default()
+                        .fg(total_color)
+                        .add_modifier(Modifier::BOLD),
+                )]),
+                Line::from(vec![Span::styled(
+                    result_text,
+                    Style::default()
+                        .fg(total_color)
+                        .add_modifier(Modifier::BOLD),
+                )]),
             ]
         } else {
             vec![
-                Line::from(vec![
-                    Span::styled("🎲 READY TO ROLL 🎲", Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD)),
-                ]),
+                Line::from(vec![Span::styled(
+                    "🎲 READY TO ROLL 🎲",
+                    Style::default()
+                        .fg(Color::Gray)
+                        .add_modifier(Modifier::BOLD),
+                )]),
                 Line::from(""),
                 Line::from("Press 'r' to roll the dice!"),
                 Line::from("Place your bets first."),
             ]
         };
-        
+
         Paragraph::new(dice_display)
             .block(Block::default().borders(Borders::ALL).title("Dice"))
             .alignment(Alignment::Center)
@@ -632,11 +727,14 @@ impl CasinoUI {
     /// Create the game status widget showing current game information
     fn create_game_status_widget<'a>(&self, game: &'a GameSession) -> Paragraph<'a> {
         let phase_color = self.get_phase_color(&game.current_phase);
-        
+
         let game_info = vec![
-            Line::from(vec![
-                Span::styled("🎯 GAME STATUS", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-            ]),
+            Line::from(vec![Span::styled(
+                "🎯 GAME STATUS",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )]),
             Line::from(""),
             Line::from(vec![
                 Span::raw("ID: "),
@@ -644,16 +742,29 @@ impl CasinoUI {
             ]),
             Line::from(vec![
                 Span::raw("Phase: "),
-                Span::styled(format!("{:?}", game.current_phase), Style::default().fg(phase_color).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("{:?}", game.current_phase),
+                    Style::default()
+                        .fg(phase_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]),
             Line::from(vec![
                 Span::raw("Round: "),
-                Span::styled(game.round_number.to_string(), Style::default().fg(Color::Green)),
+                Span::styled(
+                    game.round_number.to_string(),
+                    Style::default().fg(Color::Green),
+                ),
             ]),
             if let Some(point) = game.point {
                 Line::from(vec![
                     Span::raw("Point: "),
-                    Span::styled(format!("🎯 {}", point), Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        format!("🎯 {}", point),
+                        Style::default()
+                            .fg(Color::Magenta)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ])
             } else {
                 Line::from(vec![
@@ -663,39 +774,57 @@ impl CasinoUI {
             },
             Line::from(vec![
                 Span::raw("Pot: "),
-                Span::styled(format!("💰 {} CRAP", game.pot_size), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("💰 {} CRAP", game.pot_size),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]),
         ];
 
-        Paragraph::new(game_info)
-            .block(Block::default().title("Status").borders(Borders::ALL))
+        Paragraph::new(game_info).block(Block::default().title("Status").borders(Borders::ALL))
     }
 
     /// Create the players list widget showing current players and their status
     fn create_players_list_widget(&self, game: &GameSession) -> List<'_> {
-        let player_items: Vec<ListItem> = game.players
+        let player_items: Vec<ListItem> = game
+            .players
             .iter()
             .enumerate()
             .map(|(i, player)| {
-                let status = if i == 0 { "🎲 Shooter" } else { "🎯 Player" };
+                let status = if i == 0 {
+                    "🎲 Shooter"
+                } else {
+                    "🎯 Player"
+                };
                 let balance = 1000 - (i * 200) as u64; // Simulate different balances
-                
+
                 ListItem::new(vec![
-                    Line::from(vec![
-                        Span::styled(format!("{} {}", status, player), Style::default().fg(Color::Cyan)),
-                    ]),
+                    Line::from(vec![Span::styled(
+                        format!("{} {}", status, player),
+                        Style::default().fg(Color::Cyan),
+                    )]),
                     Line::from(vec![
                         Span::raw("  Balance: "),
-                        Span::styled(format!("{} CRAP", balance), Style::default().fg(Color::Yellow)),
+                        Span::styled(
+                            format!("{} CRAP", balance),
+                            Style::default().fg(Color::Yellow),
+                        ),
                     ]),
                 ])
             })
             .collect();
 
-        List::new(player_items)
-            .block(Block::default()
-                .title(format!("👥 Players ({}/{})", game.players.len(), game.max_players))
-                .borders(Borders::ALL))
+        List::new(player_items).block(
+            Block::default()
+                .title(format!(
+                    "👥 Players ({}/{})",
+                    game.players.len(),
+                    game.max_players
+                ))
+                .borders(Borders::ALL),
+        )
     }
 
     /// Get styling for bet result (color and icon)
@@ -724,37 +853,49 @@ impl CasinoUI {
             ]
         } else {
             let mut lines = vec![
-                Line::from(vec![
-                    Span::styled("📊 Betting Summary", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                ]),
+                Line::from(vec![Span::styled(
+                    "📊 Betting Summary",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )]),
                 Line::from(""),
             ];
-            
+
             // Add recent bets
             for bet in self.bet_history.iter().rev().take(3) {
                 let (result_color, status_icon) = self.get_bet_result_styling(&bet.result);
-                
+
                 lines.push(Line::from(vec![
                     Span::raw(format!("{} ", status_icon)),
-                    Span::styled(format!("{:?}", bet.bet_type), Style::default().fg(Color::White)),
+                    Span::styled(
+                        format!("{:?}", bet.bet_type),
+                        Style::default().fg(Color::White),
+                    ),
                 ]));
-                
+
                 lines.push(Line::from(vec![
                     Span::raw("  "),
-                    Span::styled(format!("{} CRAP", bet.amount), Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        format!("{} CRAP", bet.amount),
+                        Style::default().fg(Color::Yellow),
+                    ),
                     Span::raw(" → "),
                     Span::styled(
                         format!("{:?}", bet.result),
-                        Style::default().fg(result_color)
+                        Style::default().fg(result_color),
                     ),
                     if bet.payout > 0 {
-                        Span::styled(format!(" (+{})", bet.payout), Style::default().fg(Color::Green))
+                        Span::styled(
+                            format!(" (+{})", bet.payout),
+                            Style::default().fg(Color::Green),
+                        )
                     } else {
                         Span::raw("")
                     },
                 ]));
             }
-            
+
             // Add summary stats
             if self.bet_history.len() > 3 {
                 lines.push(Line::from(""));
@@ -762,50 +903,72 @@ impl CasinoUI {
                     Span::raw("... and "),
                     Span::styled(
                         format!("{} more bets", self.bet_history.len() - 3),
-                        Style::default().fg(Color::Gray)
+                        Style::default().fg(Color::Gray),
                     ),
                 ]));
             }
-            
+
             lines
         };
 
         Paragraph::new(bet_display)
-            .block(Block::default()
-                .title("🎰 Betting Activity")
-                .borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .title("🎰 Betting Activity")
+                    .borders(Borders::ALL),
+            )
             .wrap(ratatui::widgets::Wrap { trim: true })
     }
 
     /// Create the betting controls widget showing current selection and instructions
-    fn create_betting_controls_widget<'a>(&self, bet_options: &[(BetType, &'a str, &str, &str)]) -> Paragraph<'a> {
+    fn create_betting_controls_widget<'a>(
+        &self,
+        bet_options: &[(BetType, &'a str, &str, &str)],
+    ) -> Paragraph<'a> {
         let selected_bet_name = if let Some(bet_type) = self.selected_bet_type {
-            bet_options.iter()
+            bet_options
+                .iter()
                 .find(|(bt, _, _, _)| *bt == bet_type)
                 .map(|(_, name, _, _)| *name)
                 .unwrap_or("Unknown")
         } else {
             "None"
         };
-        
+
         let balance_color = self.get_balance_color(self.bet_amount, self.wallet_balance);
-        
+
         let bet_controls = vec![
-            Line::from(vec![
-                Span::styled("💰 BETTING CONTROLS", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            ]),
+            Line::from(vec![Span::styled(
+                "💰 BETTING CONTROLS",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )]),
             Line::from(""),
             Line::from(vec![
                 Span::raw("Selected: "),
-                Span::styled(selected_bet_name, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    selected_bet_name,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]),
             Line::from(vec![
                 Span::raw("Amount: "),
-                Span::styled(format!("{} CRAP", self.bet_amount), Style::default().fg(balance_color).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("{} CRAP", self.bet_amount),
+                    Style::default()
+                        .fg(balance_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]),
             Line::from(vec![
                 Span::raw("Wallet: "),
-                Span::styled(format!("{} CRAP", self.wallet_balance), Style::default().fg(Color::Green)),
+                Span::styled(
+                    format!("{} CRAP", self.wallet_balance),
+                    Style::default().fg(Color::Green),
+                ),
             ]),
             Line::from(""),
             Line::from("🎮 Controls:"),
@@ -817,10 +980,7 @@ impl CasinoUI {
             Line::from("  Esc  Return to lobby"),
         ];
 
-        Paragraph::new(bet_controls)
-            .block(Block::default()
-                .title("Controls")
-                .borders(Borders::ALL))
+        Paragraph::new(bet_controls).block(Block::default().title("Controls").borders(Borders::ALL))
     }
 
     fn render_betting_area(&self, f: &mut Frame, area: Rect) {
@@ -862,8 +1022,8 @@ impl CasinoUI {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(8),   // Balance info
-                Constraint::Min(0),      // Transaction history
+                Constraint::Length(8), // Balance info
+                Constraint::Min(0),    // Transaction history
             ])
             .split(area);
 
@@ -871,47 +1031,59 @@ impl CasinoUI {
         let balance_info = vec![
             Line::from(vec![
                 Span::raw("Current Balance: "),
-                Span::styled(format!("{} bits", self.wallet_balance), 
-                           Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("{} bits", self.wallet_balance),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]),
             Line::from(vec![
                 Span::raw("Total Wagered: "),
-                Span::styled(format!("{} bits", self.game_statistics.total_wagered), 
-                           Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{} bits", self.game_statistics.total_wagered),
+                    Style::default().fg(Color::Yellow),
+                ),
             ]),
             Line::from(vec![
                 Span::raw("Total Winnings: "),
-                Span::styled(format!("{} bits", self.game_statistics.total_winnings), 
-                           Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!("{} bits", self.game_statistics.total_winnings),
+                    Style::default().fg(Color::Cyan),
+                ),
             ]),
-            Line::from(vec![
-                Span::raw("Net P&L: "),
-                {
-                    let net = self.game_statistics.total_winnings as i64 - self.game_statistics.total_wagered as i64;
-                    let color = if net >= 0 { Color::Green } else { Color::Red };
-                    Span::styled(format!("{} bits", net), Style::default().fg(color).add_modifier(Modifier::BOLD))
-                },
-            ]),
+            Line::from(vec![Span::raw("Net P&L: "), {
+                let net = self.game_statistics.total_winnings as i64
+                    - self.game_statistics.total_wagered as i64;
+                let color = if net >= 0 { Color::Green } else { Color::Red };
+                Span::styled(
+                    format!("{} bits", net),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                )
+            }]),
         ];
 
-        let wallet_info = Paragraph::new(balance_info)
-            .block(Block::default()
+        let wallet_info = Paragraph::new(balance_info).block(
+            Block::default()
                 .title("Wallet Information")
-                .borders(Borders::ALL));
+                .borders(Borders::ALL),
+        );
 
         f.render_widget(wallet_info, chunks[0]);
 
         // Transaction history would go in chunks[1]
-        let tx_placeholder = Paragraph::new("Transaction history coming soon...")
-            .block(Block::default()
+        let tx_placeholder = Paragraph::new("Transaction history coming soon...").block(
+            Block::default()
                 .title("Transaction History")
-                .borders(Borders::ALL));
+                .borders(Borders::ALL),
+        );
 
         f.render_widget(tx_placeholder, chunks[1]);
     }
 
     fn render_game_history(&self, f: &mut Frame, area: Rect) {
-        let history_items: Vec<ListItem> = self.bet_history
+        let history_items: Vec<ListItem> = self
+            .bet_history
             .iter()
             .rev()
             .map(|bet| {
@@ -924,14 +1096,26 @@ impl CasinoUI {
 
                 ListItem::new(vec![
                     Line::from(vec![
-                        Span::raw(format!("Game: {} | ", bet.game_id.chars().take(8).collect::<String>())),
-                        Span::styled(format!("{:?}", bet.bet_type), Style::default().fg(Color::Cyan)),
+                        Span::raw(format!(
+                            "Game: {} | ",
+                            bet.game_id.chars().take(8).collect::<String>()
+                        )),
+                        Span::styled(
+                            format!("{:?}", bet.bet_type),
+                            Style::default().fg(Color::Cyan),
+                        ),
                         Span::raw(format!(" | {} bits", bet.amount)),
                     ]),
                     Line::from(vec![
-                        Span::styled(format!("{:?}", bet.result), Style::default().fg(result_color)),
+                        Span::styled(
+                            format!("{:?}", bet.result),
+                            Style::default().fg(result_color),
+                        ),
                         if bet.payout > 0 {
-                            Span::styled(format!(" | Payout: +{} bits", bet.payout), Style::default().fg(Color::Green))
+                            Span::styled(
+                                format!(" | Payout: +{} bits", bet.payout),
+                                Style::default().fg(Color::Green),
+                            )
                         } else {
                             Span::raw(" | No payout")
                         },
@@ -940,63 +1124,83 @@ impl CasinoUI {
             })
             .collect();
 
-        let history_list = List::new(history_items)
-            .block(Block::default()
+        let history_list = List::new(history_items).block(
+            Block::default()
                 .title("Betting History")
-                .borders(Borders::ALL));
+                .borders(Borders::ALL),
+        );
 
         f.render_widget(history_list, area);
     }
 
     fn render_statistics(&self, f: &mut Frame, area: Rect) {
         let stats = &self.game_statistics;
-        
+
         let stats_text = vec![
             Line::from(vec![
                 Span::raw("Games Played: "),
-                Span::styled(stats.games_played.to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    stats.games_played.to_string(),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]),
             Line::from(vec![
                 Span::raw("Total Wagered: "),
-                Span::styled(format!("{} bits", stats.total_wagered), Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{} bits", stats.total_wagered),
+                    Style::default().fg(Color::Yellow),
+                ),
             ]),
             Line::from(vec![
                 Span::raw("Total Winnings: "),
-                Span::styled(format!("{} bits", stats.total_winnings), Style::default().fg(Color::Green)),
+                Span::styled(
+                    format!("{} bits", stats.total_winnings),
+                    Style::default().fg(Color::Green),
+                ),
             ]),
             Line::from(vec![
                 Span::raw("Biggest Win: "),
-                Span::styled(format!("{} bits", stats.biggest_win), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("{} bits", stats.biggest_win),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]),
-            Line::from(vec![
-                Span::raw("Current Streak: "),
-                {
-                    let (color, prefix) = if stats.current_streak >= 0 {
-                        (Color::Green, "+")
-                    } else {
-                        (Color::Red, "")
-                    };
-                    Span::styled(format!("{}{}", prefix, stats.current_streak), Style::default().fg(color))
-                },
-            ]),
-            Line::from(vec![
-                Span::raw("Win Rate: "),
-                {
-                    let win_rate = if stats.games_played > 0 {
-                        (stats.total_winnings as f64 / stats.total_wagered as f64) * 100.0
-                    } else {
-                        0.0
-                    };
-                    let color = if win_rate >= 50.0 { Color::Green } else { Color::Red };
-                    Span::styled(format!("{:.1}%", win_rate), Style::default().fg(color))
-                },
-            ]),
+            Line::from(vec![Span::raw("Current Streak: "), {
+                let (color, prefix) = if stats.current_streak >= 0 {
+                    (Color::Green, "+")
+                } else {
+                    (Color::Red, "")
+                };
+                Span::styled(
+                    format!("{}{}", prefix, stats.current_streak),
+                    Style::default().fg(color),
+                )
+            }]),
+            Line::from(vec![Span::raw("Win Rate: "), {
+                let win_rate = if stats.games_played > 0 {
+                    (stats.total_winnings as f64 / stats.total_wagered as f64) * 100.0
+                } else {
+                    0.0
+                };
+                let color = if win_rate >= 50.0 {
+                    Color::Green
+                } else {
+                    Color::Red
+                };
+                Span::styled(format!("{:.1}%", win_rate), Style::default().fg(color))
+            }]),
         ];
 
         let statistics = Paragraph::new(stats_text)
-            .block(Block::default()
-                .title("Game Statistics")
-                .borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .title("Game Statistics")
+                    .borders(Borders::ALL),
+            )
             .wrap(Wrap { trim: true });
 
         f.render_widget(statistics, area);
@@ -1005,35 +1209,32 @@ impl CasinoUI {
     fn render_footer(&self, f: &mut Frame, area: Rect) {
         let footer_chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(50),
-                Constraint::Percentage(50),
-            ])
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(area);
-        
+
         let (left_text, right_text) = match self.current_view {
             CasinoView::GameLobby => (
                 "🎮 n: New game | j: Join game | r: Refresh",
-                "🔄 Tab: Switch views | q: Quit casino"
+                "🔄 Tab: Switch views | q: Quit casino",
             ),
             CasinoView::ActiveGame => (
                 "🎲 r: Roll dice | b: Place bet | ↑↓: Select bet",
-                "📤 Esc: Leave game | Tab: Switch views"
+                "📤 Esc: Leave game | Tab: Switch views",
             ),
             CasinoView::BettingInterface => (
                 "💰 ↑↓: Select bet | ←→: Amount | Enter: Place",
-                "↩️ Esc: Back | Tab: Switch views"
+                "↩️ Esc: Back | Tab: Switch views",
             ),
             _ => (
                 "🎯 Casino controls available",
-                "🔄 Tab: Switch views | Esc: Back | q: Quit"
+                "🔄 Tab: Switch views | Esc: Back | q: Quit",
             ),
         };
 
         let left_footer = Paragraph::new(left_text)
             .style(Style::default().fg(Color::White))
             .block(Block::default().borders(Borders::ALL));
-        
+
         let right_footer = Paragraph::new(right_text)
             .style(Style::default().fg(Color::LightBlue))
             .block(Block::default().borders(Borders::ALL));
@@ -1042,4 +1243,3 @@ impl CasinoUI {
         f.render_widget(right_footer, footer_chunks[1]);
     }
 }
-

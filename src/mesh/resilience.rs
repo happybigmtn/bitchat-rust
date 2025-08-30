@@ -3,15 +3,15 @@
 //! This module implements advanced resilience mechanisms to handle
 //! network partitions, node failures, and dynamic topology changes.
 
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{mpsc, RwLock};
 use tokio::time::interval;
-use serde::{Deserialize, Serialize};
 
-use crate::protocol::PeerId;
 use crate::error::Result;
+use crate::protocol::PeerId;
 
 /// Network resilience manager
 pub struct NetworkResilience {
@@ -285,24 +285,51 @@ impl Default for NetworkHealthMonitor {
 /// Resilience events
 #[derive(Debug, Clone)]
 pub enum ResilienceEvent {
-    NodeFailureDetected { peer_id: PeerId, phi_value: f64 },
-    NodeRecovered { peer_id: PeerId, downtime: Duration },
-    PartitionDetected { partition_id: u32, nodes: HashSet<PeerId> },
-    PartitionHealed { partition_id: u32, heal_time: Duration },
-    RouteSwitch { destination: PeerId, old_route: PeerId, new_route: PeerId, reason: SwitchReason },
-    HealthDegradation { old_score: f64, new_score: f64, category: String },
-    RecoveryCompleted { peer_id: PeerId, success: bool, attempts: u32 },
+    NodeFailureDetected {
+        peer_id: PeerId,
+        phi_value: f64,
+    },
+    NodeRecovered {
+        peer_id: PeerId,
+        downtime: Duration,
+    },
+    PartitionDetected {
+        partition_id: u32,
+        nodes: HashSet<PeerId>,
+    },
+    PartitionHealed {
+        partition_id: u32,
+        heal_time: Duration,
+    },
+    RouteSwitch {
+        destination: PeerId,
+        old_route: PeerId,
+        new_route: PeerId,
+        reason: SwitchReason,
+    },
+    HealthDegradation {
+        old_score: f64,
+        new_score: f64,
+        category: String,
+    },
+    RecoveryCompleted {
+        peer_id: PeerId,
+        success: bool,
+        attempts: u32,
+    },
 }
 
 impl NetworkResilience {
     /// Create new network resilience manager
     pub fn new(config: ResilienceConfig) -> Self {
         let (event_sender, _) = mpsc::unbounded_channel();
-        
+
         Self {
             failure_detector: Arc::new(RwLock::new(FailureDetector::new(config.clone()))),
             partition_manager: Arc::new(RwLock::new(PartitionManager::new())),
-            adaptive_routing: Arc::new(RwLock::new(AdaptiveRouting::new(config.routing_redundancy))),
+            adaptive_routing: Arc::new(RwLock::new(AdaptiveRouting::new(
+                config.routing_redundancy,
+            ))),
             recovery_manager: Arc::new(RwLock::new(RecoveryManager::new(config.clone()))),
             health_monitor: Arc::new(RwLock::new(NetworkHealthMonitor::new())),
             event_sender,
@@ -310,33 +337,33 @@ impl NetworkResilience {
             config,
         }
     }
-    
+
     /// Start resilience monitoring
     pub async fn start_monitoring(&self) -> Result<()> {
         *self.is_monitoring.write().await = true;
-        
+
         // Start monitoring tasks
         self.start_failure_detection().await;
         self.start_partition_detection().await;
         self.start_adaptive_routing().await;
         self.start_recovery_management().await;
         self.start_health_monitoring().await;
-        
+
         log::info!("Network resilience monitoring started");
         Ok(())
     }
-    
+
     /// Stop resilience monitoring
     pub async fn stop_monitoring(&self) {
         *self.is_monitoring.write().await = false;
         log::info!("Network resilience monitoring stopped");
     }
-    
+
     /// Update peer heartbeat
     pub async fn update_peer_heartbeat(&self, peer_id: PeerId) {
         let mut detector = self.failure_detector.write().await;
         detector.update_heartbeat(peer_id);
-        
+
         // Remove from suspected failures if present
         if detector.suspected_failures.remove(&peer_id).is_some() {
             let _ = self.event_sender.send(ResilienceEvent::NodeRecovered {
@@ -344,39 +371,45 @@ impl NetworkResilience {
                 downtime: Duration::from_secs(60), // Estimate
             });
         }
-        
+
         // Remove from confirmed failures
         detector.confirmed_failures.remove(&peer_id);
     }
-    
+
     /// Report route performance
-    pub async fn report_route_performance(&self, from: PeerId, to: PeerId, latency: Duration, success: bool) {
+    pub async fn report_route_performance(
+        &self,
+        from: PeerId,
+        to: PeerId,
+        latency: Duration,
+        success: bool,
+    ) {
         let mut routing = self.adaptive_routing.write().await;
         routing.update_route_metrics(from, to, latency, success);
     }
-    
+
     /// Get best route for destination
     pub async fn get_best_route(&self, destination: PeerId) -> Option<RouteInfo> {
         let routing = self.adaptive_routing.read().await;
         routing.get_best_route(destination)
     }
-    
+
     /// Handle node failure
     pub async fn handle_node_failure(&self, peer_id: PeerId) {
         let mut recovery = self.recovery_manager.write().await;
         recovery.start_recovery(peer_id);
-        
+
         // Update routing to avoid failed node
         let mut routing = self.adaptive_routing.write().await;
         routing.mark_node_failed(peer_id);
     }
-    
+
     /// Get network health score
     pub async fn get_health_score(&self) -> f64 {
         let monitor = self.health_monitor.read().await;
         monitor.health_score
     }
-    
+
     /// Get resilience statistics
     pub async fn get_statistics(&self) -> ResilienceStatistics {
         let detector = self.failure_detector.read().await;
@@ -384,7 +417,7 @@ impl NetworkResilience {
         let routing = self.adaptive_routing.read().await;
         let recovery = self.recovery_manager.read().await;
         let health = self.health_monitor.read().await;
-        
+
         ResilienceStatistics {
             suspected_failures: detector.suspected_failures.len(),
             confirmed_failures: detector.confirmed_failures.len(),
@@ -399,52 +432,50 @@ impl NetworkResilience {
             stability_health: health.stability_health,
         }
     }
-    
+
     /// Start failure detection task
     async fn start_failure_detection(&self) {
         let failure_detector = self.failure_detector.clone();
         let is_monitoring = self.is_monitoring.clone();
         let event_sender = self.event_sender.clone();
         let interval_duration = self.config.heartbeat_interval;
-        
+
         tokio::spawn(async move {
             let mut interval = interval(interval_duration);
-            
+
             while *is_monitoring.read().await {
                 interval.tick().await;
-                
+
                 let mut detector = failure_detector.write().await;
                 let failures = detector.detect_failures();
-                
+
                 for (peer_id, phi_value) in failures {
-                    let _ = event_sender.send(ResilienceEvent::NodeFailureDetected {
-                        peer_id,
-                        phi_value,
-                    });
+                    let _ = event_sender
+                        .send(ResilienceEvent::NodeFailureDetected { peer_id, phi_value });
                 }
-                
+
                 // Cleanup old entries
                 detector.cleanup_old_entries();
             }
         });
     }
-    
+
     /// Start partition detection task
     async fn start_partition_detection(&self) {
         let partition_manager = self.partition_manager.clone();
         let is_monitoring = self.is_monitoring.clone();
         let event_sender = self.event_sender.clone();
         let interval_duration = Duration::from_secs(30);
-        
+
         tokio::spawn(async move {
             let mut interval = interval(interval_duration);
-            
+
             while *is_monitoring.read().await {
                 interval.tick().await;
-                
+
                 let mut mgr = partition_manager.write().await;
                 let partitions = mgr.detect_partitions();
-                
+
                 for partition_info in partitions {
                     let _ = event_sender.send(ResilienceEvent::PartitionDetected {
                         partition_id: partition_info.partition_id,
@@ -454,23 +485,23 @@ impl NetworkResilience {
             }
         });
     }
-    
+
     /// Start adaptive routing task
     async fn start_adaptive_routing(&self) {
         let adaptive_routing = self.adaptive_routing.clone();
         let is_monitoring = self.is_monitoring.clone();
         let event_sender = self.event_sender.clone();
         let interval_duration = Duration::from_secs(15);
-        
+
         tokio::spawn(async move {
             let mut interval = interval(interval_duration);
-            
+
             while *is_monitoring.read().await {
                 interval.tick().await;
-                
+
                 let mut routing = adaptive_routing.write().await;
                 let switches = routing.evaluate_route_switches();
-                
+
                 for switch in switches {
                     let _ = event_sender.send(ResilienceEvent::RouteSwitch {
                         destination: switch.destination,
@@ -482,23 +513,23 @@ impl NetworkResilience {
             }
         });
     }
-    
+
     /// Start recovery management task
     async fn start_recovery_management(&self) {
         let recovery_manager = self.recovery_manager.clone();
         let is_monitoring = self.is_monitoring.clone();
         let event_sender = self.event_sender.clone();
         let interval_duration = self.config.recovery_interval;
-        
+
         tokio::spawn(async move {
             let mut interval = interval(interval_duration);
-            
+
             while *is_monitoring.read().await {
                 interval.tick().await;
-                
+
                 let mut recovery = recovery_manager.write().await;
                 let completions = recovery.process_recoveries();
-                
+
                 for (peer_id, success, attempts) in completions {
                     let _ = event_sender.send(ResilienceEvent::RecoveryCompleted {
                         peer_id,
@@ -509,25 +540,25 @@ impl NetworkResilience {
             }
         });
     }
-    
+
     /// Start health monitoring task
     async fn start_health_monitoring(&self) {
         let health_monitor = self.health_monitor.clone();
         let is_monitoring = self.is_monitoring.clone();
         let event_sender = self.event_sender.clone();
         let interval_duration = self.config.health_check_interval;
-        
+
         tokio::spawn(async move {
             let mut interval = interval(interval_duration);
-            
+
             while *is_monitoring.read().await {
                 interval.tick().await;
-                
+
                 let mut monitor = health_monitor.write().await;
                 let old_score = monitor.health_score;
                 monitor.update_health_score();
                 let new_score = monitor.health_score;
-                
+
                 if (old_score - new_score).abs() > 0.1 {
                     let _ = event_sender.send(ResilienceEvent::HealthDegradation {
                         old_score,
@@ -550,35 +581,36 @@ impl FailureDetector {
             last_cleanup: Instant::now(),
         }
     }
-    
+
     fn update_heartbeat(&mut self, peer_id: PeerId) {
         let now = Instant::now();
         let history = self.heartbeat_history.entry(peer_id).or_default();
-        
+
         history.push_back(now);
-        
+
         // Keep only last 100 heartbeats
         if history.len() > 100 {
             history.pop_front();
         }
     }
-    
+
     fn detect_failures(&mut self) -> Vec<(PeerId, f64)> {
         let mut new_failures = Vec::new();
         let now = Instant::now();
-        
+
         for (peer_id, history) in &self.heartbeat_history {
             if let Some(&last_heartbeat) = history.back() {
                 let time_since_last = now.duration_since(last_heartbeat);
-                
+
                 // Calculate phi value (simplified version)
                 let phi_value = if history.len() > 1 {
                     self.calculate_phi(*peer_id, time_since_last, history)
                 } else {
                     0.0
                 };
-                
-                if phi_value > self.phi_threshold && !self.suspected_failures.contains_key(peer_id) {
+
+                if phi_value > self.phi_threshold && !self.suspected_failures.contains_key(peer_id)
+                {
                     let failure_info = FailureInfo {
                         peer_id: *peer_id,
                         suspected_at: now,
@@ -586,64 +618,73 @@ impl FailureDetector {
                         missed_heartbeats: 1,
                         last_seen: last_heartbeat,
                     };
-                    
+
                     self.suspected_failures.insert(*peer_id, failure_info);
                     new_failures.push((*peer_id, phi_value));
                 }
             }
         }
-        
+
         new_failures
     }
-    
-    fn calculate_phi(&self, peer_id: PeerId, time_since_last: Duration, history: &VecDeque<Instant>) -> f64 {
+
+    fn calculate_phi(
+        &self,
+        peer_id: PeerId,
+        time_since_last: Duration,
+        history: &VecDeque<Instant>,
+    ) -> f64 {
         if history.len() < 2 {
             return 0.0;
         }
-        
+
         // Calculate mean and standard deviation of intervals
-        let intervals: Vec<Duration> = history.iter()
+        let intervals: Vec<Duration> = history
+            .iter()
             .zip(history.iter().skip(1))
             .map(|(prev, current)| current.duration_since(*prev))
             .collect();
-        
+
         if intervals.is_empty() {
             return 0.0;
         }
-        
+
         let mean = intervals.iter().sum::<Duration>().as_secs_f64() / intervals.len() as f64;
-        let variance = intervals.iter()
+        let variance = intervals
+            .iter()
             .map(|d| {
                 let diff = d.as_secs_f64() - mean;
                 diff * diff
             })
-            .sum::<f64>() / intervals.len() as f64;
-        
+            .sum::<f64>()
+            / intervals.len() as f64;
+
         let std_dev = variance.sqrt();
-        
+
         if std_dev == 0.0 {
             return 0.0;
         }
-        
+
         // Phi accrual calculation (simplified)
-        let p_later = 1.0 - self.cumulative_distribution(time_since_last.as_secs_f64(), mean, std_dev);
-        
+        let p_later =
+            1.0 - self.cumulative_distribution(time_since_last.as_secs_f64(), mean, std_dev);
+
         if p_later > 0.0 {
             -(p_later.ln() / 2.0_f64.ln())
         } else {
             self.phi_threshold + 1.0
         }
     }
-    
+
     fn cumulative_distribution(&self, x: f64, mean: f64, std_dev: f64) -> f64 {
         // Simplified normal CDF approximation
         let z = (x - mean) / std_dev;
         0.5 * (1.0 + (z / (1.0 + 0.2316419 * z.abs())).tanh())
     }
-    
+
     fn cleanup_old_entries(&mut self) {
         let now = Instant::now();
-        
+
         // Remove old heartbeat history
         self.heartbeat_history.retain(|_, history| {
             if let Some(&last) = history.back() {
@@ -652,7 +693,7 @@ impl FailureDetector {
                 false
             }
         });
-        
+
         self.last_cleanup = now;
     }
 }
@@ -666,7 +707,7 @@ impl PartitionManager {
             next_partition_id: 1,
         }
     }
-    
+
     fn detect_partitions(&mut self) -> Vec<PartitionInfo> {
         // Simplified partition detection
         // In a real implementation, this would analyze connectivity matrix
@@ -684,47 +725,52 @@ impl AdaptiveRouting {
             switching_decisions: VecDeque::new(),
         }
     }
-    
+
     fn update_route_metrics(&mut self, from: PeerId, to: PeerId, latency: Duration, success: bool) {
         let key = (from, to);
-        let metrics = self.route_metrics.entry(key).or_insert_with(|| RouteMetrics {
-            latency: Duration::ZERO,
-            success_rate: 1.0,
-            bandwidth: 1.0,
-            stability: 1.0,
-            last_updated: Instant::now(),
-            sample_count: 0,
-        });
-        
+        let metrics = self
+            .route_metrics
+            .entry(key)
+            .or_insert_with(|| RouteMetrics {
+                latency: Duration::ZERO,
+                success_rate: 1.0,
+                bandwidth: 1.0,
+                stability: 1.0,
+                last_updated: Instant::now(),
+                sample_count: 0,
+            });
+
         // Update metrics with exponential moving average
         let alpha = 0.1; // Smoothing factor
         metrics.latency = Duration::from_secs_f64(
-            metrics.latency.as_secs_f64() * (1.0 - alpha) + latency.as_secs_f64() * alpha
+            metrics.latency.as_secs_f64() * (1.0 - alpha) + latency.as_secs_f64() * alpha,
         );
-        
+
         let success_value = if success { 1.0 } else { 0.0 };
         metrics.success_rate = metrics.success_rate * (1.0 - alpha) + success_value * alpha;
         metrics.last_updated = Instant::now();
         metrics.sample_count += 1;
     }
-    
+
     fn get_best_route(&self, destination: PeerId) -> Option<RouteInfo> {
         self.primary_routes.get(&destination).cloned()
     }
-    
+
     fn mark_node_failed(&mut self, peer_id: PeerId) {
         // Remove routes that go through failed node
-        self.primary_routes.retain(|_, route| !route.path.contains(&peer_id));
-        
+        self.primary_routes
+            .retain(|_, route| !route.path.contains(&peer_id));
+
         // Update backup routes
         for (_, routes) in self.backup_routes.iter_mut() {
             routes.retain(|route| !route.path.contains(&peer_id));
         }
-        
+
         // Remove from active routes
-        self.active_routes.retain(|_, next_hop| *next_hop != peer_id);
+        self.active_routes
+            .retain(|_, next_hop| *next_hop != peer_id);
     }
-    
+
     fn evaluate_route_switches(&mut self) -> Vec<RouteSwitchDecision> {
         // Simplified route evaluation
         // In a real implementation, this would analyze all routes and make switching decisions
@@ -750,7 +796,7 @@ impl RecoveryManager {
                 success_threshold: 0.7,
             },
         ];
-        
+
         Self {
             active_recoveries: HashMap::new(),
             recovery_history: VecDeque::new(),
@@ -758,15 +804,15 @@ impl RecoveryManager {
             strategy_success_rates: HashMap::new(),
         }
     }
-    
+
     fn start_recovery(&mut self, peer_id: PeerId) {
         if self.active_recoveries.contains_key(&peer_id) {
             return; // Already recovering
         }
-        
+
         // Select best strategy based on historical success rates
         let strategy = self.recovery_strategies[0].clone(); // Simplified selection
-        
+
         let recovery_op = RecoveryOperation {
             peer_id,
             started_at: Instant::now(),
@@ -775,22 +821,22 @@ impl RecoveryManager {
             last_attempt: Instant::now(),
             expected_completion: Instant::now() + Duration::from_secs(60),
         };
-        
+
         self.active_recoveries.insert(peer_id, recovery_op);
     }
-    
+
     fn process_recoveries(&mut self) -> Vec<(PeerId, bool, u32)> {
         let mut completions = Vec::new();
         let mut to_remove = Vec::new();
-        
+
         for (peer_id, recovery) in &mut self.active_recoveries {
             let now = Instant::now();
-            
+
             if now >= recovery.expected_completion {
                 // Recovery completed (success assumed for simulation)
                 completions.push((*peer_id, true, recovery.attempts));
                 to_remove.push(*peer_id);
-                
+
                 // Record in history
                 self.recovery_history.push_back(RecoveryRecord {
                     timestamp: now,
@@ -802,12 +848,12 @@ impl RecoveryManager {
                 });
             }
         }
-        
+
         // Remove completed recoveries
         for peer_id in to_remove {
             self.active_recoveries.remove(&peer_id);
         }
-        
+
         completions
     }
 }
@@ -826,22 +872,24 @@ impl NetworkHealthMonitor {
             last_check: Instant::now(),
         }
     }
-    
+
     fn update_health_score(&mut self) {
         // Simplified health calculation
-        self.health_score = (self.connectivity_health + 
-                            self.latency_health + 
-                            self.throughput_health + 
-                            self.stability_health) / 4.0;
-        
+        self.health_score = (self.connectivity_health
+            + self.latency_health
+            + self.throughput_health
+            + self.stability_health)
+            / 4.0;
+
         // Add to history
-        self.health_history.push_back((Instant::now(), self.health_score));
-        
+        self.health_history
+            .push_back((Instant::now(), self.health_score));
+
         // Keep only last 1000 entries
         if self.health_history.len() > 1000 {
             self.health_history.pop_front();
         }
-        
+
         self.last_check = Instant::now();
     }
 }
@@ -865,68 +913,70 @@ pub struct ResilienceStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_resilience_manager_creation() {
         let config = ResilienceConfig::default();
         let resilience = NetworkResilience::new(config);
-        
+
         let stats = resilience.get_statistics().await;
         assert_eq!(stats.suspected_failures, 0);
         assert_eq!(stats.confirmed_failures, 0);
     }
-    
+
     #[tokio::test]
     async fn test_failure_detection() {
         let config = ResilienceConfig::default();
         let resilience = NetworkResilience::new(config);
-        
+
         let peer_id = [1u8; 32];
-        
+
         // Update heartbeat
         resilience.update_peer_heartbeat(peer_id).await;
-        
+
         let stats = resilience.get_statistics().await;
         assert_eq!(stats.suspected_failures, 0);
     }
-    
+
     #[tokio::test]
     async fn test_route_performance_reporting() {
         let config = ResilienceConfig::default();
         let resilience = NetworkResilience::new(config);
-        
+
         let from = [1u8; 32];
         let to = [2u8; 32];
         let latency = Duration::from_millis(100);
-        
-        resilience.report_route_performance(from, to, latency, true).await;
-        
+
+        resilience
+            .report_route_performance(from, to, latency, true)
+            .await;
+
         // Test passes if no panic occurs
     }
-    
+
     #[tokio::test]
     async fn test_health_monitoring() {
         let config = ResilienceConfig::default();
         let resilience = NetworkResilience::new(config);
-        
+
         let health_score = resilience.get_health_score().await;
         assert!(health_score >= 0.0 && health_score <= 1.0);
     }
-    
+
     #[test]
     fn test_phi_calculation() {
         let config = ResilienceConfig::default();
         let mut detector = FailureDetector::new(config);
-        
+
         let peer_id = [1u8; 32];
         let now = Instant::now();
-        
+
         // Add some heartbeat history
         let mut history = VecDeque::new();
         history.push_back(now - Duration::from_secs(30));
         history.push_back(now - Duration::from_secs(20));
         history.push_back(now - Duration::from_secs(10));
-        
+
         let phi = detector.calculate_phi(peer_id, Duration::from_secs(15), &history);
         assert!(phi >= 0.0);
     }

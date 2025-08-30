@@ -1,8 +1,8 @@
 //! Battery optimization strategies for mobile platforms
 
 use super::*;
-use std::sync::{Arc, Mutex};
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 /// Battery optimization detector and handler
@@ -14,8 +14,7 @@ pub struct BatteryOptimizationHandler {
     scan_history: Arc<Mutex<VecDeque<ScanEvent>>>,
 }
 
-#[derive(Clone)]
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct OptimizationState {
     battery_level: Option<f32>,
     is_charging: bool,
@@ -34,7 +33,6 @@ struct ScanEvent {
     actual_interval_ms: u64,
     success: bool,
 }
-
 
 impl BatteryOptimizationHandler {
     /// Create a new battery optimization handler
@@ -71,7 +69,8 @@ impl BatteryOptimizationHandler {
                     &optimization_state,
                     &scan_history,
                     &platform_type,
-                ).await;
+                )
+                .await;
 
                 if let Some(optimization_info) = optimization_detected {
                     // Send warning event
@@ -86,7 +85,8 @@ impl BatteryOptimizationHandler {
                         &power_manager,
                         &optimization_state,
                         &platform_type,
-                    ).await;
+                    )
+                    .await;
 
                     log::warn!("Battery optimization detected: {}", optimization_info);
                 }
@@ -98,7 +98,12 @@ impl BatteryOptimizationHandler {
     }
 
     /// Record a scan event for optimization detection
-    pub fn record_scan_event(&self, expected_interval_ms: u64, actual_interval_ms: u64, success: bool) {
+    pub fn record_scan_event(
+        &self,
+        expected_interval_ms: u64,
+        actual_interval_ms: u64,
+        success: bool,
+    ) {
         if let Ok(mut history) = self.scan_history.lock() {
             let event = ScanEvent {
                 timestamp: SystemTime::now(),
@@ -159,7 +164,7 @@ impl BatteryOptimizationHandler {
                             urgency: RecommendationUrgency::Medium,
                         });
                     }
-                },
+                }
                 PlatformType::Ios => {
                     if state.background_restricted {
                         recommendations.push(OptimizationRecommendation {
@@ -177,8 +182,8 @@ impl BatteryOptimizationHandler {
                         action: "Keep app active".to_string(),
                         urgency: RecommendationUrgency::Info,
                     });
-                },
-                _ => {},
+                }
+                _ => {}
             }
 
             // Battery level recommendations
@@ -186,7 +191,8 @@ impl BatteryOptimizationHandler {
                 if battery_level < 0.2 && !state.is_charging {
                     recommendations.push(OptimizationRecommendation {
                         title: "Low Battery".to_string(),
-                        description: "Battery level is low. Consider enabling battery saver mode.".to_string(),
+                        description: "Battery level is low. Consider enabling battery saver mode."
+                            .to_string(),
                         action: "Enable battery saver".to_string(),
                         urgency: RecommendationUrgency::Medium,
                     });
@@ -205,15 +211,16 @@ impl BatteryOptimizationHandler {
     ) -> Option<String> {
         // Analyze scan history for patterns indicating battery optimization
         let scan_issues = Self::analyze_scan_patterns(scan_history).await;
-        
+
         // Check system state
-        let system_issues = Self::check_system_restrictions(optimization_state, platform_type).await;
-        
+        let system_issues =
+            Self::check_system_restrictions(optimization_state, platform_type).await;
+
         // Combine issues
         let mut issues = Vec::new();
         issues.extend(scan_issues);
         issues.extend(system_issues);
-        
+
         if !issues.is_empty() {
             Some(issues.join("; "))
         } else {
@@ -222,9 +229,7 @@ impl BatteryOptimizationHandler {
     }
 
     /// Analyze scan patterns for optimization interference
-    async fn analyze_scan_patterns(
-        scan_history: &Arc<Mutex<VecDeque<ScanEvent>>>,
-    ) -> Vec<String> {
+    async fn analyze_scan_patterns(scan_history: &Arc<Mutex<VecDeque<ScanEvent>>>) -> Vec<String> {
         let mut issues = Vec::new();
 
         if let Ok(history) = scan_history.lock() {
@@ -233,7 +238,7 @@ impl BatteryOptimizationHandler {
             }
 
             let recent_events: Vec<_> = history.iter().rev().take(10).collect();
-            
+
             // Check for scan throttling (actual intervals much longer than expected)
             let throttled_count = recent_events
                 .iter()
@@ -245,10 +250,7 @@ impl BatteryOptimizationHandler {
             }
 
             // Check for scan failures
-            let failure_count = recent_events
-                .iter()
-                .filter(|event| !event.success)
-                .count();
+            let failure_count = recent_events.iter().filter(|event| !event.success).count();
 
             if failure_count > recent_events.len() / 3 {
                 issues.push("Bluetooth scans are frequently failing".to_string());
@@ -257,7 +259,13 @@ impl BatteryOptimizationHandler {
             // Check for irregular patterns (sign of doze mode or app standby)
             let intervals: Vec<_> = recent_events
                 .windows(2)
-                .map(|pair| pair[0].timestamp.duration_since(pair[1].timestamp).unwrap_or_default().as_millis() as u64)
+                .map(|pair| {
+                    pair[0]
+                        .timestamp
+                        .duration_since(pair[1].timestamp)
+                        .unwrap_or_default()
+                        .as_millis() as u64
+                })
                 .collect();
 
             if intervals.len() > 3 {
@@ -268,7 +276,8 @@ impl BatteryOptimizationHandler {
                     .count();
 
                 if irregular_count > intervals.len() / 4 {
-                    issues.push("Irregular scan patterns detected (possible doze mode)".to_string());
+                    issues
+                        .push("Irregular scan patterns detected (possible doze mode)".to_string());
                 }
             }
         }
@@ -284,7 +293,12 @@ impl BatteryOptimizationHandler {
         let mut issues = Vec::new();
 
         // Get platform-specific state first to avoid holding lock across await
-        let (is_doze_mode, is_app_standby, is_background_restricted, is_ios_background_refresh_disabled) = match platform_type {
+        let (
+            is_doze_mode,
+            is_app_standby,
+            is_background_restricted,
+            is_ios_background_refresh_disabled,
+        ) = match platform_type {
             PlatformType::Android => {
                 let doze = Self::detect_android_doze_mode().await;
                 let standby = Self::detect_android_app_standby().await;
@@ -297,7 +311,7 @@ impl BatteryOptimizationHandler {
             }
             _ => (false, false, false, false),
         };
-        
+
         if let Ok(mut state) = optimization_state.lock() {
             match platform_type {
                 PlatformType::Android => {
@@ -317,15 +331,15 @@ impl BatteryOptimizationHandler {
                         state.background_restricted = true;
                         issues.push("App has background restrictions".to_string());
                     }
-                },
+                }
                 PlatformType::Ios => {
                     // Check for iOS-specific issues
                     if is_ios_background_refresh_disabled && !state.background_restricted {
                         state.background_restricted = true;
                         issues.push("Background App Refresh is disabled".to_string());
                     }
-                },
-                _ => {},
+                }
+                _ => {}
             }
         }
 
@@ -358,14 +372,14 @@ impl BatteryOptimizationHandler {
                         // Reduce scan frequency to avoid throttling
                         let _ = power_manager.set_scan_interval(5000); // 5 seconds
                     }
-                },
+                }
                 PlatformType::Ios => {
                     if state.background_restricted {
                         // iOS background scanning is very limited
                         let _ = power_manager.set_scan_interval(10000); // 10 seconds
                     }
-                },
-                _ => {},
+                }
+                _ => {}
             }
         }
     }
@@ -378,12 +392,12 @@ impl BatteryOptimizationHandler {
         // Get battery info first to avoid holding lock across await
         let battery_level = Self::get_battery_level(platform_type).await;
         let is_charging = Self::is_device_charging(platform_type).await;
-        
+
         if let Ok(mut state) = optimization_state.lock() {
             // Update battery level
             state.battery_level = battery_level;
             state.is_charging = is_charging;
-            
+
             // Reset detection flags periodically to re-evaluate
             let now = SystemTime::now();
             if let Some(last_warning) = state.last_optimization_warning {
@@ -398,7 +412,7 @@ impl BatteryOptimizationHandler {
     }
 
     // Platform-specific detection methods (stubs - would be implemented with actual platform APIs)
-    
+
     async fn detect_android_doze_mode() -> bool {
         // TODO: Implement via JNI call to PowerManager.isDeviceIdleMode()
         false
@@ -425,11 +439,11 @@ impl BatteryOptimizationHandler {
             PlatformType::Android => {
                 // TODO: JNI call to BatteryManager.getIntProperty()
                 None
-            },
+            }
             PlatformType::Ios => {
                 // TODO: FFI call to UIDevice.batteryLevel
                 None
-            },
+            }
             _ => None,
         }
     }
@@ -440,11 +454,11 @@ impl BatteryOptimizationHandler {
             PlatformType::Android => {
                 // TODO: JNI call to BatteryManager charging status
                 false
-            },
+            }
             PlatformType::Ios => {
                 // TODO: FFI call to UIDevice.batteryState
                 false
-            },
+            }
             _ => false,
         }
     }
@@ -545,11 +559,11 @@ impl BatteryAwareScanStrategy {
                 } else {
                     (base_window, base_interval)
                 }
-            },
+            }
             PlatformType::Ios => {
                 // iOS is more restrictive
                 (base_window / 2, base_interval * 2)
-            },
+            }
             _ => (base_window, base_interval),
         };
 

@@ -1,5 +1,5 @@
 //! Production-grade database management with transaction support
-//! 
+//!
 //! Features:
 //! - Atomic transactions with automatic rollback
 //! - WAL mode for better concurrency
@@ -8,19 +8,19 @@
 //! - Connection pooling
 //! - Schema migrations
 
-pub mod migrations;
-pub mod cli;
-pub mod repository;
-pub mod models;
 pub mod cache;
+pub mod cli;
+pub mod migrations;
+pub mod models;
 pub mod query_builder;
+pub mod repository;
 
 // Re-export commonly used types
-pub use migrations::{MigrationManager, Migration, MigrationReport};
-pub use repository::{UserRepository, GameRepository, TransactionRepository, StatsRepository};
+pub use cache::{CacheConfig, DatabaseCache};
+pub use migrations::{Migration, MigrationManager, MigrationReport};
 pub use models::*;
-pub use cache::{DatabaseCache, CacheConfig};
-pub use query_builder::{QueryBuilder, UserQueries, GameQueries};
+pub use query_builder::{GameQueries, QueryBuilder, UserQueries};
+pub use repository::{GameRepository, StatsRepository, TransactionRepository, UserRepository};
 
 /// Generic repository trait for database access patterns
 pub trait Repository<T> {
@@ -31,17 +31,17 @@ pub trait Repository<T> {
     fn delete(&self, id: &str) -> std::result::Result<(), Self::Error>;
 }
 
+use crate::error::{Error, Result};
+use rusqlite::Connection;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use rusqlite::Connection;
-use crate::error::{Error, Result};
 
 pub mod async_pool;
-pub use async_pool::{AsyncDatabasePool, AsyncDbConfig, PoolStats as AsyncPoolStats};
 use crate::config::DatabaseConfig;
+pub use async_pool::{AsyncDatabasePool, AsyncDbConfig, PoolStats as AsyncPoolStats};
 
 /// Database connection pool
 pub struct DatabasePool {
@@ -84,15 +84,14 @@ impl DatabasePool {
     pub async fn new(config: DatabaseConfig) -> Result<Self> {
         // Create data directory if it doesn't exist
         if let Some(parent) = Path::new(&config.url).parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(Error::Io)?;
+            std::fs::create_dir_all(parent).map_err(Error::Io)?;
         }
-        
+
         // Initialize first connection to set up schema
         let mut setup_conn = Self::create_connection(&config)?;
         Self::initialize_schema(&mut setup_conn)?;
         drop(setup_conn);
-        
+
         // Initialize connection pool
         let mut connections = Vec::with_capacity(config.max_connections.min(5) as usize);
         for _ in 0..config.max_connections.min(5) {
@@ -105,19 +104,17 @@ impl DatabasePool {
                 transaction_count: 0,
             });
         }
-        
+
         // Initialize backup manager
         let backup_manager = Arc::new(BackupManager::new(
             config.backup_dir.clone(),
             config.backup_interval,
             config.log_retention_days,
         ));
-        
+
         // Initialize health monitor
-        let health_monitor = Arc::new(HealthMonitor::new(
-            config.checkpoint_interval,
-        ));
-        
+        let health_monitor = Arc::new(HealthMonitor::new(config.checkpoint_interval));
+
         let pool = Self {
             connections: Arc::new(RwLock::new(connections)),
             config: config.clone(),
@@ -126,58 +123,58 @@ impl DatabasePool {
             shutdown: Arc::new(AtomicBool::new(false)),
             background_handles: Arc::new(RwLock::new(Vec::new())),
         };
-        
+
         // Start background tasks only in non-test mode
         #[cfg(not(test))]
         pool.start_background_tasks().await;
-        
+
         Ok(pool)
     }
-    
+
     /// Create a new database connection with optimal settings
     fn create_connection(config: &DatabaseConfig) -> Result<Connection> {
         let conn = Connection::open(&config.url)
             .map_err(|e| Error::Database(format!("Failed to open database: {}", e)))?;
-        
+
         // Enable WAL mode for better concurrency
         if config.enable_wal {
             conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))
                 .map_err(|e| Error::Database(format!("Failed to enable WAL: {}", e)))?;
         }
-        
+
         // Set optimal pragmas
         conn.execute("PRAGMA synchronous = NORMAL", [])
             .map_err(|e| Error::Database(format!("Failed to set synchronous: {}", e)))?;
-        
+
         conn.execute("PRAGMA cache_size = -64000", []) // 64MB cache
             .map_err(|e| Error::Database(format!("Failed to set cache size: {}", e)))?;
-        
+
         conn.execute("PRAGMA temp_store = MEMORY", [])
             .map_err(|e| Error::Database(format!("Failed to set temp store: {}", e)))?;
-        
+
         conn.execute("PRAGMA mmap_size = 268435456", []) // 256MB mmap
             .map_err(|e| Error::Database(format!("Failed to set mmap size: {}", e)))?;
-        
+
         // Set busy timeout
         conn.busy_timeout(Duration::from_secs(30))
             .map_err(|e| Error::Database(format!("Failed to set busy timeout: {}", e)))?;
-        
+
         Ok(conn)
     }
-    
+
     /// Initialize database schema using migrations
     fn initialize_schema(_conn: &mut Connection) -> Result<()> {
         // For now, we'll skip migrations in the pool initialization
         // Migrations should be run separately via the CLI tool
         // This avoids ownership issues with the connection
-        
+
         // In production, run: bitcraps-db migrate
         // Or programmatically before starting the server
-        
+
         tracing::info!("Database pool initialized - ensure migrations are run separately");
         Ok(())
     }
-    
+
     /// Execute a database operation with a connection from the pool
     pub async fn with_connection<F, R>(&self, f: F) -> Result<R>
     where
@@ -185,11 +182,11 @@ impl DatabasePool {
     {
         let start = Instant::now();
         let timeout = self.config.connection_timeout;
-        
+
         loop {
             {
                 let mut connections = self.connections.write().await;
-                
+
                 // Find an available connection
                 for conn in connections.iter_mut() {
                     if !conn.in_use {
@@ -207,21 +204,21 @@ impl DatabasePool {
                                 }
                             }
                         }
-                        
+
                         conn.in_use = true;
                         conn.last_used = Instant::now();
                         conn.transaction_count += 1;
-                        
+
                         // Execute the operation
                         let result = f(&mut conn.conn);
-                        
+
                         // Mark connection as available
                         conn.in_use = false;
-                        
+
                         return result;
                     }
                 }
-                
+
                 // Try to create a new connection if under limit
                 if connections.len() < self.config.max_connections as usize {
                     match Self::create_connection(&self.config) {
@@ -241,26 +238,27 @@ impl DatabasePool {
                     }
                 }
             }
-            
+
             // Check timeout
             if start.elapsed() > timeout {
                 return Err(Error::Database("Connection pool timeout".to_string()));
             }
-            
+
             // Wait briefly before retrying
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
-    
+
     /// Execute a transaction with automatic rollback on error
     pub async fn transaction<F, R>(&self, f: F) -> Result<R>
     where
         F: FnOnce(&rusqlite::Transaction) -> Result<R>,
     {
         self.with_connection(|conn| {
-            let tx = conn.transaction()
+            let tx = conn
+                .transaction()
                 .map_err(|e| Error::Database(format!("Failed to begin transaction: {}", e)))?;
-            
+
             match f(&tx) {
                 Ok(result) => {
                     tx.commit()
@@ -272,33 +270,34 @@ impl DatabasePool {
                     Err(e)
                 }
             }
-        }).await
+        })
+        .await
     }
-    
-    
+
     /// Simple shutdown signal for background tasks
     pub async fn signal_shutdown(&self) {
         self.shutdown.store(true, Ordering::Relaxed);
         // Give background tasks time to exit
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
-    
+
     /// Checkpoint the database (WAL mode)
     pub async fn checkpoint(&self) -> Result<()> {
         self.with_connection(|conn| {
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)", [])
                 .map_err(|e| Error::Database(format!("Checkpoint failed: {}", e)))?;
             Ok(())
-        }).await
+        })
+        .await
     }
-    
+
     /// Get database statistics
     pub async fn get_stats(&self) -> Result<DatabaseStats> {
         let connections = self.connections.read().await;
         let active = connections.iter().filter(|c| c.in_use).count();
         let total = connections.len();
         let total_transactions: u64 = connections.iter().map(|c| c.transaction_count).sum();
-        
+
         Ok(DatabaseStats {
             active_connections: active,
             total_connections: total,
@@ -317,48 +316,47 @@ impl BackupManager {
             _retention_days: retention_days,
         }
     }
-    
+
     async fn should_backup(&self) -> bool {
         let last = *self.last_backup.read().await;
         last.elapsed() > self.backup_interval
     }
-    
+
     pub async fn run_backup(&self) -> Result<()> {
         // Create backup directory if it doesn't exist
-        std::fs::create_dir_all(&self.backup_dir)
-            .map_err(Error::Io)?;
-        
+        std::fs::create_dir_all(&self.backup_dir).map_err(Error::Io)?;
+
         // Generate backup filename with timestamp
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
         let backup_file = self.backup_dir.join(format!("backup_{}.db", timestamp));
-        
+
         // Perform actual backup using SQLite's backup API
         // Note: This requires access to the main database connection
         // In production, we'd use rusqlite::backup module
-        
+
         // For now, we'll use file copy as a simple backup mechanism
         if let Ok(db_path) = std::env::var("DATABASE_URL") {
             if Path::new(&db_path).exists() {
                 std::fs::copy(&db_path, &backup_file)
                     .map_err(|e| Error::Database(format!("Backup failed: {}", e)))?;
-                
+
                 log::info!("Database backup created: {:?}", backup_file);
-                
+
                 // Clean up old backups
                 self.cleanup_old_backups().await?;
             }
         }
-        
+
         // Update last backup time
         *self.last_backup.write().await = Instant::now();
-        
+
         Ok(())
     }
-    
+
     async fn cleanup_old_backups(&self) -> Result<()> {
         let retention_days = self._retention_days as i64;
         let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days);
-        
+
         if let Ok(entries) = std::fs::read_dir(&self.backup_dir) {
             for entry in entries.flatten() {
                 if let Ok(metadata) = entry.metadata() {
@@ -372,7 +370,7 @@ impl BackupManager {
                 }
             }
         }
-        
+
         Ok(())
     }
 }
@@ -387,22 +385,22 @@ impl HealthMonitor {
             _failed_transactions: Arc::new(RwLock::new(0)),
         }
     }
-    
+
     async fn check_health(&self) -> Result<()> {
         *self.last_check.write().await = Instant::now();
-        
+
         // Note: Health check is performed without directly accessing connections
         // Connection health is checked during acquisition
-        
+
         let corruption_detected = *self.corruption_detected.read().await;
-        
+
         if corruption_detected {
             Err(Error::Database("Database corruption detected".to_string()))
         } else {
             Ok(())
         }
     }
-    
+
     /// Check if a connection is healthy
     pub async fn check_connection(&self, conn: &mut Connection) -> bool {
         conn.execute("SELECT 1", []).is_ok()
@@ -413,13 +411,13 @@ impl DatabasePool {
     /// Start background tasks for maintenance
     async fn start_background_tasks(&self) {
         let mut handles = self.background_handles.write().await;
-        
+
         // Start backup task
         if self.config.backup_interval > Duration::ZERO {
             let backup_manager = self.backup_manager.clone();
             let shutdown = self.shutdown.clone();
             let interval = self.config.backup_interval;
-            
+
             let handle = tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(interval);
                 while !shutdown.load(Ordering::Relaxed) {
@@ -432,12 +430,12 @@ impl DatabasePool {
             });
             handles.push(handle);
         }
-        
+
         // Start health monitoring task
         let health_monitor = self.health_monitor.clone();
         let shutdown = self.shutdown.clone();
         let check_interval = self.config.checkpoint_interval;
-        
+
         let handle = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(check_interval);
             while !shutdown.load(Ordering::Relaxed) {
@@ -450,22 +448,22 @@ impl DatabasePool {
         });
         handles.push(handle);
     }
-    
+
     /// Shutdown the database pool gracefully
     pub async fn shutdown(&self) -> Result<()> {
         // Signal shutdown
         self.shutdown.store(true, Ordering::Relaxed);
-        
+
         // Wait for background tasks to complete
         let mut handles = self.background_handles.write().await;
         for handle in handles.drain(..) {
             let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
         }
-        
+
         // Close all connections
         let mut conns = self.connections.write().await;
         conns.clear();
-        
+
         Ok(())
     }
 }
@@ -502,12 +500,12 @@ impl Clone for DatabasePool {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    
+
     #[tokio::test]
     async fn test_connection_pool() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        
+
         let config = DatabaseConfig {
             url: db_path.to_str().unwrap().to_string(),
             max_connections: 5,
@@ -519,28 +517,32 @@ mod tests {
             backup_interval: Duration::from_secs(3600),
             log_retention_days: 7,
         };
-        
+
         let pool = DatabasePool::new(config).await.unwrap();
-        
+
         // Test basic operations
         pool.with_connection(|conn| {
             conn.execute("CREATE TABLE test (id INTEGER)", [])
                 .map_err(|e| Error::Database(e.to_string()))?;
             Ok(())
-        }).await.unwrap();
-        
+        })
+        .await
+        .unwrap();
+
         // Test transaction
         pool.transaction(|tx| {
             tx.execute("INSERT INTO test VALUES (1)", [])
                 .map_err(|e| Error::Database(e.to_string()))?;
             Ok(())
-        }).await.unwrap();
-        
+        })
+        .await
+        .unwrap();
+
         // Verify stats
         let stats = pool.get_stats().await.unwrap();
         assert!(stats.total_connections > 0);
         assert!(!stats.corrupted);
-        
+
         // Shutdown cleanly
         pool.shutdown().await;
     }

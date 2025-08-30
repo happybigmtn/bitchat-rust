@@ -1,22 +1,22 @@
 //! Thread-safe callback handling for Android JNI bridge
-//! 
+//!
 //! This module provides thread-safe callback mechanisms between the Rust
 //! BLE implementation and Android Java/Kotlin code, ensuring proper
 //! synchronization and memory management.
 
-use std::sync::{Arc, Mutex, RwLock};
+use crate::error::BitCrapsError;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use crate::error::BitCrapsError;
 
 #[cfg(target_os = "android")]
+use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JString, JValue};
+#[cfg(target_os = "android")]
+use jni::sys::{jboolean, jbyteArray, jint, jlong, jstring};
+#[cfg(target_os = "android")]
 use jni::{JNIEnv, JavaVM};
-#[cfg(target_os = "android")]
-use jni::objects::{JClass, JString, JObject, JByteArray, GlobalRef, JValue};
-#[cfg(target_os = "android")]
-use jni::sys::{jlong, jstring, jboolean, jint, jbyteArray};
 
 /// Callback event types
 #[derive(Debug, Clone)]
@@ -69,7 +69,7 @@ pub struct CallbackManager {
 impl CallbackManager {
     pub fn new() -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
-        
+
         Self {
             #[cfg(target_os = "android")]
             java_vm: None,
@@ -94,11 +94,12 @@ impl CallbackManager {
 
     /// Register a callback handler
     pub fn register_handler(&self, handler: Arc<dyn CallbackHandler>) -> Result<(), BitCrapsError> {
-        let mut handlers = self.handlers.write().map_err(|_| {
-            BitCrapsError::BluetoothError {
+        let mut handlers = self
+            .handlers
+            .write()
+            .map_err(|_| BitCrapsError::BluetoothError {
                 message: "Failed to lock handlers for registration".to_string(),
-            }
-        })?;
+            })?;
 
         handlers.push(handler);
         Ok(())
@@ -106,11 +107,12 @@ impl CallbackManager {
 
     /// Unregister all handlers
     pub fn clear_handlers(&self) -> Result<(), BitCrapsError> {
-        let mut handlers = self.handlers.write().map_err(|_| {
-            BitCrapsError::BluetoothError {
+        let mut handlers = self
+            .handlers
+            .write()
+            .map_err(|_| BitCrapsError::BluetoothError {
                 message: "Failed to lock handlers for clearing".to_string(),
-            }
-        })?;
+            })?;
 
         handlers.clear();
         Ok(())
@@ -119,22 +121,23 @@ impl CallbackManager {
     /// Send an event to be processed
     pub fn send_event(&self, event: CallbackEvent) -> Result<(), BitCrapsError> {
         if let Some(sender) = &self.event_sender {
-            sender.send(event).map_err(|e| {
-                BitCrapsError::BluetoothError {
+            sender
+                .send(event)
+                .map_err(|e| BitCrapsError::BluetoothError {
                     message: format!("Failed to send callback event: {}", e),
-                }
-            })?;
+                })?;
         }
         Ok(())
     }
 
     /// Start the callback processing loop
     pub fn start(&self) -> Result<(), BitCrapsError> {
-        let mut running = self.is_running.lock().map_err(|_| {
-            BitCrapsError::BluetoothError {
+        let mut running = self
+            .is_running
+            .lock()
+            .map_err(|_| BitCrapsError::BluetoothError {
                 message: "Failed to lock running state".to_string(),
-            }
-        })?;
+            })?;
 
         if *running {
             return Ok(()); // Already running
@@ -144,16 +147,17 @@ impl CallbackManager {
 
         // Take the receiver
         let receiver = {
-            let mut recv_lock = self.event_receiver.lock().map_err(|_| {
-                BitCrapsError::BluetoothError {
-                    message: "Failed to lock event receiver".to_string(),
-                }
-            })?;
-            recv_lock.take().ok_or_else(|| {
-                BitCrapsError::BluetoothError {
+            let mut recv_lock =
+                self.event_receiver
+                    .lock()
+                    .map_err(|_| BitCrapsError::BluetoothError {
+                        message: "Failed to lock event receiver".to_string(),
+                    })?;
+            recv_lock
+                .take()
+                .ok_or_else(|| BitCrapsError::BluetoothError {
                     message: "Event receiver already taken".to_string(),
-                }
-            })?
+                })?
         };
 
         // Clone necessary data for the processing thread
@@ -177,7 +181,7 @@ impl CallbackManager {
 
             rt.block_on(async move {
                 let mut receiver = receiver;
-                
+
                 while let Some(event) = receiver.recv().await {
                     // Check if we should continue running
                     {
@@ -215,11 +219,12 @@ impl CallbackManager {
 
     /// Stop the callback processing
     pub fn stop(&self) -> Result<(), BitCrapsError> {
-        let mut running = self.is_running.lock().map_err(|_| {
-            BitCrapsError::BluetoothError {
+        let mut running = self
+            .is_running
+            .lock()
+            .map_err(|_| BitCrapsError::BluetoothError {
                 message: "Failed to lock running state".to_string(),
-            }
-        })?;
+            })?;
 
         *running = false;
         log::info!("Callback manager stopped");
@@ -233,19 +238,25 @@ impl CallbackManager {
         callback_object: &GlobalRef,
         event: &CallbackEvent,
     ) -> Result<(), BitCrapsError> {
-        let env = vm.attach_current_thread().map_err(|e| {
-            BitCrapsError::BluetoothError {
+        let env = vm
+            .attach_current_thread()
+            .map_err(|e| BitCrapsError::BluetoothError {
                 message: format!("Failed to attach to JVM: {}", e),
-            }
-        })?;
+            })?;
 
         match event {
-            CallbackEvent::PeerDiscovered { address, name, rssi, manufacturer_data, service_uuids } => {
-                let address_jstring = env.new_string(address).map_err(|e| {
-                    BitCrapsError::BluetoothError {
-                        message: format!("Failed to create address JString: {}", e),
-                    }
-                })?;
+            CallbackEvent::PeerDiscovered {
+                address,
+                name,
+                rssi,
+                manufacturer_data,
+                service_uuids,
+            } => {
+                let address_jstring =
+                    env.new_string(address)
+                        .map_err(|e| BitCrapsError::BluetoothError {
+                            message: format!("Failed to create address JString: {}", e),
+                        })?;
 
                 let name_jstring = if let Some(name) = name {
                     env.new_string(name).ok()
@@ -266,28 +277,26 @@ impl CallbackManager {
                     }
                 })?;
 
-                let uuids_array = env.new_object_array(
-                    service_uuids.len() as i32,
-                    string_class,
-                    JObject::null(),
-                ).map_err(|e| {
-                    BitCrapsError::BluetoothError {
+                let uuids_array = env
+                    .new_object_array(service_uuids.len() as i32, string_class, JObject::null())
+                    .map_err(|e| BitCrapsError::BluetoothError {
                         message: format!("Failed to create UUID array: {}", e),
-                    }
-                })?;
+                    })?;
 
                 for (i, uuid) in service_uuids.iter().enumerate() {
-                    let uuid_jstring = env.new_string(uuid).map_err(|e| {
-                        BitCrapsError::BluetoothError {
-                            message: format!("Failed to create UUID JString: {}", e),
-                        }
+                    let uuid_jstring =
+                        env.new_string(uuid)
+                            .map_err(|e| BitCrapsError::BluetoothError {
+                                message: format!("Failed to create UUID JString: {}", e),
+                            })?;
+                    env.set_object_array_element(
+                        uuids_array,
+                        i as i32,
+                        JObject::from(uuid_jstring),
+                    )
+                    .map_err(|e| BitCrapsError::BluetoothError {
+                        message: format!("Failed to set UUID array element: {}", e),
                     })?;
-                    env.set_object_array_element(uuids_array, i as i32, JObject::from(uuid_jstring))
-                        .map_err(|e| {
-                            BitCrapsError::BluetoothError {
-                                message: format!("Failed to set UUID array element: {}", e),
-                            }
-                        })?;
                 }
 
                 // Call Android callback method
@@ -295,7 +304,9 @@ impl CallbackManager {
                     JValue::Object(&address_jstring),
                     JValue::Object(&name_jstring.unwrap_or_else(|| JObject::null().into())),
                     JValue::Int(*rssi),
-                    JValue::Object(&manufacturer_data_array.unwrap_or_else(|| JObject::null().into())),
+                    JValue::Object(
+                        &manufacturer_data_array.unwrap_or_else(|| JObject::null().into()),
+                    ),
                     JValue::Object(&uuids_array),
                 ];
 
@@ -304,75 +315,77 @@ impl CallbackManager {
                     "onPeerDiscovered",
                     "(Ljava/lang/String;Ljava/lang/String;I[B[Ljava/lang/String;)V",
                     &args,
-                ).map_err(|e| {
-                    BitCrapsError::BluetoothError {
-                        message: format!("Failed to call onPeerDiscovered: {}", e),
-                    }
+                )
+                .map_err(|e| BitCrapsError::BluetoothError {
+                    message: format!("Failed to call onPeerDiscovered: {}", e),
                 })?;
-            },
+            }
 
             CallbackEvent::DeviceConnected { address } => {
-                let address_jstring = env.new_string(address).map_err(|e| {
-                    BitCrapsError::BluetoothError {
-                        message: format!("Failed to create address JString: {}", e),
-                    }
-                })?;
+                let address_jstring =
+                    env.new_string(address)
+                        .map_err(|e| BitCrapsError::BluetoothError {
+                            message: format!("Failed to create address JString: {}", e),
+                        })?;
 
                 env.call_method(
                     callback_object,
                     "onDeviceConnected",
                     "(Ljava/lang/String;)V",
                     &[JValue::Object(&address_jstring)],
-                ).map_err(|e| {
-                    BitCrapsError::BluetoothError {
-                        message: format!("Failed to call onDeviceConnected: {}", e),
-                    }
+                )
+                .map_err(|e| BitCrapsError::BluetoothError {
+                    message: format!("Failed to call onDeviceConnected: {}", e),
                 })?;
-            },
+            }
 
             CallbackEvent::DeviceDisconnected { address } => {
-                let address_jstring = env.new_string(address).map_err(|e| {
-                    BitCrapsError::BluetoothError {
-                        message: format!("Failed to create address JString: {}", e),
-                    }
-                })?;
+                let address_jstring =
+                    env.new_string(address)
+                        .map_err(|e| BitCrapsError::BluetoothError {
+                            message: format!("Failed to create address JString: {}", e),
+                        })?;
 
                 env.call_method(
                     callback_object,
                     "onDeviceDisconnected",
                     "(Ljava/lang/String;)V",
                     &[JValue::Object(&address_jstring)],
-                ).map_err(|e| {
-                    BitCrapsError::BluetoothError {
-                        message: format!("Failed to call onDeviceDisconnected: {}", e),
-                    }
+                )
+                .map_err(|e| BitCrapsError::BluetoothError {
+                    message: format!("Failed to call onDeviceDisconnected: {}", e),
                 })?;
-            },
+            }
 
-            CallbackEvent::CommandReceived { device_address, data } => {
-                let address_jstring = env.new_string(device_address).map_err(|e| {
-                    BitCrapsError::BluetoothError {
-                        message: format!("Failed to create address JString: {}", e),
-                    }
-                })?;
+            CallbackEvent::CommandReceived {
+                device_address,
+                data,
+            } => {
+                let address_jstring =
+                    env.new_string(device_address)
+                        .map_err(|e| BitCrapsError::BluetoothError {
+                            message: format!("Failed to create address JString: {}", e),
+                        })?;
 
-                let data_array = env.byte_array_from_slice(data).map_err(|e| {
-                    BitCrapsError::BluetoothError {
-                        message: format!("Failed to create data array: {}", e),
-                    }
-                })?;
+                let data_array =
+                    env.byte_array_from_slice(data)
+                        .map_err(|e| BitCrapsError::BluetoothError {
+                            message: format!("Failed to create data array: {}", e),
+                        })?;
 
                 env.call_method(
                     callback_object,
                     "onCommandReceived",
                     "(Ljava/lang/String;[B)V",
-                    &[JValue::Object(&address_jstring), JValue::Object(&data_array)],
-                ).map_err(|e| {
-                    BitCrapsError::BluetoothError {
-                        message: format!("Failed to call onCommandReceived: {}", e),
-                    }
+                    &[
+                        JValue::Object(&address_jstring),
+                        JValue::Object(&data_array),
+                    ],
+                )
+                .map_err(|e| BitCrapsError::BluetoothError {
+                    message: format!("Failed to call onCommandReceived: {}", e),
                 })?;
-            },
+            }
 
             CallbackEvent::AdvertisingStateChanged { is_advertising } => {
                 env.call_method(
@@ -380,12 +393,11 @@ impl CallbackManager {
                     "onAdvertisingStateChanged",
                     "(Z)V",
                     &[JValue::Bool(*is_advertising as u8)],
-                ).map_err(|e| {
-                    BitCrapsError::BluetoothError {
-                        message: format!("Failed to call onAdvertisingStateChanged: {}", e),
-                    }
+                )
+                .map_err(|e| BitCrapsError::BluetoothError {
+                    message: format!("Failed to call onAdvertisingStateChanged: {}", e),
                 })?;
-            },
+            }
 
             CallbackEvent::ScanningStateChanged { is_scanning } => {
                 env.call_method(
@@ -393,12 +405,11 @@ impl CallbackManager {
                     "onScanningStateChanged",
                     "(Z)V",
                     &[JValue::Bool(*is_scanning as u8)],
-                ).map_err(|e| {
-                    BitCrapsError::BluetoothError {
-                        message: format!("Failed to call onScanningStateChanged: {}", e),
-                    }
+                )
+                .map_err(|e| BitCrapsError::BluetoothError {
+                    message: format!("Failed to call onScanningStateChanged: {}", e),
                 })?;
-            },
+            }
 
             CallbackEvent::GattServerStateChanged { is_running } => {
                 env.call_method(
@@ -406,12 +417,11 @@ impl CallbackManager {
                     "onGattServerStateChanged",
                     "(Z)V",
                     &[JValue::Bool(*is_running as u8)],
-                ).map_err(|e| {
-                    BitCrapsError::BluetoothError {
-                        message: format!("Failed to call onGattServerStateChanged: {}", e),
-                    }
+                )
+                .map_err(|e| BitCrapsError::BluetoothError {
+                    message: format!("Failed to call onGattServerStateChanged: {}", e),
                 })?;
-            },
+            }
         }
 
         Ok(())
@@ -419,7 +429,10 @@ impl CallbackManager {
 
     /// Check if callback manager is running
     pub fn is_running(&self) -> bool {
-        self.is_running.lock().map(|running| *running).unwrap_or(false)
+        self.is_running
+            .lock()
+            .map(|running| *running)
+            .unwrap_or(false)
     }
 }
 
@@ -429,27 +442,39 @@ pub struct LoggingCallbackHandler;
 impl CallbackHandler for LoggingCallbackHandler {
     fn handle_event(&self, event: CallbackEvent) -> Result<(), BitCrapsError> {
         match event {
-            CallbackEvent::PeerDiscovered { address, name, rssi, .. } => {
+            CallbackEvent::PeerDiscovered {
+                address,
+                name,
+                rssi,
+                ..
+            } => {
                 log::info!("Peer discovered: {} ({:?}) RSSI: {}", address, name, rssi);
-            },
+            }
             CallbackEvent::DeviceConnected { address } => {
                 log::info!("Device connected: {}", address);
-            },
+            }
             CallbackEvent::DeviceDisconnected { address } => {
                 log::info!("Device disconnected: {}", address);
-            },
-            CallbackEvent::CommandReceived { device_address, data } => {
-                log::debug!("Command received from {}: {} bytes", device_address, data.len());
-            },
+            }
+            CallbackEvent::CommandReceived {
+                device_address,
+                data,
+            } => {
+                log::debug!(
+                    "Command received from {}: {} bytes",
+                    device_address,
+                    data.len()
+                );
+            }
             CallbackEvent::AdvertisingStateChanged { is_advertising } => {
                 log::info!("Advertising state changed: {}", is_advertising);
-            },
+            }
             CallbackEvent::ScanningStateChanged { is_scanning } => {
                 log::info!("Scanning state changed: {}", is_scanning);
-            },
+            }
             CallbackEvent::GattServerStateChanged { is_running } => {
                 log::info!("GATT server state changed: {}", is_running);
-            },
+            }
         }
         Ok(())
     }
@@ -464,7 +489,7 @@ pub fn get_callback_manager() -> Arc<CallbackManager> {
     unsafe {
         CALLBACK_MANAGER_INIT.call_once(|| {
             let manager = Arc::new(CallbackManager::new());
-            
+
             // Register default logging handler
             let logging_handler = Arc::new(LoggingCallbackHandler);
             if let Err(e) = manager.register_handler(logging_handler) {

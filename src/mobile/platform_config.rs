@@ -67,7 +67,7 @@ impl PlatformConfigBuilder {
             scan_interval_ms: 1000, // 1 second
             low_power_mode: false,
             service_uuids: vec![
-                "12345678-1234-5678-1234-567812345678".to_string() // BitCraps service UUID
+                "12345678-1234-5678-1234-567812345678".to_string(), // BitCraps service UUID
             ],
         }
     }
@@ -81,7 +81,7 @@ impl PlatformConfigBuilder {
             scan_interval_ms: 2000,     // 2 seconds (more conservative)
             low_power_mode: true,       // Enable by default
             service_uuids: vec![
-                "12345678-1234-5678-1234-567812345678".to_string() // Required for iOS background
+                "12345678-1234-5678-1234-567812345678".to_string(), // Required for iOS background
             ],
         }
     }
@@ -94,9 +94,7 @@ impl PlatformConfigBuilder {
             scan_window_ms: 1000,   // 1 second
             scan_interval_ms: 1000, // 1 second
             low_power_mode: false,
-            service_uuids: vec![
-                "12345678-1234-5678-1234-567812345678".to_string()
-            ],
+            service_uuids: vec!["12345678-1234-5678-1234-567812345678".to_string()],
         }
     }
 
@@ -108,9 +106,7 @@ impl PlatformConfigBuilder {
             scan_window_ms: 1000,       // 1 second
             scan_interval_ms: 1000,     // 1 second
             low_power_mode: false,
-            service_uuids: vec![
-                "12345678-1234-5678-1234-567812345678".to_string()
-            ],
+            service_uuids: vec!["12345678-1234-5678-1234-567812345678".to_string()],
         }
     }
 }
@@ -196,13 +192,13 @@ impl PlatformDetection {
     pub fn detect_platform() -> PlatformType {
         #[cfg(target_os = "android")]
         return PlatformType::Android;
-        
+
         #[cfg(target_os = "ios")]
         return PlatformType::Ios;
-        
+
         #[cfg(target_arch = "wasm32")]
         return PlatformType::Web;
-        
+
         #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
         return PlatformType::Desktop;
     }
@@ -227,33 +223,34 @@ impl PlatformDetection {
     /// Get platform-specific Bluetooth limitations
     pub fn get_bluetooth_limitations() -> Vec<String> {
         let mut limitations = Vec::new();
-        
+
         match Self::detect_platform() {
             PlatformType::Android => {
                 limitations.push("Battery optimization may kill background scanning".to_string());
                 limitations.push("Requires location permissions for BLE scanning".to_string());
                 limitations.push("May be affected by Doze mode and App Standby".to_string());
-            },
+            }
             PlatformType::Ios => {
                 limitations.push("Background scanning severely limited".to_string());
                 limitations.push("Local name not available in background".to_string());
                 limitations.push("Service UUID filtering required for background".to_string());
                 limitations.push("Connection intervals limited in background".to_string());
-            },
+            }
             PlatformType::Desktop => {
                 limitations.push("May require administrator privileges".to_string());
                 limitations.push("Bluetooth adapter availability varies".to_string());
-            },
+            }
             PlatformType::Web => {
                 limitations.push("Web Bluetooth API has limited device support".to_string());
                 limitations.push("Requires user gesture to initiate scanning".to_string());
                 limitations.push("No background operation support".to_string());
-            },
+            }
             PlatformType::Unknown => {
-                limitations.push("Platform not recognized - functionality may be limited".to_string());
-            },
+                limitations
+                    .push("Platform not recognized - functionality may be limited".to_string());
+            }
         }
-        
+
         limitations
     }
 }
@@ -265,11 +262,11 @@ impl CompatibilityLayer {
     /// Get maximum supported connections for the platform
     pub fn max_connections() -> u32 {
         match PlatformDetection::detect_platform() {
-            PlatformType::Android => 7,  // Most Android devices support 7 concurrent connections
-            PlatformType::Ios => 10,     // iOS typically supports more connections
+            PlatformType::Android => 7, // Most Android devices support 7 concurrent connections
+            PlatformType::Ios => 10,    // iOS typically supports more connections
             PlatformType::Desktop => 20, // Desktop has fewer limitations
-            PlatformType::Web => 1,      // Web Bluetooth is very limited
-            PlatformType::Unknown => 1,  // Conservative default
+            PlatformType::Web => 1,     // Web Bluetooth is very limited
+            PlatformType::Unknown => 1, // Conservative default
         }
     }
 
@@ -287,7 +284,7 @@ impl CompatibilityLayer {
     /// Check if platform requires specific permissions
     pub fn required_permissions() -> Vec<String> {
         let mut permissions = Vec::new();
-        
+
         match PlatformDetection::detect_platform() {
             PlatformType::Android => {
                 permissions.push("android.permission.BLUETOOTH".to_string());
@@ -295,14 +292,14 @@ impl CompatibilityLayer {
                 permissions.push("android.permission.BLUETOOTH_ADVERTISE".to_string());
                 permissions.push("android.permission.BLUETOOTH_CONNECT".to_string());
                 permissions.push("android.permission.ACCESS_FINE_LOCATION".to_string());
-            },
+            }
             PlatformType::Ios => {
                 permissions.push("NSBluetoothAlwaysUsageDescription".to_string());
                 permissions.push("NSBluetoothPeripheralUsageDescription".to_string());
-            },
-            _ => {}, // Desktop and Web don't require specific permissions
+            }
+            _ => {} // Desktop and Web don't require specific permissions
         }
-        
+
         permissions
     }
 
@@ -314,15 +311,15 @@ impl CompatibilityLayer {
                 if config.scan_interval_ms < 100 {
                     config.scan_interval_ms = 100; // Minimum interval for Android
                 }
-            },
+            }
             PlatformType::Ios => {
                 // iOS workarounds
                 if config.background_scanning && config.service_uuids.is_empty() {
                     log::warn!("iOS background scanning requires service UUIDs");
                     config.background_scanning = false;
                 }
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
 }

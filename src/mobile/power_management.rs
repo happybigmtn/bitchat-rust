@@ -2,7 +2,7 @@
 
 use super::*;
 use std::sync::{Arc, Mutex};
-use tokio::time::{Duration, interval};
+use tokio::time::{interval, Duration};
 
 /// Power management system for battery optimization
 pub struct PowerManager {
@@ -54,7 +54,7 @@ impl PowerManager {
 
         // Apply mode-specific optimizations
         self.apply_power_mode(&mode)?;
-        
+
         log::info!("Power mode set to: {:?}", mode);
         Ok(())
     }
@@ -86,7 +86,10 @@ impl PowerManager {
             PlatformType::Android => self.configure_android_optimizations(config)?,
             PlatformType::Ios => self.configure_ios_optimizations(config)?,
             _ => {
-                log::warn!("Platform {:?} does not have specific power optimizations", config.platform);
+                log::warn!(
+                    "Platform {:?} does not have specific power optimizations",
+                    config.platform
+                );
             }
         }
 
@@ -94,19 +97,27 @@ impl PowerManager {
     }
 
     /// Configure discovery parameters for power optimization
-    pub async fn configure_discovery(&self, platform_config: &Option<PlatformConfig>) -> Result<(), BitCrapsError> {
+    pub async fn configure_discovery(
+        &self,
+        platform_config: &Option<PlatformConfig>,
+    ) -> Result<(), BitCrapsError> {
         if let Some(config) = platform_config {
             // Adjust scan parameters based on power mode and platform
             let current_mode = *self.current_mode.lock().unwrap();
-            
-            let (scan_window, scan_interval) = self.calculate_scan_parameters(&current_mode, config);
-            
+
+            let (scan_window, scan_interval) =
+                self.calculate_scan_parameters(&current_mode, config);
+
             // Update scan interval
             if let Ok(mut interval) = self.scan_interval.lock() {
                 *interval = scan_interval;
             }
 
-            log::info!("Discovery configured: window={}ms, interval={}ms", scan_window, scan_interval);
+            log::info!(
+                "Discovery configured: window={}ms, interval={}ms",
+                scan_window,
+                scan_interval
+            );
         }
 
         Ok(())
@@ -117,23 +128,23 @@ impl PowerManager {
         let optimization_state = Arc::clone(&self.optimization_state);
         let current_mode = Arc::clone(&self.current_mode);
         let _scan_interval = Arc::clone(&self.scan_interval);
-        
+
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(60)); // Check every minute
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // Check battery level and system state
                 let battery_info = BatteryInfo {
                     level: Some(0.75),
                     is_charging: false,
                 };
-                
+
                 // Get background restrictions and doze mode first
                 let background_restricted = Self::check_background_restrictions().await;
                 let doze_mode = Self::check_doze_mode().await;
-                
+
                 if let Ok(mut state) = optimization_state.lock() {
                     state.battery_level = battery_info.level;
                     state.is_charging = battery_info.is_charging;
@@ -144,10 +155,13 @@ impl PowerManager {
                     // Adjust optimizations based on current state
                     let mode = *current_mode.lock().unwrap();
                     let new_duty_cycle = Self::calculate_duty_cycle(&mode, &state);
-                    
+
                     if (state.scan_duty_cycle - new_duty_cycle).abs() > 0.1 {
                         state.scan_duty_cycle = new_duty_cycle;
-                        log::info!("Adjusted scan duty cycle to: {:.1}%", new_duty_cycle * 100.0);
+                        log::info!(
+                            "Adjusted scan duty cycle to: {:.1}%",
+                            new_duty_cycle * 100.0
+                        );
                     }
                 }
             }
@@ -159,10 +173,10 @@ impl PowerManager {
     /// Apply power mode specific optimizations
     fn apply_power_mode(&self, mode: &PowerMode) -> Result<(), BitCrapsError> {
         let base_interval = match mode {
-            PowerMode::HighPerformance => 500,   // 0.5 seconds - aggressive scanning
-            PowerMode::Balanced => 1000,         // 1 second - normal
-            PowerMode::BatterySaver => 2000,     // 2 seconds - conservative
-            PowerMode::UltraLowPower => 5000,    // 5 seconds - minimal
+            PowerMode::HighPerformance => 500, // 0.5 seconds - aggressive scanning
+            PowerMode::Balanced => 1000,       // 1 second - normal
+            PowerMode::BatterySaver => 2000,   // 2 seconds - conservative
+            PowerMode::UltraLowPower => 5000,  // 5 seconds - minimal
         };
 
         if let Ok(mut interval) = self.scan_interval.lock() {
@@ -173,9 +187,12 @@ impl PowerManager {
     }
 
     /// Configure Android-specific power optimizations
-    fn configure_android_optimizations(&self, config: &PlatformConfig) -> Result<(), BitCrapsError> {
+    fn configure_android_optimizations(
+        &self,
+        config: &PlatformConfig,
+    ) -> Result<(), BitCrapsError> {
         log::info!("Configuring Android power optimizations");
-        
+
         // Android-specific optimizations:
         // 1. Respect Doze mode and App Standby
         // 2. Use foreground service for background scanning
@@ -195,7 +212,7 @@ impl PowerManager {
     /// Configure iOS-specific power optimizations
     fn configure_ios_optimizations(&self, config: &PlatformConfig) -> Result<(), BitCrapsError> {
         log::info!("Configuring iOS power optimizations");
-        
+
         // iOS-specific optimizations:
         // 1. Handle background app refresh restrictions
         // 2. Use service UUIDs for background scanning
@@ -228,7 +245,7 @@ impl PowerManager {
 
         // Ensure window doesn't exceed interval
         let window = std::cmp::min(base_window, base_interval);
-        
+
         (window, base_interval)
     }
 
@@ -256,7 +273,7 @@ impl PowerManager {
         if state.background_restricted {
             duty_cycle *= 0.3;
         }
-        
+
         if state.doze_mode {
             duty_cycle *= 0.1;
         }
@@ -310,8 +327,8 @@ pub struct BatteryInfo {
 /// Thermal information for mobile devices
 #[derive(Debug, Clone)]
 pub struct ThermalInfo {
-    pub cpu_temperature: f32, // Celsius
-    pub battery_temperature: f32, // Celsius
+    pub cpu_temperature: f32,             // Celsius
+    pub battery_temperature: f32,         // Celsius
     pub ambient_temperature: Option<f32>, // Celsius
     pub thermal_state: ThermalState,
 }
@@ -349,7 +366,7 @@ impl BatteryOptimizationDetector {
     /// Report a scan event and detect if battery optimization is interfering
     pub fn report_scan_event(&self) -> Option<String> {
         let now = current_timestamp();
-        
+
         let (last_time, expected_interval) = {
             let last_time = if let Ok(mut last) = self.last_scan_time.lock() {
                 let prev = *last;
@@ -375,7 +392,7 @@ impl BatteryOptimizationDetector {
         if actual_interval > expected_interval_ms * 3 {
             if let Ok(mut violations) = self.violation_count.lock() {
                 *violations += 1;
-                
+
                 if *violations >= 5 {
                     return Some(format!(
                         "Battery optimization detected: expected {}ms interval, got {}ms. Consider adding app to battery whitelist.",

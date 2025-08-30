@@ -1,17 +1,17 @@
 pub mod cpu_profiler;
 pub mod memory_profiler;
-pub mod network_profiler;
 pub mod mobile_profiler;
+pub mod network_profiler;
 
-pub use cpu_profiler::{CpuProfiler, CpuProfile, CpuMetrics};
-pub use memory_profiler::{MemoryProfiler, MemoryProfile, MemoryMetrics, AllocationTracker};
-pub use network_profiler::{NetworkProfiler, NetworkProfile, NetworkMetrics, LatencyTracker};
-pub use mobile_profiler::{MobileProfiler, MobileProfile, BatteryMetrics, ThermalMetrics};
+pub use cpu_profiler::{CpuMetrics, CpuProfile, CpuProfiler};
+pub use memory_profiler::{AllocationTracker, MemoryMetrics, MemoryProfile, MemoryProfiler};
+pub use mobile_profiler::{BatteryMetrics, MobileProfile, MobileProfiler, ThermalMetrics};
+pub use network_profiler::{LatencyTracker, NetworkMetrics, NetworkProfile, NetworkProfiler};
 
+use crate::error::BitCrapsError;
+use parking_lot::RwLock;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use parking_lot::RwLock;
-use crate::error::BitCrapsError;
 
 /// Comprehensive performance profiling system
 pub struct PerformanceProfiler {
@@ -34,41 +34,46 @@ impl PerformanceProfiler {
             profiling_overhead: Arc::new(RwLock::new(Duration::from_nanos(0))),
         })
     }
-    
+
     /// Start comprehensive profiling session
     pub async fn start_profiling(&mut self) -> Result<(), BitCrapsError> {
         let start_time = Instant::now();
-        
+
         self.cpu_profiler.start().await?;
         self.memory_profiler.start().await?;
         self.network_profiler.start().await?;
         self.mobile_profiler.start().await?;
-        
+
         // Track profiling overhead
         let overhead = start_time.elapsed();
         *self.profiling_overhead.write() += overhead;
-        
+
         tracing::info!("Started comprehensive performance profiling");
         Ok(())
     }
-    
+
     /// Stop profiling and generate comprehensive report
     pub async fn stop_profiling(&mut self) -> Result<ComprehensiveReport, BitCrapsError> {
         let start_time = Instant::now();
-        
+
         let cpu_profile = self.cpu_profiler.stop().await?;
         let memory_profile = self.memory_profiler.stop().await?;
         let network_profile = self.network_profiler.stop().await?;
         let mobile_profile = self.mobile_profiler.stop().await?;
-        
+
         // Track profiling overhead
         let overhead = start_time.elapsed();
         *self.profiling_overhead.write() += overhead;
-        
+
         let total_overhead = *self.profiling_overhead.read();
-        
-        let recommendations = self.generate_recommendations(&cpu_profile, &memory_profile, &network_profile, &mobile_profile);
-        
+
+        let recommendations = self.generate_recommendations(
+            &cpu_profile,
+            &memory_profile,
+            &network_profile,
+            &mobile_profile,
+        );
+
         Ok(ComprehensiveReport {
             session_duration: self.session_start.elapsed(),
             profiling_overhead: total_overhead,
@@ -79,18 +84,18 @@ impl PerformanceProfiler {
             recommendations,
         })
     }
-    
+
     /// Take a snapshot of current performance metrics
     pub async fn snapshot(&self) -> Result<PerformanceSnapshot, BitCrapsError> {
         let start_time = Instant::now();
-        
+
         let cpu_metrics = self.cpu_profiler.current_metrics().await?;
         let memory_metrics = self.memory_profiler.current_metrics().await?;
         let network_metrics = self.network_profiler.current_metrics().await?;
         let mobile_metrics = self.mobile_profiler.current_metrics().await?;
-        
+
         let overhead = start_time.elapsed();
-        
+
         Ok(PerformanceSnapshot {
             timestamp: Instant::now(),
             profiling_overhead: overhead,
@@ -100,7 +105,7 @@ impl PerformanceProfiler {
             mobile_metrics,
         })
     }
-    
+
     /// Generate optimization recommendations based on profiling data
     fn generate_recommendations(
         &self,
@@ -110,7 +115,7 @@ impl PerformanceProfiler {
         mobile_profile: &MobileProfile,
     ) -> Vec<OptimizationRecommendation> {
         let mut recommendations = Vec::new();
-        
+
         // CPU recommendations
         if cpu_profile.average_usage > 80.0 {
             recommendations.push(OptimizationRecommendation {
@@ -129,7 +134,7 @@ impl PerformanceProfiler {
                 estimated_impact: "15-30% CPU usage reduction".to_string(),
             });
         }
-        
+
         if cpu_profile.thermal_throttling_detected {
             recommendations.push(OptimizationRecommendation {
                 category: RecommendationCategory::Cpu,
@@ -144,7 +149,7 @@ impl PerformanceProfiler {
                 estimated_impact: "Prevent performance degradation".to_string(),
             });
         }
-        
+
         // Memory recommendations
         if memory_profile.peak_usage_mb > 512 {
             recommendations.push(OptimizationRecommendation {
@@ -163,7 +168,7 @@ impl PerformanceProfiler {
                 estimated_impact: "20-40% memory usage reduction".to_string(),
             });
         }
-        
+
         if memory_profile.allocation_rate > 10_000_000.0 {
             recommendations.push(OptimizationRecommendation {
                 category: RecommendationCategory::Memory,
@@ -181,7 +186,7 @@ impl PerformanceProfiler {
                 estimated_impact: "50-70% allocation reduction".to_string(),
             });
         }
-        
+
         // Network recommendations
         if network_profile.average_latency > Duration::from_millis(200) {
             recommendations.push(OptimizationRecommendation {
@@ -200,7 +205,7 @@ impl PerformanceProfiler {
                 estimated_impact: "30-50% latency reduction".to_string(),
             });
         }
-        
+
         if network_profile.packet_loss_rate > 0.05 {
             recommendations.push(OptimizationRecommendation {
                 category: RecommendationCategory::Network,
@@ -218,7 +223,7 @@ impl PerformanceProfiler {
                 estimated_impact: "Improved connection reliability".to_string(),
             });
         }
-        
+
         // Mobile-specific recommendations
         if mobile_profile.battery_drain_rate > 5.0 {
             recommendations.push(OptimizationRecommendation {
@@ -237,7 +242,7 @@ impl PerformanceProfiler {
                 estimated_impact: "40-60% battery life improvement".to_string(),
             });
         }
-        
+
         if mobile_profile.thermal_events > 0 {
             recommendations.push(OptimizationRecommendation {
                 category: RecommendationCategory::Mobile,
@@ -255,10 +260,10 @@ impl PerformanceProfiler {
                 estimated_impact: "Prevent thermal shutdowns".to_string(),
             });
         }
-        
+
         recommendations
     }
-    
+
     /// Get current profiling overhead
     pub fn get_profiling_overhead(&self) -> Duration {
         *self.profiling_overhead.read()
@@ -281,7 +286,7 @@ impl ComprehensiveReport {
     /// Generate a summary score (0-100) for overall performance
     pub fn performance_score(&self) -> u8 {
         let mut score: f64 = 100.0;
-        
+
         // CPU score (25% weight)
         let cpu_score = if self.cpu_profile.average_usage > 90.0 {
             0.0
@@ -293,7 +298,7 @@ impl ComprehensiveReport {
             100.0
         };
         score = score - (25.0 * (100.0 - cpu_score) / 100.0);
-        
+
         // Memory score (25% weight)
         let memory_score = if self.memory_profile.peak_usage_mb > 1024 {
             0.0
@@ -305,7 +310,7 @@ impl ComprehensiveReport {
             100.0
         };
         score = score - (25.0 * (100.0 - memory_score) / 100.0);
-        
+
         // Network score (25% weight)
         let network_score = if self.network_profile.average_latency > Duration::from_millis(500) {
             0.0
@@ -317,7 +322,7 @@ impl ComprehensiveReport {
             100.0
         };
         score = score - (25.0 * (100.0 - network_score) / 100.0);
-        
+
         // Mobile score (25% weight)
         let mobile_score = if self.mobile_profile.battery_drain_rate > 10.0 {
             0.0
@@ -329,10 +334,10 @@ impl ComprehensiveReport {
             100.0
         };
         score = score - (25.0 * (100.0 - mobile_score) / 100.0);
-        
+
         score.max(0.0).min(100.0) as u8
     }
-    
+
     /// Get critical recommendations that need immediate attention
     pub fn critical_recommendations(&self) -> Vec<&OptimizationRecommendation> {
         self.recommendations

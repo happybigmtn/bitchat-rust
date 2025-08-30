@@ -1,35 +1,35 @@
 //! Payout Calculation Engine - Consensus-based bet validation and distributed payouts
-//! 
+//!
 //! This module implements:
 //! - Consensus-based bet validation
 //! - Distributed payout calculations
 //! - Fair dispute resolution
 //! - Anti-cheat mechanisms for payouts
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use serde::{Serialize, Deserialize};
 
-use crate::protocol::{PeerId, GameId};
-use crate::protocol::craps::{BetType, DiceRoll, CrapTokens, GamePhase};
+use super::BetRecord;
 use crate::crypto::BitchatIdentity;
 use crate::error::{Error, Result};
-use super::BetRecord;
+use crate::protocol::craps::{BetType, CrapTokens, DiceRoll, GamePhase};
+use crate::protocol::{GameId, PeerId};
 
 /// Consensus-based payout calculation engine
 #[derive(Debug, Clone)]
 pub struct PayoutEngine {
     /// Identity for signing payout calculations
     identity: Arc<BitchatIdentity>,
-    
+
     /// Cached payout calculations for efficiency
     payout_cache: Arc<RwLock<HashMap<PayoutKey, PayoutResult>>>,
-    
+
     /// Bet validation rules
     validation_rules: Arc<RwLock<BetValidationRules>>,
-    
+
     /// Statistics tracking
     stats: Arc<RwLock<PayoutEngineStats>>,
 }
@@ -122,9 +122,9 @@ pub struct InvalidBetReason {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum InvalidBetSeverity {
-    Warning,    // Bet can proceed but may be suspicious
-    Error,      // Bet should be rejected
-    Critical,   // Potential cheating attempt
+    Warning,  // Bet can proceed but may be suspicious
+    Error,    // Bet should be rejected
+    Critical, // Potential cheating attempt
 }
 
 /// Bet validation rules configuration
@@ -141,37 +141,43 @@ pub struct BetValidationRules {
 impl Default for BetValidationRules {
     fn default() -> Self {
         let mut allowed_bets = HashMap::new();
-        
+
         // Come-out phase: Most bets allowed
-        allowed_bets.insert(GamePhase::ComeOut, vec![
-            BetType::Pass,
-            BetType::DontPass,
-            BetType::Field,
-            BetType::Next7,
-            BetType::Next2,
-            BetType::Next3,
-            BetType::Next12,
-        ]);
-        
+        allowed_bets.insert(
+            GamePhase::ComeOut,
+            vec![
+                BetType::Pass,
+                BetType::DontPass,
+                BetType::Field,
+                BetType::Next7,
+                BetType::Next2,
+                BetType::Next3,
+                BetType::Next12,
+            ],
+        );
+
         // Point phase: Pass/Don't Pass resolved, others still available
-        allowed_bets.insert(GamePhase::Point, vec![
-            BetType::Come,
-            BetType::DontCome,
-            BetType::Field,
-            BetType::Yes6,
-            BetType::Yes8,
-            BetType::Next7,
-            BetType::Next2,
-            BetType::Next3,
-            BetType::Next12,
-        ]);
-        
+        allowed_bets.insert(
+            GamePhase::Point,
+            vec![
+                BetType::Come,
+                BetType::DontCome,
+                BetType::Field,
+                BetType::Yes6,
+                BetType::Yes8,
+                BetType::Next7,
+                BetType::Next2,
+                BetType::Next3,
+                BetType::Next12,
+            ],
+        );
+
         Self {
             min_bet_amount: CrapTokens(1),
             max_bet_amount: CrapTokens(10000),
             max_total_exposure: CrapTokens(50000),
             allowed_bet_types_by_phase: allowed_bets,
-            house_edge_percentage: 1.4, // 1.4% house edge on Pass Line
+            house_edge_percentage: 1.4,  // 1.4% house edge on Pass Line
             max_payout_multiplier: 30.0, // Maximum 30:1 payout
         }
     }
@@ -199,7 +205,7 @@ impl PayoutEngine {
             stats: Arc::new(RwLock::new(PayoutEngineStats::default())),
         }
     }
-    
+
     /// Validate a batch of bets through consensus
     pub async fn validate_bets_consensus(
         &self,
@@ -208,8 +214,11 @@ impl PayoutEngine {
         game_phase: GamePhase,
         current_point: Option<u8>,
     ) -> Result<BetValidationResponse> {
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-        
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
         // Create validation request
         let request = BetValidationRequest {
             game_id,
@@ -219,17 +228,19 @@ impl PayoutEngine {
             requester: self.identity.peer_id,
             timestamp,
         };
-        
+
         // Hash the request for consensus tracking
         let request_hash = self.hash_validation_request(&request)?;
-        
+
         // Validate bets according to our rules
-        let validation_result = self.validate_bets_locally(&bets, &game_phase, current_point).await?;
-        
+        let validation_result = self
+            .validate_bets_locally(&bets, &game_phase, current_point)
+            .await?;
+
         // Create response
         // Get invalid bets count before moving validation_result
         let invalid_bets_count = validation_result.invalid_bets.len() as u64;
-        
+
         let response = BetValidationResponse {
             request_hash,
             validator: self.identity.peer_id,
@@ -238,7 +249,7 @@ impl PayoutEngine {
             signature: self.sign_validation_response(&request_hash, validation_result.is_valid)?,
             timestamp,
         };
-        
+
         // Update statistics
         {
             let mut stats = self.stats.write().await;
@@ -247,13 +258,21 @@ impl PayoutEngine {
                 stats.total_invalid_bets += invalid_bets_count;
             }
         }
-        
-        log::info!("Validated {} bets for game {:?}: {}", 
-                   bets.len(), game_id, if response.is_valid { "VALID" } else { "INVALID" });
-        
+
+        log::info!(
+            "Validated {} bets for game {:?}: {}",
+            bets.len(),
+            game_id,
+            if response.is_valid {
+                "VALID"
+            } else {
+                "INVALID"
+            }
+        );
+
         Ok(response)
     }
-    
+
     /// Calculate payouts for a dice roll with consensus
     pub async fn calculate_payouts_consensus(
         &self,
@@ -263,8 +282,11 @@ impl PayoutEngine {
         game_phase: GamePhase,
         current_point: Option<u8>,
     ) -> Result<PayoutResult> {
-        let round_id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-        
+        let round_id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
         // Create cache key
         let bets_hash = self.hash_bets(&active_bets)?;
         let cache_key = PayoutKey {
@@ -272,42 +294,39 @@ impl PayoutEngine {
             dice_roll,
             bets_hash,
         };
-        
+
         // Check cache first
         if let Some(cached_result) = self.payout_cache.read().await.get(&cache_key) {
             log::debug!("Using cached payout result for game {:?}", game_id);
             return Ok(cached_result.clone());
         }
-        
+
         // Calculate payouts
         let mut individual_payouts = HashMap::new();
         let mut total_wagered = CrapTokens(0);
         let mut total_house_take = CrapTokens(0);
-        
+
         // Group bets by player
         let mut player_bets: HashMap<PeerId, Vec<&BetRecord>> = HashMap::new();
         for bet in &active_bets {
             player_bets.entry(bet.player).or_default().push(bet);
             total_wagered = CrapTokens(total_wagered.0 + bet.amount.0);
         }
-        
+
         // Calculate payout for each player
         for (player_id, bets) in player_bets {
-            let player_payout = self.calculate_player_payout(
-                &bets,
-                dice_roll,
-                game_phase,
-                current_point,
-            ).await?;
-            
+            let player_payout = self
+                .calculate_player_payout(&bets, dice_roll, game_phase, current_point)
+                .await?;
+
             individual_payouts.insert(player_id, player_payout);
         }
-        
+
         // Calculate house edge
         let rules = self.validation_rules.read().await;
         let house_edge_rate = rules.house_edge_percentage / 100.0;
         total_house_take = CrapTokens((total_wagered.0 as f64 * house_edge_rate) as u64);
-        
+
         // Create payout result
         let payout_result = PayoutResult {
             game_id,
@@ -316,26 +335,36 @@ impl PayoutEngine {
             total_wagered,
             house_edge_taken: total_house_take,
             individual_payouts,
-            calculation_timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+            calculation_timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
             consensus_signatures: Vec::new(), // Would be filled by consensus process
         };
-        
+
         // Cache the result
-        self.payout_cache.write().await.insert(cache_key, payout_result.clone());
-        
+        self.payout_cache
+            .write()
+            .await
+            .insert(cache_key, payout_result.clone());
+
         // Update statistics
         {
             let mut stats = self.stats.write().await;
             stats.total_payouts_calculated += 1;
             stats.total_tokens_distributed += total_wagered.0;
         }
-        
-        log::info!("Calculated payouts for game {:?}: {} total wagered, {} players", 
-                   game_id, total_wagered.to_crap(), payout_result.individual_payouts.len());
-        
+
+        log::info!(
+            "Calculated payouts for game {:?}: {} total wagered, {} players",
+            game_id,
+            total_wagered.to_crap(),
+            payout_result.individual_payouts.len()
+        );
+
         Ok(payout_result)
     }
-    
+
     /// Validate bets locally according to rules
     async fn validate_bets_locally(
         &self,
@@ -346,67 +375,79 @@ impl PayoutEngine {
         let rules = self.validation_rules.read().await;
         let mut invalid_bets = Vec::new();
         let mut is_valid = true;
-        
+
         // Check each bet
         for (index, bet) in bets.iter().enumerate() {
             // Check bet amount limits
             if bet.amount.0 < rules.min_bet_amount.0 {
                 invalid_bets.push(InvalidBetReason {
                     bet_index: index,
-                    reason: format!("Bet amount {} below minimum {}", 
-                                    bet.amount.to_crap(), rules.min_bet_amount.to_crap()),
+                    reason: format!(
+                        "Bet amount {} below minimum {}",
+                        bet.amount.to_crap(),
+                        rules.min_bet_amount.to_crap()
+                    ),
                     severity: InvalidBetSeverity::Error,
                 });
                 is_valid = false;
             }
-            
+
             if bet.amount.0 > rules.max_bet_amount.0 {
                 invalid_bets.push(InvalidBetReason {
                     bet_index: index,
-                    reason: format!("Bet amount {} exceeds maximum {}", 
-                                    bet.amount.to_crap(), rules.max_bet_amount.to_crap()),
+                    reason: format!(
+                        "Bet amount {} exceeds maximum {}",
+                        bet.amount.to_crap(),
+                        rules.max_bet_amount.to_crap()
+                    ),
                     severity: InvalidBetSeverity::Error,
                 });
                 is_valid = false;
             }
-            
+
             // Check if bet type is allowed in current phase
             if let Some(allowed_bets) = rules.allowed_bet_types_by_phase.get(game_phase) {
                 if !allowed_bets.contains(&bet.bet_type) {
                     invalid_bets.push(InvalidBetReason {
                         bet_index: index,
-                        reason: format!("Bet type {:?} not allowed in phase {:?}", 
-                                        bet.bet_type, game_phase),
+                        reason: format!(
+                            "Bet type {:?} not allowed in phase {:?}",
+                            bet.bet_type, game_phase
+                        ),
                         severity: InvalidBetSeverity::Error,
                     });
                     is_valid = false;
                 }
             }
         }
-        
+
         // Check total exposure per player
         let mut player_totals: HashMap<PeerId, u64> = HashMap::new();
         for bet in bets {
             *player_totals.entry(bet.player).or_default() += bet.amount.0;
         }
-        
+
         for (player, total) in player_totals {
             if total > rules.max_total_exposure.0 {
                 invalid_bets.push(InvalidBetReason {
                     bet_index: 0, // General validation error
-                    reason: format!("Player {:?} total exposure {} exceeds limit {}", 
-                                    player, CrapTokens(total).to_crap(), rules.max_total_exposure.to_crap()),
+                    reason: format!(
+                        "Player {:?} total exposure {} exceeds limit {}",
+                        player,
+                        CrapTokens(total).to_crap(),
+                        rules.max_total_exposure.to_crap()
+                    ),
                     severity: InvalidBetSeverity::Warning,
                 });
             }
         }
-        
+
         Ok(LocalValidationResult {
             is_valid,
             invalid_bets,
         })
     }
-    
+
     /// Calculate payout for individual player
     async fn calculate_player_payout(
         &self,
@@ -419,21 +460,17 @@ impl PayoutEngine {
         let mut total_won = CrapTokens(0);
         let mut winning_bets = Vec::new();
         let mut losing_bets = Vec::new();
-        
+
         for bet in bets {
             total_bet = CrapTokens(total_bet.0 + bet.amount.0);
-            
-            let (is_winner, payout_multiplier) = self.evaluate_bet(
-                &bet.bet_type,
-                dice_roll,
-                game_phase,
-                current_point,
-            );
-            
+
+            let (is_winner, payout_multiplier) =
+                self.evaluate_bet(&bet.bet_type, dice_roll, game_phase, current_point);
+
             if is_winner {
                 let amount_won = CrapTokens((bet.amount.0 as f64 * payout_multiplier) as u64);
                 total_won = CrapTokens(total_won.0 + amount_won.0);
-                
+
                 winning_bets.push(WinningBet {
                     bet_type: bet.bet_type.clone(),
                     amount_bet: bet.amount,
@@ -447,9 +484,9 @@ impl PayoutEngine {
                 });
             }
         }
-        
+
         let net_change = total_won.0 as i64 - total_bet.0 as i64;
-        
+
         Ok(PlayerPayout {
             player_id: bets[0].player, // All bets are from same player
             total_bet,
@@ -459,7 +496,7 @@ impl PayoutEngine {
             losing_bets,
         })
     }
-    
+
     /// Evaluate if a bet wins and calculate payout multiplier
     fn evaluate_bet(
         &self,
@@ -469,21 +506,21 @@ impl PayoutEngine {
         current_point: Option<u8>,
     ) -> (bool, f64) {
         let total = dice_roll.die1 + dice_roll.die2;
-        
+
         match bet_type {
             BetType::Pass => {
                 match game_phase {
                     GamePhase::ComeOut => {
                         match total {
-                            7 | 11 => (true, 1.0),   // Win even money
+                            7 | 11 => (true, 1.0),      // Win even money
                             2 | 3 | 12 => (false, 0.0), // Lose
-                            _ => (false, 1.0), // Push to point phase, no resolution yet
+                            _ => (false, 1.0),          // Push to point phase, no resolution yet
                         }
-                    },
+                    }
                     GamePhase::Point => {
                         if let Some(point) = current_point {
                             if total == point {
-                                (true, 1.0)  // Made the point
+                                (true, 1.0) // Made the point
                             } else if total == 7 {
                                 (false, 0.0) // Seven out
                             } else {
@@ -492,25 +529,25 @@ impl PayoutEngine {
                         } else {
                             (false, 0.0)
                         }
-                    },
+                    }
                     _ => (false, 0.0),
                 }
-            },
-            
+            }
+
             BetType::DontPass => {
                 match game_phase {
                     GamePhase::ComeOut => {
                         match total {
-                            2 | 3 => (true, 1.0),    // Win even money
-                            7 | 11 => (false, 0.0),  // Lose
-                            12 => (false, 1.0),      // Push (tie)
-                            _ => (false, 1.0),       // Push to point phase
+                            2 | 3 => (true, 1.0),   // Win even money
+                            7 | 11 => (false, 0.0), // Lose
+                            12 => (false, 1.0),     // Push (tie)
+                            _ => (false, 1.0),      // Push to point phase
                         }
-                    },
+                    }
                     GamePhase::Point => {
                         if let Some(point) = current_point {
                             if total == 7 {
-                                (true, 1.0)  // Seven out wins don't pass
+                                (true, 1.0) // Seven out wins don't pass
                             } else if total == point {
                                 (false, 0.0) // Point made, don't pass loses
                             } else {
@@ -519,28 +556,28 @@ impl PayoutEngine {
                         } else {
                             (false, 0.0)
                         }
-                    },
+                    }
                     _ => (false, 0.0),
                 }
-            },
-            
+            }
+
             BetType::Field => {
                 match total {
-                    3 | 4 | 9 | 10 | 11 => (true, 1.0),  // Even money
-                    2 => (true, 2.0),                     // Pays 2:1
-                    12 => (true, 3.0),                    // Pays 3:1
-                    _ => (false, 0.0),                    // Lose
+                    3 | 4 | 9 | 10 | 11 => (true, 1.0), // Even money
+                    2 => (true, 2.0),                   // Pays 2:1
+                    12 => (true, 3.0),                  // Pays 3:1
+                    _ => (false, 0.0),                  // Lose
                 }
-            },
-            
+            }
+
             BetType::Next7 => {
                 if total == 7 {
                     (true, 4.0) // Pays 4:1
                 } else {
                     (false, 0.0)
                 }
-            },
-            
+            }
+
             BetType::Next2 | BetType::Next3 | BetType::Next12 => {
                 let target = match bet_type {
                     BetType::Next2 => 2,
@@ -548,61 +585,66 @@ impl PayoutEngine {
                     BetType::Next12 => 12,
                     _ => unreachable!(),
                 };
-                
+
                 if total == target {
                     (true, 30.0) // Pays 30:1 for single-roll bets
                 } else {
                     (false, 0.0)
                 }
-            },
-            
+            }
+
             BetType::Yes6 | BetType::Yes8 => {
-                let place_number = if matches!(bet_type, BetType::Yes6) { 6 } else { 8 };
+                let place_number = if matches!(bet_type, BetType::Yes6) {
+                    6
+                } else {
+                    8
+                };
                 if total == place_number {
-                    (true, 7.0/6.0) // Pays 7:6
+                    (true, 7.0 / 6.0) // Pays 7:6
                 } else if total == 7 {
                     (false, 0.0) // Seven out
                 } else {
                     (false, 1.0) // No resolution
                 }
-            },
-            
+            }
+
             BetType::Next11 => {
                 if total == 11 {
                     (true, 15.0) // Pays 15:1
                 } else {
                     (false, 0.0)
                 }
-            },
-            
+            }
+
             _ => (false, 0.0), // Other bet types not implemented
         }
     }
-    
+
     /// Hash validation request for consensus tracking
     fn hash_validation_request(&self, request: &BetValidationRequest) -> Result<[u8; 32]> {
-        use sha2::{Sha256, Digest};
-        
-        let serialized = bincode::serialize(request)
-            .map_err(|e| Error::Serialization(format!("Failed to serialize validation request: {}", e)))?;
-        
+        use sha2::{Digest, Sha256};
+
+        let serialized = bincode::serialize(request).map_err(|e| {
+            Error::Serialization(format!("Failed to serialize validation request: {}", e))
+        })?;
+
         let mut hasher = Sha256::new();
         hasher.update(&serialized);
         Ok(hasher.finalize().into())
     }
-    
+
     /// Hash bets for cache key
     fn hash_bets(&self, bets: &[BetRecord]) -> Result<[u8; 32]> {
-        use sha2::{Sha256, Digest};
-        
+        use sha2::{Digest, Sha256};
+
         let serialized = bincode::serialize(bets)
             .map_err(|e| Error::Serialization(format!("Failed to serialize bets: {}", e)))?;
-        
+
         let mut hasher = Sha256::new();
         hasher.update(&serialized);
         Ok(hasher.finalize().into())
     }
-    
+
     /// Sign validation response
     fn sign_validation_response(&self, request_hash: &[u8; 32], is_valid: bool) -> Result<Vec<u8>> {
         // In production, this would use cryptographic signing
@@ -613,18 +655,18 @@ impl PayoutEngine {
         signature_data.extend_from_slice(&self.identity.peer_id);
         Ok(signature_data)
     }
-    
+
     /// Get payout engine statistics
     pub async fn get_stats(&self) -> PayoutEngineStats {
         self.stats.read().await.clone()
     }
-    
+
     /// Update validation rules
     pub async fn update_validation_rules(&self, new_rules: BetValidationRules) {
         *self.validation_rules.write().await = new_rules;
         log::info!("Updated bet validation rules");
     }
-    
+
     /// Clear payout cache (useful for testing or memory management)
     pub async fn clear_cache(&self) {
         self.payout_cache.write().await.clear();
@@ -642,44 +684,43 @@ struct LocalValidationResult {
 mod tests {
     use super::*;
     use crate::crypto::BitchatKeypair;
-    use crate::protocol::craps::{GamePhase, BetType, CrapTokens, DiceRoll};
-    
+    use crate::protocol::craps::{BetType, CrapTokens, DiceRoll, GamePhase};
+
     fn create_test_engine() -> PayoutEngine {
         let keypair = BitchatKeypair::generate();
-        let identity = Arc::new(crate::crypto::BitchatIdentity::from_keypair_with_pow(keypair, 8));
+        let identity = Arc::new(crate::crypto::BitchatIdentity::from_keypair_with_pow(
+            keypair, 8,
+        ));
         PayoutEngine::new(identity)
     }
-    
+
     #[tokio::test]
     async fn test_pass_line_bet_validation() {
         let engine = create_test_engine();
         let game_id = [1u8; 16];
-        
+
         let bets = vec![BetRecord {
             player: [2u8; 32],
             bet_type: BetType::Pass,
             amount: CrapTokens(100),
             timestamp: 1234567890,
         }];
-        
-        let result = engine.validate_bets_consensus(
-            game_id,
-            bets,
-            GamePhase::ComeOut,
-            None,
-        ).await;
-        
+
+        let result = engine
+            .validate_bets_consensus(game_id, bets, GamePhase::ComeOut, None)
+            .await;
+
         assert!(result.is_ok());
         let response = result.unwrap();
         assert!(response.is_valid);
         assert!(response.invalid_bets.is_empty());
     }
-    
+
     #[tokio::test]
     async fn test_payout_calculation() {
         let engine = create_test_engine();
         let game_id = [1u8; 16];
-        
+
         let bets = vec![
             BetRecord {
                 player: [2u8; 32],
@@ -694,37 +735,33 @@ mod tests {
                 timestamp: 1234567890,
             },
         ];
-        
+
         let dice_roll = DiceRoll {
             die1: 3,
             die2: 4, // Total 7
             timestamp: 1234567890,
         };
-        
-        let result = engine.calculate_payouts_consensus(
-            game_id,
-            dice_roll,
-            bets,
-            GamePhase::ComeOut,
-            None,
-        ).await;
-        
+
+        let result = engine
+            .calculate_payouts_consensus(game_id, dice_roll, bets, GamePhase::ComeOut, None)
+            .await;
+
         assert!(result.is_ok());
         let payout = result.unwrap();
-        
+
         // Pass line should win on 7 in come-out phase
         assert!(payout.individual_payouts.contains_key(&[2u8; 32]));
-        
+
         // Field should lose on 7
         let field_player_payout = payout.individual_payouts.get(&[3u8; 32]).unwrap();
         assert_eq!(field_player_payout.net_change, -50); // Lost the bet
     }
-    
+
     #[tokio::test]
     async fn test_bet_amount_validation() {
         let engine = create_test_engine();
         let game_id = [1u8; 16];
-        
+
         // Test bet below minimum
         let invalid_bets = vec![BetRecord {
             player: [2u8; 32],
@@ -732,14 +769,11 @@ mod tests {
             amount: CrapTokens(0), // Below minimum of 1
             timestamp: 1234567890,
         }];
-        
-        let result = engine.validate_bets_consensus(
-            game_id,
-            invalid_bets,
-            GamePhase::ComeOut,
-            None,
-        ).await;
-        
+
+        let result = engine
+            .validate_bets_consensus(game_id, invalid_bets, GamePhase::ComeOut, None)
+            .await;
+
         assert!(result.is_ok());
         let response = result.unwrap();
         assert!(!response.is_valid);

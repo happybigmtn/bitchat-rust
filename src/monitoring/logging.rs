@@ -7,22 +7,20 @@
 //! - Log aggregation support
 //! - Performance-optimized logging
 
+use chrono::{DateTime, Utc};
+use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use serde::{Serialize, Deserialize};
-use tracing::{Event, Subscriber, field::Field, field::Visit};
+use tracing::{field::Field, field::Visit, Event, Subscriber};
 use tracing_subscriber::{
+    fmt,
     layer::{Context, SubscriberExt},
     registry::LookupSpan,
     util::SubscriberInitExt,
-    Layer,
-    fmt,
-    EnvFilter,
-    Registry,
+    EnvFilter, Layer, Registry,
 };
 use uuid::Uuid;
-use parking_lot::RwLock;
-use chrono::{DateTime, Utc};
 
 /// Global logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,7 +52,7 @@ impl Default for LoggingConfig {
         module_levels.insert("bitcraps::monitoring".to_string(), "debug".to_string());
         module_levels.insert("btleplug".to_string(), "warn".to_string());
         module_levels.insert("warp".to_string(), "warn".to_string());
-        
+
         Self {
             level: "info".to_string(),
             module_levels,
@@ -99,27 +97,27 @@ impl CorrelationContext {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     pub fn with_request_id(mut self, request_id: String) -> Self {
         self.request_id = request_id;
         self
     }
-    
+
     pub fn with_user_id(mut self, user_id: String) -> Self {
         self.user_id = Some(user_id);
         self
     }
-    
+
     pub fn with_session_id(mut self, session_id: String) -> Self {
         self.session_id = Some(session_id);
         self
     }
-    
+
     pub fn with_game_id(mut self, game_id: String) -> Self {
         self.game_id = Some(game_id);
         self
     }
-    
+
     pub fn add_context(mut self, key: String, value: String) -> Self {
         self.trace_context.insert(key, value);
         self
@@ -177,10 +175,10 @@ where
         let metadata = event.metadata();
         let mut visitor = LogFieldVisitor::new();
         event.record(&mut visitor);
-        
+
         let correlation = get_correlation_context();
         let current_span = ctx.current_span();
-        
+
         let entry = StructuredLogEntry {
             timestamp: Utc::now(),
             level: metadata.level().to_string(),
@@ -194,7 +192,7 @@ where
             span_id: current_span.id().map(|id| format!("{:?}", id)),
             trace_id: current_span.id().map(|id| format!("{:x}", id.into_u64())),
         };
-        
+
         // Output structured JSON log
         if let Ok(json) = serde_json::to_string(&entry) {
             eprintln!("{}", json);
@@ -229,7 +227,7 @@ impl Visit for LogFieldVisitor {
             );
         }
     }
-    
+
     fn record_str(&mut self, field: &Field, value: &str) {
         let field_name = field.name();
         if field_name == "message" {
@@ -241,35 +239,31 @@ impl Visit for LogFieldVisitor {
             );
         }
     }
-    
+
     fn record_i64(&mut self, field: &Field, value: i64) {
         self.fields.insert(
             field.name().to_string(),
             serde_json::Value::Number(serde_json::Number::from(value)),
         );
     }
-    
+
     fn record_u64(&mut self, field: &Field, value: u64) {
         self.fields.insert(
             field.name().to_string(),
             serde_json::Value::Number(serde_json::Number::from(value)),
         );
     }
-    
+
     fn record_f64(&mut self, field: &Field, value: f64) {
         if let Some(num) = serde_json::Number::from_f64(value) {
-            self.fields.insert(
-                field.name().to_string(),
-                serde_json::Value::Number(num),
-            );
+            self.fields
+                .insert(field.name().to_string(), serde_json::Value::Number(num));
         }
     }
-    
+
     fn record_bool(&mut self, field: &Field, value: bool) {
-        self.fields.insert(
-            field.name().to_string(),
-            serde_json::Value::Bool(value),
-        );
+        self.fields
+            .insert(field.name().to_string(), serde_json::Value::Bool(value));
     }
 }
 
@@ -283,7 +277,7 @@ pub struct LoggingSystem {
 pub trait LogAggregator: Send + Sync {
     /// Send structured log entry to external system
     fn send_log(&self, entry: &StructuredLogEntry);
-    
+
     /// Flush any buffered logs
     fn flush(&self);
 }
@@ -312,25 +306,25 @@ impl LogAggregator for ElasticsearchAggregator {
     fn send_log(&self, entry: &StructuredLogEntry) {
         let mut buffer = self.buffer.write();
         buffer.push(entry.clone());
-        
+
         if buffer.len() >= self.batch_size {
             // In production, send batch to Elasticsearch
             let batch: Vec<StructuredLogEntry> = buffer.drain(..).collect();
             drop(buffer);
-            
+
             // Async send (would be implemented with reqwest in production)
             tokio::spawn(async move {
                 log::debug!("Would send {} log entries to Elasticsearch", batch.len());
             });
         }
     }
-    
+
     fn flush(&self) {
         let mut buffer = self.buffer.write();
         if !buffer.is_empty() {
             let batch: Vec<StructuredLogEntry> = buffer.drain(..).collect();
             drop(buffer);
-            
+
             // Send remaining entries
             tokio::spawn(async move {
                 log::debug!("Flushing {} log entries to Elasticsearch", batch.len());
@@ -356,10 +350,14 @@ impl FluentdAggregator {
 impl LogAggregator for FluentdAggregator {
     fn send_log(&self, entry: &StructuredLogEntry) {
         // In production, send to Fluentd via TCP/UDP
-        log::debug!("Would send log to Fluentd at {}:{} with tag {}", 
-                   self.host, self.port, self.tag);
+        log::debug!(
+            "Would send log to Fluentd at {}:{} with tag {}",
+            self.host,
+            self.port,
+            self.tag
+        );
     }
-    
+
     fn flush(&self) {
         log::debug!("Flushing Fluentd aggregator");
     }
@@ -369,12 +367,12 @@ impl LoggingSystem {
     /// Initialize global logging system
     pub fn init(config: LoggingConfig) -> Result<Self, Box<dyn std::error::Error>> {
         let mut filter = EnvFilter::new(&config.level);
-        
+
         // Add module-specific levels
         for (module, level) in &config.module_levels {
             filter = filter.add_directive(format!("{}={}", module, level).parse()?);
         }
-        
+
         if config.json_format {
             // Initialize structured JSON logging
             Registry::default()
@@ -390,39 +388,39 @@ impl LoggingSystem {
                         .with_target(true)
                         .with_thread_ids(true)
                         .with_file(true)
-                        .with_line_number(true)
+                        .with_line_number(true),
                 )
                 .init();
         }
-        
+
         Ok(Self {
             config,
             log_aggregators: Arc::new(RwLock::new(Vec::new())),
         })
     }
-    
+
     /// Add log aggregator
     pub fn add_aggregator(&self, aggregator: Box<dyn LogAggregator + Send + Sync>) {
         self.log_aggregators.write().push(aggregator);
     }
-    
+
     /// Create correlation context for request
     pub fn create_request_context(&self) -> CorrelationContext {
         CorrelationContext::new()
     }
-    
+
     /// Get current configuration
     pub fn config(&self) -> &LoggingConfig {
         &self.config
     }
-    
+
     /// Update log level dynamically
     pub fn set_log_level(&mut self, level: String) {
         self.config.level = level;
         // Would reinitialize subscriber in production
         log::info!("Updated global log level to: {}", self.config.level);
     }
-    
+
     /// Flush all aggregators
     pub fn flush(&self) {
         let aggregators = self.log_aggregators.read();
@@ -475,9 +473,9 @@ pub fn init_production_logging() -> Result<LoggingSystem, Box<dyn std::error::Er
         async_logging: true,
         ..Default::default()
     };
-    
+
     let system = LoggingSystem::init(config)?;
-    
+
     // Add Elasticsearch aggregator for log centralization
     let es_aggregator = ElasticsearchAggregator::new(
         "http://elasticsearch:9200".to_string(),
@@ -485,32 +483,35 @@ pub fn init_production_logging() -> Result<LoggingSystem, Box<dyn std::error::Er
         100,
     );
     system.add_aggregator(Box::new(es_aggregator));
-    
+
     Ok(system)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_correlation_context() {
         let context = CorrelationContext::new()
             .with_user_id("test_user".to_string())
             .with_game_id("game_123".to_string())
             .add_context("custom_field".to_string(), "value".to_string());
-        
+
         set_correlation_context(context.clone());
-        
+
         let retrieved = get_correlation_context().unwrap();
         assert_eq!(retrieved.user_id, Some("test_user".to_string()));
         assert_eq!(retrieved.game_id, Some("game_123".to_string()));
-        assert_eq!(retrieved.trace_context.get("custom_field"), Some(&"value".to_string()));
-        
+        assert_eq!(
+            retrieved.trace_context.get("custom_field"),
+            Some(&"value".to_string())
+        );
+
         clear_correlation_context();
         assert!(get_correlation_context().is_none());
     }
-    
+
     #[test]
     fn test_logging_config() {
         let config = LoggingConfig::default();
@@ -519,12 +520,15 @@ mod tests {
         assert!(config.enable_correlation);
         assert!(!config.module_levels.is_empty());
     }
-    
-    #[test] 
+
+    #[test]
     fn test_structured_log_entry_serialization() {
         let mut fields = HashMap::new();
-        fields.insert("test_field".to_string(), serde_json::Value::String("test_value".to_string()));
-        
+        fields.insert(
+            "test_field".to_string(),
+            serde_json::Value::String("test_value".to_string()),
+        );
+
         let entry = StructuredLogEntry {
             timestamp: Utc::now(),
             level: "info".to_string(),
@@ -538,7 +542,7 @@ mod tests {
             span_id: None,
             trace_id: None,
         };
-        
+
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains("Test message"));
         assert!(json.contains("req_123"));

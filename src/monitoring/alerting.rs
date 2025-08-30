@@ -1,5 +1,5 @@
 //! Production Alerting System for BitCraps
-//! 
+//!
 //! This module provides comprehensive alerting capabilities for production monitoring:
 //! - Real-time threat detection and anomaly detection
 //! - Performance degradation alerts with predictive thresholds
@@ -10,13 +10,13 @@
 //! - Multi-channel notification routing (Slack, email, webhooks, SMS)
 //! - Incident correlation and root cause analysis
 
-use std::sync::{Arc, atomic::Ordering};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
+use std::sync::{atomic::Ordering, Arc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{broadcast, RwLock};
 use tokio::time::interval;
-use serde::{Serialize, Deserialize};
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 
 use crate::monitoring::metrics::METRICS;
 
@@ -42,12 +42,15 @@ impl AlertingSystem {
     /// Create new alerting system
     pub fn new(config: AlertingConfig) -> Self {
         let (alert_sender, _) = broadcast::channel(1000);
-        
+
         let rules_engine = Arc::new(AlertRulesEngine::new(config.rules.clone()));
-        let notification_dispatcher = Arc::new(NotificationDispatcher::new(config.notifications.clone()));
+        let notification_dispatcher =
+            Arc::new(NotificationDispatcher::new(config.notifications.clone()));
         let state_manager = Arc::new(AlertStateManager::new());
         let escalation_manager = Arc::new(EscalationManager::new(config.escalation.clone()));
-        let history = Arc::new(RwLock::new(AlertHistory::new(config.history_retention_days)));
+        let history = Arc::new(RwLock::new(AlertHistory::new(
+            config.history_retention_days,
+        )));
 
         Self {
             rules_engine,
@@ -94,7 +97,8 @@ impl AlertingSystem {
     pub async fn get_alert_status(&self) -> AlertStatus {
         let active_alerts = self.state_manager.get_active_alerts().await;
         let total_alerts_24h = self.history.read().await.count_alerts_in_last_hours(24);
-        let critical_alerts = active_alerts.iter()
+        let critical_alerts = active_alerts
+            .iter()
             .filter(|a| a.severity == AlertSeverity::Critical)
             .count();
 
@@ -136,10 +140,10 @@ impl AlertingSystem {
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(10)); // Check every 10 seconds
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // Evaluate all alert rules
                 if let Ok(triggered_alerts) = rules_engine.evaluate_rules().await {
                     for alert in triggered_alerts {
@@ -169,7 +173,9 @@ impl AlertingSystem {
                     &state_manager,
                     &notification_dispatcher,
                     &history,
-                ).await {
+                )
+                .await
+                {
                     error!("Failed to process alert: {:?}", e);
                 }
             }
@@ -186,16 +192,19 @@ impl AlertingSystem {
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(60)); // Check every minute
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // Check for alerts that need escalation
                 let active_alerts = state_manager.get_active_alerts().await;
                 for alert in active_alerts {
                     if let Ok(escalation) = escalation_manager.check_escalation(&alert).await {
                         if let Some(escalation_alert) = escalation {
-                            if let Err(e) = notification_dispatcher.send_notification(&escalation_alert).await {
+                            if let Err(e) = notification_dispatcher
+                                .send_notification(&escalation_alert)
+                                .await
+                            {
                                 error!("Failed to send escalation notification: {:?}", e);
                             }
                         }
@@ -213,7 +222,7 @@ impl AlertingSystem {
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(3600)); // Cleanup every hour
-            
+
             loop {
                 interval.tick().await;
                 history.write().await.cleanup_old_alerts();
@@ -245,14 +254,20 @@ impl AlertingSystem {
         // Add to history
         history.write().await.add_alert(alert.clone());
 
-        info!("Processed alert: {} (severity: {:?})", alert.name, alert.severity);
+        info!(
+            "Processed alert: {} (severity: {:?})",
+            alert.name, alert.severity
+        );
         Ok(())
     }
 
     /// Process alert (public interface)
     async fn process_alert(&self, alert: Alert) -> Result<(), AlertingError> {
         if let Err(e) = self.alert_sender.send(alert) {
-            return Err(AlertingError::ProcessingError(format!("Failed to send alert: {:?}", e)));
+            return Err(AlertingError::ProcessingError(format!(
+                "Failed to send alert: {:?}",
+                e
+            )));
         }
         Ok(())
     }
@@ -280,12 +295,12 @@ impl AlertRulesEngine {
             if self.should_evaluate_rule(rule).await? {
                 if let Some(alert) = self.evaluate_rule(rule).await? {
                     triggered_alerts.push(alert);
-                    
+
                     // Update last evaluation time
-                    self.last_evaluation.write().await.insert(
-                        rule.name.clone(),
-                        SystemTime::now()
-                    );
+                    self.last_evaluation
+                        .write()
+                        .await
+                        .insert(rule.name.clone(), SystemTime::now());
                 }
             }
         }
@@ -296,12 +311,12 @@ impl AlertRulesEngine {
     /// Check if rule should be evaluated (respecting cooldown)
     async fn should_evaluate_rule(&self, rule: &AlertRule) -> Result<bool, AlertingError> {
         let last_eval = self.last_evaluation.read().await;
-        
+
         if let Some(last_time) = last_eval.get(&rule.name) {
             let elapsed = SystemTime::now()
                 .duration_since(*last_time)
                 .unwrap_or(Duration::from_secs(0));
-            
+
             Ok(elapsed >= rule.evaluation_interval)
         } else {
             Ok(true) // First evaluation
@@ -311,12 +326,14 @@ impl AlertRulesEngine {
     /// Evaluate individual rule
     async fn evaluate_rule(&self, rule: &AlertRule) -> Result<Option<Alert>, AlertingError> {
         let current_value = self.get_metric_value(&rule.metric_name).await?;
-        
+
         let condition_met = match rule.condition {
             AlertCondition::GreaterThan(threshold) => current_value > threshold,
             AlertCondition::LessThan(threshold) => current_value < threshold,
             AlertCondition::Equals(threshold) => (current_value - threshold).abs() < f64::EPSILON,
-            AlertCondition::NotEquals(threshold) => (current_value - threshold).abs() >= f64::EPSILON,
+            AlertCondition::NotEquals(threshold) => {
+                (current_value - threshold).abs() >= f64::EPSILON
+            }
             AlertCondition::Between(min, max) => current_value >= min && current_value <= max,
             AlertCondition::Outside(min, max) => current_value < min || current_value > max,
         };
@@ -343,24 +360,31 @@ impl AlertRulesEngine {
     /// Get current value of a metric
     async fn get_metric_value(&self, metric_name: &str) -> Result<f64, AlertingError> {
         match metric_name {
-            "cpu_usage_percent" => Ok(METRICS.resources.cpu_usage_percent.load(Ordering::Relaxed) as f64),
-            "memory_usage_mb" => Ok((METRICS.resources.memory_usage_bytes.load(Ordering::Relaxed) / 1024 / 1024) as f64),
-            "active_connections" => Ok(METRICS.network.active_connections.load(Ordering::Relaxed) as f64),
+            "cpu_usage_percent" => {
+                Ok(METRICS.resources.cpu_usage_percent.load(Ordering::Relaxed) as f64)
+            }
+            "memory_usage_mb" => Ok(
+                (METRICS.resources.memory_usage_bytes.load(Ordering::Relaxed) / 1024 / 1024) as f64,
+            ),
+            "active_connections" => {
+                Ok(METRICS.network.active_connections.load(Ordering::Relaxed) as f64)
+            }
             "consensus_latency_ms" => Ok(METRICS.consensus.average_latency_ms()),
             "error_rate" => {
                 let total_errors = METRICS.errors.total_errors.load(Ordering::Relaxed) as f64;
-                let total_requests = (METRICS.network.messages_sent.load(Ordering::Relaxed) + 
-                                     METRICS.network.messages_received.load(Ordering::Relaxed)) as f64;
+                let total_requests = (METRICS.network.messages_sent.load(Ordering::Relaxed)
+                    + METRICS.network.messages_received.load(Ordering::Relaxed))
+                    as f64;
                 if total_requests > 0.0 {
                     Ok((total_errors / total_requests) * 100.0)
                 } else {
                     Ok(0.0)
                 }
-            },
+            }
             "disk_usage_percent" => {
                 // This would get actual disk usage - simplified for example
-                Ok(25.0) 
-            },
+                Ok(25.0)
+            }
             _ => Err(AlertingError::UnknownMetric(metric_name.to_string())),
         }
     }
@@ -368,12 +392,13 @@ impl AlertRulesEngine {
     /// Get threshold value from condition
     fn get_threshold_value(&self, condition: &AlertCondition) -> f64 {
         match condition {
-            AlertCondition::GreaterThan(threshold) |
-            AlertCondition::LessThan(threshold) |
-            AlertCondition::Equals(threshold) |
-            AlertCondition::NotEquals(threshold) => *threshold,
-            AlertCondition::Between(min, max) |
-            AlertCondition::Outside(min, max) => (min + max) / 2.0,
+            AlertCondition::GreaterThan(threshold)
+            | AlertCondition::LessThan(threshold)
+            | AlertCondition::Equals(threshold)
+            | AlertCondition::NotEquals(threshold) => *threshold,
+            AlertCondition::Between(min, max) | AlertCondition::Outside(min, max) => {
+                (min + max) / 2.0
+            }
         }
     }
 }
@@ -403,7 +428,10 @@ impl NotificationDispatcher {
         for channel in &self.channels {
             if self.should_send_to_channel(channel, alert) {
                 if let Err(e) = self.send_to_channel(channel, alert).await {
-                    warn!("Failed to send notification via {:?}: {:?}", channel.channel_type, e);
+                    warn!(
+                        "Failed to send notification via {:?}: {:?}",
+                        channel.channel_type, e
+                    );
                 }
             }
         }
@@ -428,7 +456,9 @@ impl NotificationDispatcher {
 
         // Check tag filters
         if !channel.required_tags.is_empty() {
-            let has_required_tags = channel.required_tags.iter()
+            let has_required_tags = channel
+                .required_tags
+                .iter()
                 .all(|tag| alert.tags.contains(tag));
             if !has_required_tags {
                 return false;
@@ -439,36 +469,54 @@ impl NotificationDispatcher {
     }
 
     /// Send alert to specific notification channel
-    async fn send_to_channel(&self, channel: &NotificationChannel, alert: &Alert) -> Result<(), AlertingError> {
+    async fn send_to_channel(
+        &self,
+        channel: &NotificationChannel,
+        alert: &Alert,
+    ) -> Result<(), AlertingError> {
         match &channel.channel_type {
             NotificationChannelType::Email { to, smtp_config } => {
                 self.send_email_notification(to, smtp_config, alert).await
-            },
+            }
             NotificationChannelType::Slack { webhook_url } => {
                 self.send_slack_notification(webhook_url, alert).await
-            },
+            }
             NotificationChannelType::Discord { webhook_url } => {
                 self.send_discord_notification(webhook_url, alert).await
-            },
+            }
             NotificationChannelType::PagerDuty { integration_key } => {
-                self.send_pagerduty_notification(integration_key, alert).await
-            },
+                self.send_pagerduty_notification(integration_key, alert)
+                    .await
+            }
             NotificationChannelType::Webhook { url, headers } => {
                 self.send_webhook_notification(url, headers, alert).await
-            },
-            NotificationChannelType::SMS { phone_number, api_config } => {
-                self.send_sms_notification(phone_number, api_config, alert).await
-            },
+            }
+            NotificationChannelType::SMS {
+                phone_number,
+                api_config,
+            } => {
+                self.send_sms_notification(phone_number, api_config, alert)
+                    .await
+            }
         }
     }
 
-    async fn send_email_notification(&self, _to: &str, _smtp_config: &SMTPConfig, alert: &Alert) -> Result<(), AlertingError> {
+    async fn send_email_notification(
+        &self,
+        _to: &str,
+        _smtp_config: &SMTPConfig,
+        alert: &Alert,
+    ) -> Result<(), AlertingError> {
         // Email implementation would go here
         info!("Sending email notification for alert: {}", alert.name);
         Ok(())
     }
 
-    async fn send_slack_notification(&self, _webhook_url: &str, alert: &Alert) -> Result<(), AlertingError> {
+    async fn send_slack_notification(
+        &self,
+        _webhook_url: &str,
+        alert: &Alert,
+    ) -> Result<(), AlertingError> {
         let _payload = serde_json::json!({
             "text": format!("🚨 Alert: {}", alert.name),
             "attachments": [{
@@ -489,7 +537,11 @@ impl NotificationDispatcher {
         Ok(())
     }
 
-    async fn send_discord_notification(&self, _webhook_url: &str, alert: &Alert) -> Result<(), AlertingError> {
+    async fn send_discord_notification(
+        &self,
+        _webhook_url: &str,
+        alert: &Alert,
+    ) -> Result<(), AlertingError> {
         let _payload = serde_json::json!({
             "embeds": [{
                 "title": format!("🚨 Alert: {}", alert.name),
@@ -510,7 +562,11 @@ impl NotificationDispatcher {
         Ok(())
     }
 
-    async fn send_pagerduty_notification(&self, integration_key: &str, alert: &Alert) -> Result<(), AlertingError> {
+    async fn send_pagerduty_notification(
+        &self,
+        integration_key: &str,
+        alert: &Alert,
+    ) -> Result<(), AlertingError> {
         let payload = serde_json::json!({
             "routing_key": integration_key,
             "event_action": "trigger",
@@ -528,11 +584,19 @@ impl NotificationDispatcher {
         });
 
         // In production, would use reqwest or similar HTTP client
-        info!("Sending PagerDuty notification with key {} and payload: {}", integration_key, payload);
+        info!(
+            "Sending PagerDuty notification with key {} and payload: {}",
+            integration_key, payload
+        );
         Ok(())
     }
 
-    async fn send_webhook_notification(&self, url: &str, headers: &HashMap<String, String>, alert: &Alert) -> Result<(), AlertingError> {
+    async fn send_webhook_notification(
+        &self,
+        url: &str,
+        headers: &HashMap<String, String>,
+        alert: &Alert,
+    ) -> Result<(), AlertingError> {
         let payload = serde_json::json!({
             "alert": {
                 "id": alert.id,
@@ -549,16 +613,31 @@ impl NotificationDispatcher {
         });
 
         // In production, would use reqwest or similar HTTP client
-        info!("Sending webhook to {} with {} headers and payload: {}", url, headers.len(), payload);
+        info!(
+            "Sending webhook to {} with {} headers and payload: {}",
+            url,
+            headers.len(),
+            payload
+        );
         Ok(())
     }
 
-    async fn send_sms_notification(&self, phone_number: &str, api_config: &SMSConfig, alert: &Alert) -> Result<(), AlertingError> {
-        let message = format!("🚨 BitCraps Alert: {} - {} (Severity: {:?})", 
-                             alert.name, alert.description, alert.severity);
+    async fn send_sms_notification(
+        &self,
+        phone_number: &str,
+        api_config: &SMSConfig,
+        alert: &Alert,
+    ) -> Result<(), AlertingError> {
+        let message = format!(
+            "🚨 BitCraps Alert: {} - {} (Severity: {:?})",
+            alert.name, alert.description, alert.severity
+        );
 
         // In production, would use SMS API provider (Twilio, etc.)
-        info!("Sending SMS to {} via {} with message: {}", phone_number, api_config.provider, message);
+        info!(
+            "Sending SMS to {} via {} with message: {}",
+            phone_number, api_config.provider, message
+        );
         Ok(())
     }
 
@@ -616,9 +695,15 @@ impl AlertStateManager {
     /// Add active alert
     pub async fn add_active_alert(&self, alert: Alert) {
         let fingerprint = self.calculate_fingerprint(&alert);
-        
-        self.active_alerts.write().await.insert(alert.id.clone(), alert);
-        self.alert_fingerprints.write().await.insert(fingerprint, SystemTime::now());
+
+        self.active_alerts
+            .write()
+            .await
+            .insert(alert.id.clone(), alert);
+        self.alert_fingerprints
+            .write()
+            .await
+            .insert(fingerprint, SystemTime::now());
     }
 
     /// Remove active alert
@@ -635,12 +720,13 @@ impl AlertStateManager {
     pub async fn is_duplicate(&self, alert: &Alert) -> bool {
         let fingerprint = self.calculate_fingerprint(alert);
         let fingerprints = self.alert_fingerprints.read().await;
-        
+
         if let Some(last_seen) = fingerprints.get(&fingerprint) {
             // Consider duplicate if seen within last 5 minutes
             SystemTime::now()
                 .duration_since(*last_seen)
-                .unwrap_or(Duration::from_secs(0)) < Duration::from_secs(300)
+                .unwrap_or(Duration::from_secs(0))
+                < Duration::from_secs(300)
         } else {
             false
         }
@@ -650,13 +736,13 @@ impl AlertStateManager {
     fn calculate_fingerprint(&self, alert: &Alert) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         alert.name.hash(&mut hasher);
         alert.metric_name.hash(&mut hasher);
         alert.category.hash(&mut hasher);
         // Don't include timestamp or current_value for deduplication
-        
+
         format!("{:x}", hasher.finish())
     }
 }
@@ -812,18 +898,16 @@ pub struct NotificationConfig {
 impl Default for NotificationConfig {
     fn default() -> Self {
         Self {
-            channels: vec![
-                NotificationChannel {
-                    name: "console".to_string(),
-                    channel_type: NotificationChannelType::Webhook {
-                        url: "http://localhost:8080/alerts".to_string(),
-                        headers: HashMap::new(),
-                    },
-                    min_severity: Some(AlertSeverity::Medium),
-                    categories: vec![],
-                    required_tags: vec![],
-                }
-            ],
+            channels: vec![NotificationChannel {
+                name: "console".to_string(),
+                channel_type: NotificationChannelType::Webhook {
+                    url: "http://localhost:8080/alerts".to_string(),
+                    headers: HashMap::new(),
+                },
+                min_severity: Some(AlertSeverity::Medium),
+                categories: vec![],
+                required_tags: vec![],
+            }],
             rate_limit: NotificationRateLimit {
                 max_per_hour: 100,
                 max_per_day: 1000,
@@ -843,12 +927,27 @@ pub struct NotificationChannel {
 
 #[derive(Debug, Clone)]
 pub enum NotificationChannelType {
-    Email { to: String, smtp_config: SMTPConfig },
-    Slack { webhook_url: String },
-    Discord { webhook_url: String },
-    PagerDuty { integration_key: String },
-    Webhook { url: String, headers: HashMap<String, String> },
-    SMS { phone_number: String, api_config: SMSConfig },
+    Email {
+        to: String,
+        smtp_config: SMTPConfig,
+    },
+    Slack {
+        webhook_url: String,
+    },
+    Discord {
+        webhook_url: String,
+    },
+    PagerDuty {
+        integration_key: String,
+    },
+    Webhook {
+        url: String,
+        headers: HashMap<String, String>,
+    },
+    SMS {
+        phone_number: String,
+        api_config: SMSConfig,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -930,10 +1029,13 @@ impl NotificationRateLimiter {
         // Check rate limits for the alert
         let per_minute = self.per_minute_counts.read().await;
         let minute_count = per_minute.get(alert_name).unwrap_or(&0);
-        
+
         // Allow up to 10 alerts per minute
         let can_send = *minute_count < 10;
-        debug!("Rate limit check for {}: count={}, can_send={}", alert_name, minute_count, can_send);
+        debug!(
+            "Rate limit check for {}: count={}, can_send={}",
+            alert_name, minute_count, can_send
+        );
         can_send
     }
 
@@ -941,10 +1043,10 @@ impl NotificationRateLimiter {
         // Increment counters
         let mut per_minute = self.per_minute_counts.write().await;
         *per_minute.entry(alert_name.to_string()).or_insert(0) += 1;
-        
+
         let mut per_hour = self.per_hour_counts.write().await;
         *per_hour.entry(alert_name.to_string()).or_insert(0) += 1;
-        
+
         debug!("Recorded sent notification for {}", alert_name);
     }
 }
@@ -967,7 +1069,8 @@ impl AlertHistory {
     }
 
     pub fn cleanup_old_alerts(&mut self) {
-        let cutoff = SystemTime::now() - Duration::from_secs(self.retention_days as u64 * 24 * 3600);
+        let cutoff =
+            SystemTime::now() - Duration::from_secs(self.retention_days as u64 * 24 * 3600);
         self.alerts.retain(|alert| alert.timestamp > cutoff);
     }
 
@@ -977,7 +1080,8 @@ impl AlertHistory {
 
     pub fn count_alerts_in_last_hours(&self, hours: u32) -> usize {
         let cutoff = SystemTime::now() - Duration::from_secs(hours as u64 * 3600);
-        self.alerts.iter()
+        self.alerts
+            .iter()
             .filter(|alert| alert.timestamp > cutoff)
             .count()
     }
@@ -999,7 +1103,9 @@ impl AlertHistory {
     }
 
     pub fn average_resolution_time_minutes(&self) -> f64 {
-        let resolved_alerts: Vec<_> = self.alerts.iter()
+        let resolved_alerts: Vec<_> = self
+            .alerts
+            .iter()
             .filter(|alert| alert.resolved_at.is_some())
             .collect();
 
@@ -1007,9 +1113,12 @@ impl AlertHistory {
             return 0.0;
         }
 
-        let total_time: Duration = resolved_alerts.iter()
+        let total_time: Duration = resolved_alerts
+            .iter()
             .map(|alert| {
-                alert.resolved_at.unwrap()
+                alert
+                    .resolved_at
+                    .unwrap()
                     .duration_since(alert.timestamp)
                     .unwrap_or(Duration::from_secs(0))
             })
@@ -1040,29 +1149,27 @@ mod tests {
     async fn test_alerting_system_creation() {
         let config = AlertingConfig::default();
         let system = AlertingSystem::new(config);
-        
+
         let status = system.get_alert_status().await;
         assert_eq!(status.active_alerts, 0);
     }
 
     #[tokio::test]
     async fn test_alert_rule_evaluation() {
-        let rules = vec![
-            AlertRule {
-                name: "Test Rule".to_string(),
-                description: "Test alert rule".to_string(),
-                metric_name: "cpu_usage_percent".to_string(),
-                condition: AlertCondition::GreaterThan(50.0),
-                severity: AlertSeverity::Medium,
-                category: "test".to_string(),
-                evaluation_interval: Duration::from_secs(60),
-                tags: vec!["test".to_string()],
-            }
-        ];
+        let rules = vec![AlertRule {
+            name: "Test Rule".to_string(),
+            description: "Test alert rule".to_string(),
+            metric_name: "cpu_usage_percent".to_string(),
+            condition: AlertCondition::GreaterThan(50.0),
+            severity: AlertSeverity::Medium,
+            category: "test".to_string(),
+            evaluation_interval: Duration::from_secs(60),
+            tags: vec!["test".to_string()],
+        }];
 
         let engine = AlertRulesEngine::new(rules);
         let alerts = engine.evaluate_rules().await.unwrap();
-        
+
         // This test would depend on actual metric values
         // For now, just verify the function doesn't panic
         assert!(alerts.len() >= 0);
@@ -1071,7 +1178,7 @@ mod tests {
     #[test]
     fn test_alert_fingerprint() {
         let state_manager = AlertStateManager::new();
-        
+
         let alert1 = Alert {
             id: "1".to_string(),
             name: "Test Alert".to_string(),
@@ -1088,7 +1195,7 @@ mod tests {
 
         let alert2 = Alert {
             id: "2".to_string(),
-            current_value: 200.0, // Different value
+            current_value: 200.0,         // Different value
             timestamp: SystemTime::now(), // Different timestamp
             ..alert1.clone()
         };
@@ -1103,9 +1210,9 @@ mod tests {
 /// Enhanced notification channels for production deployment
 pub mod enhanced_notifications {
     use super::*;
-    use std::collections::HashMap;
     use serde_json::json;
-    
+    use std::collections::HashMap;
+
     /// PagerDuty integration
     #[derive(Debug, Clone)]
     pub struct PagerDutyNotifier {
@@ -1113,7 +1220,7 @@ pub mod enhanced_notifications {
         pub service_url: String,
         pub client: reqwest::Client,
     }
-    
+
     impl PagerDutyNotifier {
         pub fn new(integration_key: String) -> Self {
             Self {
@@ -1122,7 +1229,7 @@ pub mod enhanced_notifications {
                 client: reqwest::Client::new(),
             }
         }
-        
+
         pub async fn send_incident(&self, alert: &Alert) -> Result<(), Box<dyn std::error::Error>> {
             let payload = json!({
                 "routing_key": self.integration_key,
@@ -1150,23 +1257,27 @@ pub mod enhanced_notifications {
                     }
                 }
             });
-            
-            let response = self.client
+
+            let response = self
+                .client
                 .post(&self.service_url)
                 .json(&payload)
                 .send()
                 .await?;
-                
+
             if response.status().is_success() {
-                log::info!("Successfully sent PagerDuty incident for alert: {}", alert.name);
+                log::info!(
+                    "Successfully sent PagerDuty incident for alert: {}",
+                    alert.name
+                );
             } else {
                 log::error!("Failed to send PagerDuty incident: {}", response.status());
             }
-            
+
             Ok(())
         }
     }
-    
+
     /// Slack webhook notifier
     #[derive(Debug, Clone)]
     pub struct SlackNotifier {
@@ -1175,7 +1286,7 @@ pub mod enhanced_notifications {
         pub username: String,
         pub client: reqwest::Client,
     }
-    
+
     impl SlackNotifier {
         pub fn new(webhook_url: String, channel: String) -> Self {
             Self {
@@ -1185,7 +1296,7 @@ pub mod enhanced_notifications {
                 client: reqwest::Client::new(),
             }
         }
-        
+
         pub async fn send_alert(&self, alert: &Alert) -> Result<(), Box<dyn std::error::Error>> {
             let color = match alert.severity {
                 AlertSeverity::Critical => "#FF0000", // Red
@@ -1194,7 +1305,7 @@ pub mod enhanced_notifications {
                 AlertSeverity::Low => "#32CD32",      // Lime Green
                 AlertSeverity::Info => "#439FE0",     // Blue
             };
-            
+
             let icon = match alert.severity {
                 AlertSeverity::Critical => ":rotating_light:",
                 AlertSeverity::High => ":warning:",
@@ -1202,7 +1313,7 @@ pub mod enhanced_notifications {
                 AlertSeverity::Low => ":information_source:",
                 AlertSeverity::Info => ":information_source:",
             };
-            
+
             let payload = json!({
                 "channel": self.channel,
                 "username": self.username,
@@ -1229,7 +1340,7 @@ pub mod enhanced_notifications {
                         },
                         {
                             "title": "Value",
-                            "value": format!("{:.2} (threshold: {:.2})", 
+                            "value": format!("{:.2} (threshold: {:.2})",
                                            alert.current_value, alert.threshold_value),
                             "short": true
                         }
@@ -1239,30 +1350,34 @@ pub mod enhanced_notifications {
                     "mrkdwn_in": ["text", "fields"]
                 }]
             });
-            
-            let response = self.client
+
+            let response = self
+                .client
                 .post(&self.webhook_url)
                 .json(&payload)
                 .send()
                 .await?;
-                
+
             if response.status().is_success() {
-                log::info!("Successfully sent Slack notification for alert: {}", alert.name);
+                log::info!(
+                    "Successfully sent Slack notification for alert: {}",
+                    alert.name
+                );
             } else {
                 log::error!("Failed to send Slack notification: {}", response.status());
             }
-            
+
             Ok(())
         }
     }
-    
+
     /// Microsoft Teams webhook notifier
     #[derive(Debug, Clone)]
     pub struct TeamsNotifier {
         pub webhook_url: String,
         pub client: reqwest::Client,
     }
-    
+
     impl TeamsNotifier {
         pub fn new(webhook_url: String) -> Self {
             Self {
@@ -1270,7 +1385,7 @@ pub mod enhanced_notifications {
                 client: reqwest::Client::new(),
             }
         }
-        
+
         pub async fn send_alert(&self, alert: &Alert) -> Result<(), Box<dyn std::error::Error>> {
             let theme_color = match alert.severity {
                 AlertSeverity::Critical => "FF0000",
@@ -1279,7 +1394,7 @@ pub mod enhanced_notifications {
                 AlertSeverity::Low => "32CD32",
                 AlertSeverity::Info => "439FE0",
             };
-            
+
             let payload = json!({
                 "@type": "MessageCard",
                 "@context": "https://schema.org/extensions",
@@ -1306,23 +1421,27 @@ pub mod enhanced_notifications {
                     }]
                 }]
             });
-            
-            let response = self.client
+
+            let response = self
+                .client
                 .post(&self.webhook_url)
                 .json(&payload)
                 .send()
                 .await?;
-                
+
             if response.status().is_success() {
-                log::info!("Successfully sent Teams notification for alert: {}", alert.name);
+                log::info!(
+                    "Successfully sent Teams notification for alert: {}",
+                    alert.name
+                );
             } else {
                 log::error!("Failed to send Teams notification: {}", response.status());
             }
-            
+
             Ok(())
         }
     }
-    
+
     /// Email notifier using SMTP
     #[derive(Debug, Clone)]
     pub struct EmailNotifier {
@@ -1333,7 +1452,7 @@ pub mod enhanced_notifications {
         pub from_email: String,
         pub to_emails: Vec<String>,
     }
-    
+
     impl EmailNotifier {
         pub fn new(
             smtp_host: String,
@@ -1352,10 +1471,10 @@ pub mod enhanced_notifications {
                 to_emails,
             }
         }
-        
+
         pub async fn send_alert(&self, alert: &Alert) -> Result<(), Box<dyn std::error::Error>> {
             let subject = format!("BitCraps Alert - {} ({:?})", alert.name, alert.severity);
-            
+
             let body = format!(
                 r#"
                 <!DOCTYPE html>
@@ -1391,14 +1510,18 @@ pub mod enhanced_notifications {
                 alert.threshold_value,
                 alert.timestamp
             );
-            
+
             // In a production environment, you'd use lettre or similar SMTP crate
-            log::info!("Would send email alert '{}' to {:?}", subject, self.to_emails);
-            
+            log::info!(
+                "Would send email alert '{}' to {:?}",
+                subject,
+                self.to_emails
+            );
+
             Ok(())
         }
     }
-    
+
     /// SMS notifier using Twilio
     #[derive(Debug, Clone)]
     pub struct SmsNotifier {
@@ -1408,7 +1531,7 @@ pub mod enhanced_notifications {
         pub to_numbers: Vec<String>,
         pub client: reqwest::Client,
     }
-    
+
     impl SmsNotifier {
         pub fn new(
             account_sid: String,
@@ -1424,7 +1547,7 @@ pub mod enhanced_notifications {
                 client: reqwest::Client::new(),
             }
         }
-        
+
         pub async fn send_alert(&self, alert: &Alert) -> Result<(), Box<dyn std::error::Error>> {
             let message = format!(
                 "🚨 BitCraps Alert: {} ({:?})\n{}\nMetric: {} = {:.2} (threshold: {:.2})",
@@ -1435,16 +1558,16 @@ pub mod enhanced_notifications {
                 alert.current_value,
                 alert.threshold_value
             );
-            
+
             for phone_number in &self.to_numbers {
                 // In production, integrate with Twilio API
                 log::info!("Would send SMS to {}: {}", phone_number, message);
             }
-            
+
             Ok(())
         }
     }
-    
+
     /// Generic webhook notifier
     #[derive(Debug, Clone)]
     pub struct WebhookNotifier {
@@ -1452,7 +1575,7 @@ pub mod enhanced_notifications {
         pub headers: HashMap<String, String>,
         pub client: reqwest::Client,
     }
-    
+
     impl WebhookNotifier {
         pub fn new(url: String, headers: HashMap<String, String>) -> Self {
             Self {
@@ -1461,14 +1584,14 @@ pub mod enhanced_notifications {
                 client: reqwest::Client::new(),
             }
         }
-        
+
         pub async fn send_alert(&self, alert: &Alert) -> Result<(), Box<dyn std::error::Error>> {
             let mut request = self.client.post(&self.url);
-            
+
             for (key, value) in &self.headers {
                 request = request.header(key, value);
             }
-            
+
             let payload = json!({
                 "alert_id": alert.id,
                 "name": alert.name,
@@ -1481,15 +1604,18 @@ pub mod enhanced_notifications {
                 "timestamp": alert.timestamp.duration_since(UNIX_EPOCH).unwrap().as_secs(),
                 "tags": alert.tags
             });
-            
+
             let response = request.json(&payload).send().await?;
-            
+
             if response.status().is_success() {
-                log::info!("Successfully sent webhook notification for alert: {}", alert.name);
+                log::info!(
+                    "Successfully sent webhook notification for alert: {}",
+                    alert.name
+                );
             } else {
                 log::error!("Failed to send webhook notification: {}", response.status());
             }
-            
+
             Ok(())
         }
     }

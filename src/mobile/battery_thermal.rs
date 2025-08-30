@@ -1,5 +1,5 @@
 //! Battery monitoring and thermal management for mobile devices
-//! 
+//!
 //! This module provides comprehensive battery and thermal monitoring:
 //! - Real-time battery level, health, and charging state monitoring
 //! - Thermal sensor monitoring with predictive overheating prevention
@@ -8,11 +8,14 @@
 //! - Thermal throttling coordination with CPU and other components
 //! - Battery health preservation algorithms
 
-use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}};
-use std::time::{Duration, SystemTime};
-use std::collections::VecDeque;
-use tokio::sync::{RwLock, broadcast};
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc,
+};
+use std::time::{Duration, SystemTime};
+use tokio::sync::{broadcast, RwLock};
 
 use super::performance::{PowerState, ThermalState};
 
@@ -109,8 +112,8 @@ impl Default for BatteryConfig {
             power_tracking: PowerTrackingConfig {
                 enabled: true,
                 component_interval_ms: 10000, // 10 seconds
-                history_window_size: 360, // 1 hour of 10-second samples
-                anomaly_threshold: 2.0, // 2x normal consumption
+                history_window_size: 360,     // 1 hour of 10-second samples
+                anomaly_threshold: 2.0,       // 2x normal consumption
             },
             health_monitoring: BatteryHealthConfig {
                 enabled: true,
@@ -484,43 +487,43 @@ pub enum HealthWarningType {
 pub struct BatteryThermalMonitor {
     /// Battery configuration
     battery_config: Arc<RwLock<BatteryConfig>>,
-    
+
     /// Thermal configuration
     thermal_config: Arc<RwLock<ThermalConfig>>,
-    
+
     /// Current battery information
     battery_info: Arc<RwLock<Option<BatteryInfo>>>,
-    
+
     /// Current thermal information
     thermal_info: Arc<RwLock<Option<ThermalInfo>>>,
-    
+
     /// Battery level history
     battery_history: Arc<RwLock<VecDeque<(SystemTime, f64)>>>,
-    
+
     /// Temperature history
     temperature_history: Arc<RwLock<VecDeque<(SystemTime, f64)>>>,
-    
+
     /// Power consumption history
     power_history: Arc<RwLock<VecDeque<PowerConsumption>>>,
-    
+
     /// Latest battery prediction
     battery_prediction: Arc<RwLock<Option<BatteryPrediction>>>,
-    
+
     /// Latest thermal prediction
     thermal_prediction: Arc<RwLock<Option<ThermalPrediction>>>,
-    
+
     /// Event broadcaster
     event_sender: broadcast::Sender<BatteryThermalEvent>,
-    
+
     /// Control flags
     is_running: Arc<AtomicBool>,
-    
+
     /// Task handles
     battery_monitor_task: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
     thermal_monitor_task: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
     power_tracking_task: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
     prediction_task: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
-    
+
     /// Statistics
     battery_readings_count: Arc<AtomicU64>,
     thermal_readings_count: Arc<AtomicU64>,
@@ -532,7 +535,7 @@ impl BatteryThermalMonitor {
     /// Create new battery and thermal monitor
     pub fn new(battery_config: BatteryConfig, thermal_config: ThermalConfig) -> Self {
         let (event_sender, _) = broadcast::channel(1000);
-        
+
         Self {
             battery_config: Arc::new(RwLock::new(battery_config.clone())),
             thermal_config: Arc::new(RwLock::new(thermal_config.clone())),
@@ -541,7 +544,7 @@ impl BatteryThermalMonitor {
             battery_history: Arc::new(RwLock::new(VecDeque::with_capacity(1000))),
             temperature_history: Arc::new(RwLock::new(VecDeque::with_capacity(1000))),
             power_history: Arc::new(RwLock::new(VecDeque::with_capacity(
-                battery_config.power_tracking.history_window_size
+                battery_config.power_tracking.history_window_size,
             ))),
             battery_prediction: Arc::new(RwLock::new(None)),
             thermal_prediction: Arc::new(RwLock::new(None)),
@@ -557,135 +560,140 @@ impl BatteryThermalMonitor {
             prediction_count: Arc::new(AtomicU64::new(0)),
         }
     }
-    
+
     /// Start battery and thermal monitoring
     pub async fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
         if self.is_running.swap(true, Ordering::Relaxed) {
             return Ok(()); // Already running
         }
-        
+
         log::info!("Starting battery and thermal monitoring");
-        
+
         // Start battery monitoring
         self.start_battery_monitoring().await;
-        
+
         // Start thermal monitoring
         self.start_thermal_monitoring().await;
-        
+
         // Start power tracking if enabled
         if self.battery_config.read().await.power_tracking.enabled {
             self.start_power_tracking().await;
         }
-        
+
         // Start prediction tasks if enabled
-        if self.battery_config.read().await.prediction.enabled || 
-           self.thermal_config.read().await.prediction.enabled {
+        if self.battery_config.read().await.prediction.enabled
+            || self.thermal_config.read().await.prediction.enabled
+        {
             self.start_prediction_tasks().await;
         }
-        
+
         log::info!("Battery and thermal monitoring started successfully");
         Ok(())
     }
-    
+
     /// Stop battery and thermal monitoring
     pub async fn stop(&self) -> Result<(), Box<dyn std::error::Error>> {
         if !self.is_running.swap(false, Ordering::Relaxed) {
             return Ok(()); // Already stopped
         }
-        
+
         log::info!("Stopping battery and thermal monitoring");
-        
+
         // Stop all tasks
         if let Some(task) = self.battery_monitor_task.write().await.take() {
             task.abort();
         }
-        
+
         if let Some(task) = self.thermal_monitor_task.write().await.take() {
             task.abort();
         }
-        
+
         if let Some(task) = self.power_tracking_task.write().await.take() {
             task.abort();
         }
-        
+
         if let Some(task) = self.prediction_task.write().await.take() {
             task.abort();
         }
-        
+
         // Log final statistics
         let battery_readings = self.battery_readings_count.load(Ordering::Relaxed);
         let thermal_readings = self.thermal_readings_count.load(Ordering::Relaxed);
         let prediction_count = self.prediction_count.load(Ordering::Relaxed);
         let accuracy_sum = self.prediction_accuracy_sum.load(Ordering::Relaxed);
-        
-        log::info!("Final stats: {} battery readings, {} thermal readings, {} predictions",
-                  battery_readings, thermal_readings, prediction_count);
-        
+
+        log::info!(
+            "Final stats: {} battery readings, {} thermal readings, {} predictions",
+            battery_readings,
+            thermal_readings,
+            prediction_count
+        );
+
         if prediction_count > 0 {
             let avg_accuracy = accuracy_sum as f64 / prediction_count as f64 / 100.0;
             log::info!("Average prediction accuracy: {:.1}%", avg_accuracy * 100.0);
         }
-        
+
         log::info!("Battery and thermal monitoring stopped");
         Ok(())
     }
-    
+
     /// Subscribe to battery and thermal events
     pub fn subscribe_to_events(&self) -> broadcast::Receiver<BatteryThermalEvent> {
         self.event_sender.subscribe()
     }
-    
+
     /// Get current battery information
     pub async fn get_battery_info(&self) -> Option<BatteryInfo> {
         self.battery_info.read().await.clone()
     }
-    
+
     /// Get current thermal information
     pub async fn get_thermal_info(&self) -> Option<ThermalInfo> {
         self.thermal_info.read().await.clone()
     }
-    
+
     /// Get latest battery prediction
     pub async fn get_battery_prediction(&self) -> Option<BatteryPrediction> {
         self.battery_prediction.read().await.clone()
     }
-    
+
     /// Get latest thermal prediction
     pub async fn get_thermal_prediction(&self) -> Option<ThermalPrediction> {
         self.thermal_prediction.read().await.clone()
     }
-    
+
     /// Get power consumption history
     pub async fn get_power_history(&self) -> Vec<PowerConsumption> {
         self.power_history.read().await.iter().cloned().collect()
     }
-    
+
     /// Force battery reading update
     pub async fn update_battery_reading(&self) -> Result<(), Box<dyn std::error::Error + Send>> {
         let new_info = self.read_battery_info().await?;
         let old_info = self.battery_info.read().await.clone();
-        
+
         *self.battery_info.write().await = Some(new_info.clone());
-        
+
         // Check for significant changes and emit events
         self.check_battery_events(&old_info, &new_info).await;
-        
+
         Ok(())
     }
-    
+
     /// Force thermal reading update
     pub async fn update_thermal_reading(&self) -> Result<(), Box<dyn std::error::Error + Send>> {
         let new_info = self.read_thermal_info().await?;
         let old_info = self.thermal_info.read().await.clone();
-        
+
         *self.thermal_info.write().await = Some(new_info.clone());
-        
+
         // Check for thermal events
         self.check_thermal_events(&old_info, &new_info).await;
-        
+
         Ok(())
     }
-    
+
     /// Start battery monitoring task
     async fn start_battery_monitoring(&self) {
         let battery_config = self.battery_config.clone();
@@ -694,44 +702,44 @@ impl BatteryThermalMonitor {
         let event_sender = self.event_sender.clone();
         let is_running = self.is_running.clone();
         let readings_count = self.battery_readings_count.clone();
-        
+
         let task = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(
-                Duration::from_millis(battery_config.read().await.monitoring_interval_ms)
-            );
-            
+            let mut interval = tokio::time::interval(Duration::from_millis(
+                battery_config.read().await.monitoring_interval_ms,
+            ));
+
             while is_running.load(Ordering::Relaxed) {
                 interval.tick().await;
-                
+
                 // Read battery information
                 if let Ok(new_info) = Self::read_battery_info_static().await {
                     let old_info = battery_info.read().await.clone();
-                    
+
                     // Update battery info
                     *battery_info.write().await = Some(new_info.clone());
-                    
+
                     // Update history
                     {
                         let mut history = battery_history.write().await;
                         history.push_back((new_info.timestamp, new_info.level_percent));
-                        
+
                         if history.len() > 1000 {
                             history.pop_front();
                         }
                     }
-                    
+
                     // Check for events
                     Self::check_battery_events_static(&old_info, &new_info, &event_sender).await;
-                    
+
                     // Update statistics
                     readings_count.fetch_add(1, Ordering::Relaxed);
                 }
             }
         });
-        
+
         *self.battery_monitor_task.write().await = Some(task);
     }
-    
+
     /// Start thermal monitoring task
     async fn start_thermal_monitoring(&self) {
         let thermal_config = self.thermal_config.clone();
@@ -740,81 +748,95 @@ impl BatteryThermalMonitor {
         let event_sender = self.event_sender.clone();
         let is_running = self.is_running.clone();
         let readings_count = self.thermal_readings_count.clone();
-        
+
         let task = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(
-                Duration::from_millis(thermal_config.read().await.monitoring_interval_ms)
-            );
-            
+            let mut interval = tokio::time::interval(Duration::from_millis(
+                thermal_config.read().await.monitoring_interval_ms,
+            ));
+
             while is_running.load(Ordering::Relaxed) {
                 interval.tick().await;
-                
+
                 // Read thermal information
                 if let Ok(new_info) = Self::read_thermal_info_static().await {
                     let old_info = thermal_info.read().await.clone();
-                    
+
                     // Update thermal info
                     *thermal_info.write().await = Some(new_info.clone());
-                    
+
                     // Update temperature history
                     {
                         let mut history = temperature_history.write().await;
                         history.push_back((new_info.timestamp, new_info.cpu_temperature));
-                        
+
                         if history.len() > 1000 {
                             history.pop_front();
                         }
                     }
-                    
+
                     // Check for thermal events
                     Self::check_thermal_events_static(&old_info, &new_info, &event_sender).await;
-                    
+
                     // Update statistics
                     readings_count.fetch_add(1, Ordering::Relaxed);
                 }
             }
         });
-        
+
         *self.thermal_monitor_task.write().await = Some(task);
     }
-    
+
     /// Start power consumption tracking
     async fn start_power_tracking(&self) {
         let battery_config = self.battery_config.clone();
         let power_history = self.power_history.clone();
         let event_sender = self.event_sender.clone();
         let is_running = self.is_running.clone();
-        
+
         let task = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(
-                Duration::from_millis(battery_config.read().await.power_tracking.component_interval_ms)
-            );
-            
+            let mut interval = tokio::time::interval(Duration::from_millis(
+                battery_config
+                    .read()
+                    .await
+                    .power_tracking
+                    .component_interval_ms,
+            ));
+
             while is_running.load(Ordering::Relaxed) {
                 interval.tick().await;
-                
+
                 // Read power consumption data
                 let power_data = Self::read_power_consumption().await;
-                
+
                 // Update power history
                 {
                     let mut history = power_history.write().await;
                     history.push_back(power_data.clone());
-                    
-                    let window_size = battery_config.read().await.power_tracking.history_window_size;
+
+                    let window_size = battery_config
+                        .read()
+                        .await
+                        .power_tracking
+                        .history_window_size;
                     if history.len() > window_size {
                         history.pop_front();
                     }
                 }
-                
+
                 // Check for power anomalies
-                Self::check_power_anomalies(&power_history, &power_data, &event_sender, &battery_config).await;
+                Self::check_power_anomalies(
+                    &power_history,
+                    &power_data,
+                    &event_sender,
+                    &battery_config,
+                )
+                .await;
             }
         });
-        
+
         *self.power_tracking_task.write().await = Some(task);
     }
-    
+
     /// Start prediction tasks
     async fn start_prediction_tasks(&self) {
         let battery_config = self.battery_config.clone();
@@ -825,53 +847,57 @@ impl BatteryThermalMonitor {
         let battery_prediction = self.battery_prediction.clone();
         let thermal_prediction = self.thermal_prediction.clone();
         let is_running = self.is_running.clone();
-        
+
         let task = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30)); // Every 30 seconds
-            
+
             while is_running.load(Ordering::Relaxed) {
                 interval.tick().await;
-                
+
                 // Generate battery prediction
                 if battery_config.read().await.prediction.enabled {
                     if let Some(prediction) = Self::generate_battery_prediction_static(
                         &battery_history,
                         &power_history,
                         &battery_config,
-                    ).await {
+                    )
+                    .await
+                    {
                         *battery_prediction.write().await = Some(prediction);
                     }
                 }
-                
+
                 // Generate thermal prediction
                 if thermal_config.read().await.prediction.enabled {
                     if let Some(prediction) = Self::generate_thermal_prediction_static(
                         &temperature_history,
                         &thermal_config,
-                    ).await {
+                    )
+                    .await
+                    {
                         *thermal_prediction.write().await = Some(prediction);
                     }
                 }
             }
         });
-        
+
         *self.prediction_task.write().await = Some(task);
     }
-    
+
     /// Read battery information (would interface with platform APIs)
     async fn read_battery_info(&self) -> Result<BatteryInfo, Box<dyn std::error::Error + Send>> {
         Self::read_battery_info_static().await
     }
-    
+
     /// Static version of read_battery_info for use in async contexts
     async fn read_battery_info_static() -> Result<BatteryInfo, Box<dyn std::error::Error + Send>> {
         // In a real implementation, this would interface with platform-specific APIs
         // For simulation, generate realistic battery data
-        
+
         let base_level = 75.0;
         let level_variation = (rand::random::<f64>() - 0.5) * 2.0; // ±1%
         let level_percent = (base_level + level_variation).clamp(0.0, 100.0);
-        
+
         Ok(BatteryInfo {
             level_percent,
             is_charging: rand::random::<f64>() < 0.2, // 20% chance of charging
@@ -881,11 +907,19 @@ impl BatteryThermalMonitor {
                 ChargingState::NotCharging
             },
             voltage: 3.7 + (rand::random::<f64>() - 0.5) * 0.4,
-            current_amperes: if rand::random::<f64>() < 0.2 { 2.0 } else { -1.5 },
+            current_amperes: if rand::random::<f64>() < 0.2 {
+                2.0
+            } else {
+                -1.5
+            },
             temperature_celsius: 25.0 + (rand::random::<f64>() * 10.0),
             health_percent: 95.0 + (rand::random::<f64>() - 0.5) * 10.0,
             cycle_count: 250 + (rand::random::<u32>() % 100),
-            time_to_full_minutes: if rand::random::<f64>() < 0.2 { Some(120) } else { None },
+            time_to_full_minutes: if rand::random::<f64>() < 0.2 {
+                Some(120)
+            } else {
+                None
+            },
             time_remaining_minutes: Some(480 + (rand::random::<u32>() % 240)),
             power_consumption_watts: 1.5 + (rand::random::<f64>() * 2.0),
             capacity_mah: 3000,
@@ -893,21 +927,21 @@ impl BatteryThermalMonitor {
             timestamp: SystemTime::now(),
         })
     }
-    
+
     /// Read thermal information (would interface with thermal sensors)
     async fn read_thermal_info(&self) -> Result<ThermalInfo, Box<dyn std::error::Error + Send>> {
         Self::read_thermal_info_static().await
     }
-    
+
     /// Static version of read_thermal_info for use in async contexts
     async fn read_thermal_info_static() -> Result<ThermalInfo, Box<dyn std::error::Error + Send>> {
         // In a real implementation, this would read from thermal sensors
         // For simulation, generate realistic thermal data
-        
+
         let base_temp = 32.0;
         let temp_variation = (rand::random::<f64>() - 0.5) * 8.0; // ±4°C
         let cpu_temperature = (base_temp + temp_variation).clamp(20.0, 60.0);
-        
+
         let thermal_state = if cpu_temperature >= 50.0 {
             ThermalState::Critical
         } else if cpu_temperature >= 45.0 {
@@ -917,9 +951,9 @@ impl BatteryThermalMonitor {
         } else {
             ThermalState::Normal
         };
-        
+
         let thermal_pressure = ((cpu_temperature - 25.0) / 30.0).clamp(0.0, 1.0);
-        
+
         Ok(ThermalInfo {
             cpu_temperature,
             battery_temperature: cpu_temperature - 2.0,
@@ -939,11 +973,15 @@ impl BatteryThermalMonitor {
                 None
             },
             is_throttling: thermal_pressure > 0.7,
-            throttling_level: if thermal_pressure > 0.7 { thermal_pressure } else { 0.0 },
+            throttling_level: if thermal_pressure > 0.7 {
+                thermal_pressure
+            } else {
+                0.0
+            },
             timestamp: SystemTime::now(),
         })
     }
-    
+
     /// Read power consumption data (simulated)
     async fn read_power_consumption() -> PowerConsumption {
         PowerConsumption {
@@ -959,12 +997,12 @@ impl BatteryThermalMonitor {
             timestamp: SystemTime::now(),
         }
     }
-    
+
     /// Check for battery-related events
     async fn check_battery_events(&self, old_info: &Option<BatteryInfo>, new_info: &BatteryInfo) {
         Self::check_battery_events_static(old_info, new_info, &self.event_sender).await;
     }
-    
+
     /// Static version of check_battery_events
     async fn check_battery_events_static(
         old_info: &Option<BatteryInfo>,
@@ -980,16 +1018,18 @@ impl BatteryThermalMonitor {
                     timestamp: new_info.timestamp,
                 });
             }
-            
+
             // Check for charging state change
-            if std::mem::discriminant(&old.charging_state) != std::mem::discriminant(&new_info.charging_state) {
+            if std::mem::discriminant(&old.charging_state)
+                != std::mem::discriminant(&new_info.charging_state)
+            {
                 let _ = event_sender.send(BatteryThermalEvent::ChargingStateChanged {
                     old_state: old.charging_state.clone(),
                     new_state: new_info.charging_state.clone(),
                     timestamp: new_info.timestamp,
                 });
             }
-            
+
             // Check for health warnings
             if new_info.health_percent < 80.0 && old.health_percent >= 80.0 {
                 let _ = event_sender.send(BatteryThermalEvent::BatteryHealthWarning {
@@ -999,7 +1039,7 @@ impl BatteryThermalMonitor {
                 });
             }
         }
-        
+
         // Check for power state recommendations
         if new_info.level_percent <= 15.0 {
             let _ = event_sender.send(BatteryThermalEvent::PowerStateRecommendation {
@@ -1017,12 +1057,12 @@ impl BatteryThermalMonitor {
             });
         }
     }
-    
+
     /// Check for thermal events
     async fn check_thermal_events(&self, old_info: &Option<ThermalInfo>, new_info: &ThermalInfo) {
         Self::check_thermal_events_static(old_info, new_info, &self.event_sender).await;
     }
-    
+
     /// Static version of check_thermal_events
     async fn check_thermal_events_static(
         old_info: &Option<ThermalInfo>,
@@ -1039,7 +1079,7 @@ impl BatteryThermalMonitor {
                     timestamp: new_info.timestamp,
                 });
             }
-            
+
             // Check for throttling state change
             if old.is_throttling != new_info.is_throttling {
                 let _ = event_sender.send(BatteryThermalEvent::ThermalThrottlingChanged {
@@ -1055,7 +1095,7 @@ impl BatteryThermalMonitor {
             }
         }
     }
-    
+
     /// Check for power consumption anomalies
     async fn check_power_anomalies(
         power_history: &Arc<RwLock<VecDeque<PowerConsumption>>>,
@@ -1064,14 +1104,14 @@ impl BatteryThermalMonitor {
         _battery_config: &Arc<RwLock<BatteryConfig>>,
     ) {
         let history = power_history.read().await;
-        
+
         if history.len() < 10 {
             return; // Not enough history for anomaly detection
         }
-        
+
         // Calculate average consumption for each component
         let avg_cpu = history.iter().map(|p| p.cpu_watts).sum::<f64>() / history.len() as f64;
-        
+
         // Check for anomalies (consumption > 2x normal)
         if current_consumption.cpu_watts > avg_cpu * 2.0 {
             let _ = event_sender.send(BatteryThermalEvent::PowerAnomalyDetected {
@@ -1083,7 +1123,7 @@ impl BatteryThermalMonitor {
             });
         }
     }
-    
+
     /// Generate battery life prediction
     async fn generate_battery_prediction_static(
         battery_history: &Arc<RwLock<VecDeque<(SystemTime, f64)>>>,
@@ -1093,36 +1133,55 @@ impl BatteryThermalMonitor {
         let history = battery_history.read().await;
         let power = power_history.read().await;
         let config = battery_config.read().await;
-        
+
         if history.len() < config.prediction.min_samples {
             return None;
         }
-        
+
         // Simple linear regression prediction
         let recent_points: Vec<_> = history.iter().rev().take(20).collect();
-        
+
         if recent_points.len() < 2 {
             return None;
         }
-        
+
         let first = recent_points.last().unwrap();
         let last = recent_points.first().unwrap();
-        
-        let time_diff_hours = last.0.duration_since(first.0).unwrap_or_default().as_secs_f64() / 3600.0;
+
+        let time_diff_hours = last
+            .0
+            .duration_since(first.0)
+            .unwrap_or_default()
+            .as_secs_f64()
+            / 3600.0;
         let level_diff = last.1 - first.1;
-        
+
         if time_diff_hours > 0.0 && level_diff != 0.0 {
             let drain_rate = level_diff / time_diff_hours; // %/hour
-            
-            if drain_rate < 0.0 { // Discharging
+
+            if drain_rate < 0.0 {
+                // Discharging
                 let remaining_hours = last.1 / (-drain_rate);
                 let remaining_minutes = (remaining_hours * 60.0).max(0.0) as u32;
-                
+
                 // Determine power trend
                 let power_trend = if power.len() >= 5 {
-                    let recent_power: f64 = power.iter().rev().take(5).map(|p| p.total_watts).sum::<f64>() / 5.0;
-                    let older_power: f64 = power.iter().rev().skip(5).take(5).map(|p| p.total_watts).sum::<f64>() / 5.0;
-                    
+                    let recent_power: f64 = power
+                        .iter()
+                        .rev()
+                        .take(5)
+                        .map(|p| p.total_watts)
+                        .sum::<f64>()
+                        / 5.0;
+                    let older_power: f64 = power
+                        .iter()
+                        .rev()
+                        .skip(5)
+                        .take(5)
+                        .map(|p| p.total_watts)
+                        .sum::<f64>()
+                        / 5.0;
+
                     if recent_power > older_power * 1.1 {
                         PowerTrend::Increasing
                     } else if recent_power < older_power * 0.9 {
@@ -1133,7 +1192,7 @@ impl BatteryThermalMonitor {
                 } else {
                     PowerTrend::Variable
                 };
-                
+
                 Some(BatteryPrediction {
                     remaining_time_minutes: remaining_minutes,
                     confidence: 0.7,
@@ -1157,7 +1216,7 @@ impl BatteryThermalMonitor {
             None
         }
     }
-    
+
     /// Generate thermal prediction
     async fn generate_thermal_prediction_static(
         temperature_history: &Arc<RwLock<VecDeque<(SystemTime, f64)>>>,
@@ -1165,30 +1224,34 @@ impl BatteryThermalMonitor {
     ) -> Option<ThermalPrediction> {
         let history = temperature_history.read().await;
         let config = thermal_config.read().await;
-        
+
         if history.len() < 10 {
             return None;
         }
-        
+
         // Calculate temperature rise rate
         let recent_points: Vec<_> = history.iter().rev().take(10).collect();
-        
+
         if recent_points.len() < 2 {
             return None;
         }
-        
+
         let first = recent_points.last().unwrap();
         let last = recent_points.first().unwrap();
-        
-        let time_diff_secs = last.0.duration_since(first.0).unwrap_or_default().as_secs_f64();
+
+        let time_diff_secs = last
+            .0
+            .duration_since(first.0)
+            .unwrap_or_default()
+            .as_secs_f64();
         let temp_diff = last.1 - first.1;
-        
+
         if time_diff_secs > 0.0 {
             let rise_rate = temp_diff / time_diff_secs; // °C/second
-            
+
             let horizon_secs = config.prediction.prediction_horizon_secs;
             let predicted_temp = last.1 + (rise_rate * horizon_secs as f64);
-            
+
             let risk_level = if predicted_temp >= 55.0 {
                 ThermalRisk::Critical
             } else if predicted_temp >= 50.0 {
@@ -1198,7 +1261,7 @@ impl BatteryThermalMonitor {
             } else {
                 ThermalRisk::Low
             };
-            
+
             let recommended_throttling = if predicted_temp >= 50.0 {
                 0.8 // Heavy throttling
             } else if predicted_temp >= 45.0 {
@@ -1208,7 +1271,7 @@ impl BatteryThermalMonitor {
             } else {
                 0.0 // No throttling
             };
-            
+
             Some(ThermalPrediction {
                 predicted_temperature: predicted_temp,
                 prediction_horizon: horizon_secs,

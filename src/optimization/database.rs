@@ -1,14 +1,14 @@
-use std::collections::VecDeque;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use lru::LruCache;
 use parking_lot::{Mutex, RwLock};
 use rustc_hash::FxHashMap;
-use tokio::sync::Semaphore;
-use lru::LruCache;
+use std::collections::VecDeque;
 use std::num::NonZeroUsize;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::Semaphore;
 
-use crate::protocol::TransactionId;
 use crate::error::BitCrapsError;
+use crate::protocol::TransactionId;
 
 /// Database query optimization and caching layer
 pub struct DatabaseOptimizer {
@@ -62,8 +62,9 @@ impl Default for DatabaseOptimizerConfig {
 
 impl DatabaseOptimizer {
     pub fn new(config: DatabaseOptimizerConfig) -> Self {
-        let cache_size = NonZeroUsize::new(config.cache_size).unwrap_or(NonZeroUsize::new(1000).unwrap());
-        
+        let cache_size =
+            NonZeroUsize::new(config.cache_size).unwrap_or(NonZeroUsize::new(1000).unwrap());
+
         Self {
             query_cache: Arc::new(RwLock::new(LruCache::new(cache_size))),
             query_stats: Arc::new(RwLock::new(FxHashMap::default())),
@@ -73,7 +74,7 @@ impl DatabaseOptimizer {
             config,
         }
     }
-    
+
     /// Execute optimized query with caching
     pub async fn execute_query<T>(&self, query: &DatabaseQuery) -> Result<T, BitCrapsError>
     where
@@ -81,7 +82,7 @@ impl DatabaseOptimizer {
     {
         let query_key = QueryKey::from_query(query);
         let start_time = Instant::now();
-        
+
         // Try cache first for read queries
         if query.is_read_only() {
             if let Some(cached) = self.get_cached_result::<T>(&query_key) {
@@ -89,19 +90,19 @@ impl DatabaseOptimizer {
                 return Ok(cached);
             }
         }
-        
+
         // Execute query with connection pool optimization
         let connection = self.connection_pool.acquire_connection().await?;
         let result = self.execute_raw_query::<T>(connection, query).await?;
-        
+
         let duration = start_time.elapsed();
         self.update_query_stats(&query.query_type, start_time, false);
-        
+
         // Cache result if it's a read query
         if query.is_read_only() {
             self.cache_result(&query_key, &result, self.config.cache_ttl_read);
         }
-        
+
         // Log slow queries
         if duration > self.config.slow_query_threshold && self.config.enable_query_logging {
             tracing::warn!(
@@ -110,29 +111,32 @@ impl DatabaseOptimizer {
                 duration.as_millis()
             );
         }
-        
+
         Ok(result)
     }
-    
+
     /// Execute query with prepared statement optimization
     pub async fn execute_prepared_query<T>(&self, query: &PreparedQuery) -> Result<T, BitCrapsError>
     where
         T: Clone + serde::Serialize + for<'de> serde::Deserialize<'de> + Send + 'static + Default,
     {
         let start_time = Instant::now();
-        
+
         // Check if we have a prepared statement for this query
         let statement_info = {
             let mut statements = self.prepared_statements.write();
-            statements.entry(query.statement_id.clone())
+            statements
+                .entry(query.statement_id.clone())
                 .or_insert_with(|| PreparedStatementInfo::new(&query.sql))
                 .clone()
         };
-        
+
         // Execute using prepared statement
         let connection = self.connection_pool.acquire_connection().await?;
-        let result = self.execute_prepared_raw::<T>(connection, query, &statement_info).await?;
-        
+        let result = self
+            .execute_prepared_raw::<T>(connection, query, &statement_info)
+            .await?;
+
         // Update statement usage statistics
         {
             let mut statements = self.prepared_statements.write();
@@ -141,21 +145,24 @@ impl DatabaseOptimizer {
                 info.total_execution_time += start_time.elapsed();
             }
         }
-        
+
         Ok(result)
     }
-    
+
     /// Batch multiple transactions for better performance
-    pub async fn batch_transaction(&self, transaction: DatabaseTransaction) -> Result<TransactionId, BitCrapsError> {
+    pub async fn batch_transaction(
+        &self,
+        transaction: DatabaseTransaction,
+    ) -> Result<TransactionId, BitCrapsError> {
         let mut batcher = self.transaction_batcher.lock();
-        
+
         let transaction_id = batcher.add_transaction(transaction);
-        
+
         // Check if batch should be executed
         if batcher.should_execute_batch() {
             let batch = batcher.take_batch();
             drop(batcher); // Release lock before async operation
-            
+
             // Execute batch in background
             let optimizer = Arc::new(self.clone());
             tokio::spawn(async move {
@@ -164,24 +171,27 @@ impl DatabaseOptimizer {
                 }
             });
         }
-        
+
         Ok(transaction_id)
     }
-    
+
     /// Execute a batch of transactions atomically
     async fn execute_batch(&self, batch: TransactionBatch) -> Result<(), BitCrapsError> {
         let connection = self.connection_pool.acquire_connection().await?;
         let start_time = Instant::now();
-        
+
         // Begin transaction
         self.begin_transaction(connection.clone()).await?;
-        
+
         let mut results = Vec::with_capacity(batch.transactions.len());
         let mut success = true;
-        
+
         // Execute all transactions in the batch
         for transaction in &batch.transactions {
-            match self.execute_transaction_raw(connection.clone(), transaction).await {
+            match self
+                .execute_transaction_raw(connection.clone(), transaction)
+                .await
+            {
                 Ok(result) => results.push(result),
                 Err(e) => {
                     tracing::error!("Transaction failed in batch: {:?}", e);
@@ -190,69 +200,83 @@ impl DatabaseOptimizer {
                 }
             }
         }
-        
+
         // Commit or rollback based on success
         if success {
             self.commit_transaction(connection).await?;
-            tracing::debug!("Successfully executed batch of {} transactions in {:?}", 
-                          batch.transactions.len(), start_time.elapsed());
+            tracing::debug!(
+                "Successfully executed batch of {} transactions in {:?}",
+                batch.transactions.len(),
+                start_time.elapsed()
+            );
         } else {
             self.rollback_transaction(connection).await?;
-            return Err(BitCrapsError::Database("Batch transaction failed".to_string()));
+            return Err(BitCrapsError::Database(
+                "Batch transaction failed".to_string(),
+            ));
         }
-        
+
         Ok(())
     }
-    
+
     /// Optimize database schema based on query patterns
     pub async fn optimize_schema(&self) -> Result<Vec<OptimizationSuggestion>, BitCrapsError> {
         let query_stats = self.query_stats.read();
         let mut suggestions = Vec::new();
-        
+
         // Analyze query patterns
         for (query_type, stats) in query_stats.iter() {
             // Suggest indexes for slow, frequent queries
-            if stats.average_duration() > self.config.slow_query_threshold 
-                && stats.execution_count > 100 {
+            if stats.average_duration() > self.config.slow_query_threshold
+                && stats.execution_count > 100
+            {
                 suggestions.push(OptimizationSuggestion::AddIndex {
                     table: self.extract_table_name(query_type),
                     columns: self.extract_frequent_columns(query_type, stats),
-                    reason: format!("Query type {} is slow ({:?}) and frequent ({})", 
-                                  query_type, stats.average_duration(), stats.execution_count),
+                    reason: format!(
+                        "Query type {} is slow ({:?}) and frequent ({})",
+                        query_type,
+                        stats.average_duration(),
+                        stats.execution_count
+                    ),
                 });
             }
-            
+
             // Suggest partitioning for very large tables
             if stats.execution_count > 10000 && stats.cache_hit_rate() < 0.3 {
                 suggestions.push(OptimizationSuggestion::PartitionTable {
                     table: self.extract_table_name(query_type),
                     strategy: PartitionStrategy::ByDate,
-                    reason: "High query volume with low cache hit rate suggests large table".to_string(),
+                    reason: "High query volume with low cache hit rate suggests large table"
+                        .to_string(),
                 });
             }
         }
-        
+
         // Analyze prepared statement usage
         let prepared_stats = self.prepared_statements.read();
         for (statement_id, info) in prepared_stats.iter() {
-            if info.execution_count > 1000 && info.average_execution_time() > Duration::from_millis(500) {
+            if info.execution_count > 1000
+                && info.average_execution_time() > Duration::from_millis(500)
+            {
                 suggestions.push(OptimizationSuggestion::OptimizeQuery {
                     query: statement_id.clone(),
                     current_performance: info.average_execution_time(),
-                    reason: "Frequently executed prepared statement with poor performance".to_string(),
+                    reason: "Frequently executed prepared statement with poor performance"
+                        .to_string(),
                 });
             }
         }
-        
+
         Ok(suggestions)
     }
-    
+
     /// Get comprehensive database performance statistics
     pub fn get_performance_stats(&self) -> DatabasePerformanceStats {
         let query_stats = self.query_stats.read();
         let connection_stats = self.connection_pool.get_stats();
         let prepared_stats = self.prepared_statements.read();
-        
+
         let total_queries: u64 = query_stats.values().map(|s| s.execution_count).sum();
         let total_cache_hits: u64 = query_stats.values().map(|s| s.cache_hits).sum();
         let cache_hit_rate = if total_queries > 0 {
@@ -260,11 +284,12 @@ impl DatabaseOptimizer {
         } else {
             0.0
         };
-        
-        let slow_queries = query_stats.iter()
+
+        let slow_queries = query_stats
+            .iter()
             .filter(|(_, stats)| stats.average_duration() > self.config.slow_query_threshold)
             .count();
-        
+
         DatabasePerformanceStats {
             total_queries,
             cache_hit_rate,
@@ -275,35 +300,35 @@ impl DatabaseOptimizer {
             most_frequent_queries: self.get_top_queries(&query_stats, 10),
         }
     }
-    
+
     /// Clear query cache (useful for testing or manual optimization)
     pub fn clear_cache(&self) {
         let mut cache = self.query_cache.write();
         cache.clear();
     }
-    
+
     /// Force execute all pending batched transactions
     pub async fn flush_pending_transactions(&self) -> Result<(), BitCrapsError> {
         let batch = {
             let mut batcher = self.transaction_batcher.lock();
             batcher.take_batch()
         };
-        
+
         if !batch.transactions.is_empty() {
             self.execute_batch(batch).await?;
         }
-        
+
         Ok(())
     }
-    
+
     // Private helper methods
-    
+
     fn get_cached_result<T>(&self, key: &QueryKey) -> Option<T>
     where
         T: Clone + for<'de> serde::Deserialize<'de>,
     {
         let mut cache = self.query_cache.write();
-        
+
         if let Some(cached) = cache.get(key) {
             if !cached.is_expired() {
                 if let Ok(result) = serde_json::from_str(&cached.data) {
@@ -314,10 +339,10 @@ impl DatabaseOptimizer {
                 cache.pop(key);
             }
         }
-        
+
         None
     }
-    
+
     fn cache_result<T>(&self, key: &QueryKey, result: &T, ttl: Duration)
     where
         T: serde::Serialize,
@@ -328,52 +353,61 @@ impl DatabaseOptimizer {
                 created_at: Instant::now(),
                 ttl,
             };
-            
+
             let mut cache = self.query_cache.write();
             cache.put(key.clone(), cached_result);
         }
     }
-    
+
     fn update_query_stats(&self, query_type: &str, start_time: Instant, from_cache: bool) {
         let duration = start_time.elapsed();
         let mut stats = self.query_stats.write();
-        
-        let query_stats = stats.entry(query_type.to_string())
+
+        let query_stats = stats
+            .entry(query_type.to_string())
             .or_insert_with(QueryStats::new);
-        
+
         query_stats.execution_count += 1;
         query_stats.total_duration += duration;
-        
+
         if from_cache {
             query_stats.cache_hits += 1;
         }
     }
-    
+
     fn calculate_average_query_duration(&self, stats: &FxHashMap<String, QueryStats>) -> Duration {
         let (total_duration, total_count) = stats.values().fold(
             (Duration::from_nanos(0), 0u64),
             |(dur_acc, count_acc), stats| {
-                (dur_acc + stats.total_duration, count_acc + stats.execution_count)
-            }
+                (
+                    dur_acc + stats.total_duration,
+                    count_acc + stats.execution_count,
+                )
+            },
         );
-        
+
         if total_count > 0 {
             total_duration / total_count as u32
         } else {
             Duration::from_nanos(0)
         }
     }
-    
-    fn get_top_queries(&self, stats: &FxHashMap<String, QueryStats>, limit: usize) -> Vec<(String, u64)> {
-        let mut queries: Vec<_> = stats.iter()
+
+    fn get_top_queries(
+        &self,
+        stats: &FxHashMap<String, QueryStats>,
+        limit: usize,
+    ) -> Vec<(String, u64)> {
+        let mut queries: Vec<_> = stats
+            .iter()
             .map(|(query, stats)| (query.clone(), stats.execution_count))
             .collect();
-        
+
         queries.sort_by(|a, b| b.1.cmp(&a.1));
         queries.truncate(limit);
         queries
     }
-    
+
     fn extract_table_name(&self, query_type: &str) -> String {
         // Simplified table extraction - in practice, this would parse the SQL
         if query_type.contains("game_states") {
@@ -386,43 +420,65 @@ impl DatabaseOptimizer {
             "unknown".to_string()
         }
     }
-    
+
     fn extract_frequent_columns(&self, _query_type: &str, _stats: &QueryStats) -> Vec<String> {
         // Simplified column extraction - in practice, this would analyze query patterns
         vec!["id".to_string(), "created_at".to_string()]
     }
-    
+
     // Placeholder methods for actual database operations
-    async fn execute_raw_query<T>(&self, _connection: DatabaseConnection, _query: &DatabaseQuery) -> Result<T, BitCrapsError>
+    async fn execute_raw_query<T>(
+        &self,
+        _connection: DatabaseConnection,
+        _query: &DatabaseQuery,
+    ) -> Result<T, BitCrapsError>
     where
         T: Clone + for<'de> serde::Deserialize<'de> + Default,
     {
         // Placeholder implementation
         Ok(T::default())
     }
-    
-    async fn execute_prepared_raw<T>(&self, _connection: DatabaseConnection, _query: &PreparedQuery, _info: &PreparedStatementInfo) -> Result<T, BitCrapsError>
+
+    async fn execute_prepared_raw<T>(
+        &self,
+        _connection: DatabaseConnection,
+        _query: &PreparedQuery,
+        _info: &PreparedStatementInfo,
+    ) -> Result<T, BitCrapsError>
     where
         T: Clone + for<'de> serde::Deserialize<'de> + Default,
     {
         // Placeholder implementation
         Ok(T::default())
     }
-    
-    async fn execute_transaction_raw(&self, _connection: DatabaseConnection, _transaction: &DatabaseTransaction) -> Result<String, BitCrapsError> {
+
+    async fn execute_transaction_raw(
+        &self,
+        _connection: DatabaseConnection,
+        _transaction: &DatabaseTransaction,
+    ) -> Result<String, BitCrapsError> {
         // Placeholder implementation
         Ok("success".to_string())
     }
-    
-    async fn begin_transaction(&self, _connection: DatabaseConnection) -> Result<(), BitCrapsError> {
+
+    async fn begin_transaction(
+        &self,
+        _connection: DatabaseConnection,
+    ) -> Result<(), BitCrapsError> {
         Ok(())
     }
-    
-    async fn commit_transaction(&self, _connection: DatabaseConnection) -> Result<(), BitCrapsError> {
+
+    async fn commit_transaction(
+        &self,
+        _connection: DatabaseConnection,
+    ) -> Result<(), BitCrapsError> {
         Ok(())
     }
-    
-    async fn rollback_transaction(&self, _connection: DatabaseConnection) -> Result<(), BitCrapsError> {
+
+    async fn rollback_transaction(
+        &self,
+        _connection: DatabaseConnection,
+    ) -> Result<(), BitCrapsError> {
         Ok(())
     }
 }
@@ -455,16 +511,19 @@ impl ConnectionPoolOptimizer {
             config: config.clone(),
         }
     }
-    
+
     pub async fn acquire_connection(&self) -> Result<DatabaseConnection, BitCrapsError> {
         let start_time = Instant::now();
-        
+
         // Acquire permit from semaphore
-        let _permit = self.available_connections.acquire().await
+        let _permit = self
+            .available_connections
+            .acquire()
+            .await
             .map_err(|_| BitCrapsError::Database("Failed to acquire connection".to_string()))?;
-        
+
         let wait_time = start_time.elapsed();
-        
+
         // Update statistics
         {
             let mut stats = self.connection_stats.write();
@@ -472,13 +531,13 @@ impl ConnectionPoolOptimizer {
             stats.total_wait_time += wait_time;
             stats.active_connections += 1;
         }
-        
-        Ok(DatabaseConnection { 
+
+        Ok(DatabaseConnection {
             id: uuid::Uuid::new_v4(),
             acquired_at: Instant::now(),
         })
     }
-    
+
     pub fn get_stats(&self) -> ConnectionPoolStats {
         self.connection_stats.read().clone()
     }
@@ -501,45 +560,45 @@ impl TransactionBatcher {
             config: config.clone(),
         }
     }
-    
+
     pub fn add_transaction(&mut self, transaction: DatabaseTransaction) -> TransactionId {
         if self.pending_transactions.is_empty() {
             self.batch_start_time = Some(Instant::now());
         }
-        
+
         let mut transaction_id = [0u8; 32];
         transaction_id[..8].copy_from_slice(&self.next_transaction_id.to_le_bytes());
         self.next_transaction_id += 1;
-        
+
         self.pending_transactions.push_back(transaction);
-        
+
         transaction_id
     }
-    
+
     pub fn should_execute_batch(&self) -> bool {
         if self.pending_transactions.is_empty() {
             return false;
         }
-        
+
         // Execute if batch is full
         if self.pending_transactions.len() >= self.config.batch_size {
             return true;
         }
-        
+
         // Execute if batch timeout reached
         if let Some(start_time) = self.batch_start_time {
             if start_time.elapsed() >= self.config.batch_timeout {
                 return true;
             }
         }
-        
+
         false
     }
-    
+
     pub fn take_batch(&mut self) -> TransactionBatch {
         let transactions = self.pending_transactions.drain(..).collect();
         self.batch_start_time = None;
-        
+
         TransactionBatch {
             transactions,
             created_at: Instant::now(),
@@ -559,17 +618,17 @@ impl QueryKey {
     pub fn from_query(query: &DatabaseQuery) -> Self {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         query.sql.hash(&mut hasher);
         let query_hash = hasher.finish();
-        
+
         let mut param_hasher = DefaultHasher::new();
         for param in &query.parameters {
             param.hash(&mut param_hasher);
         }
         let parameters_hash = param_hasher.finish();
-        
+
         Self {
             query_hash,
             parameters_hash,
@@ -607,7 +666,7 @@ impl QueryStats {
             last_executed: None,
         }
     }
-    
+
     pub fn cache_hit_rate(&self) -> f64 {
         if self.execution_count > 0 {
             self.cache_hits as f64 / self.execution_count as f64
@@ -615,7 +674,7 @@ impl QueryStats {
             0.0
         }
     }
-    
+
     pub fn average_duration(&self) -> Duration {
         if self.execution_count > 0 {
             self.total_duration / self.execution_count as u32
@@ -642,7 +701,7 @@ impl PreparedStatementInfo {
             total_execution_time: Duration::from_nanos(0),
         }
     }
-    
+
     pub fn average_execution_time(&self) -> Duration {
         if self.execution_count > 0 {
             self.total_execution_time / self.execution_count as u32
@@ -669,7 +728,7 @@ impl ConnectionPoolStats {
             peak_connections: 0,
         }
     }
-    
+
     pub fn average_wait_time(&self) -> Duration {
         if self.total_acquisitions > 0 {
             self.total_wait_time / self.total_acquisitions as u32
@@ -695,9 +754,9 @@ pub struct DatabaseQuery {
 impl DatabaseQuery {
     pub fn is_read_only(&self) -> bool {
         let sql_lower = self.sql.to_lowercase();
-        sql_lower.trim_start().starts_with("select") ||
-        sql_lower.trim_start().starts_with("with") ||
-        sql_lower.contains("explain")
+        sql_lower.trim_start().starts_with("select")
+            || sql_lower.trim_start().starts_with("with")
+            || sql_lower.contains("explain")
     }
 }
 

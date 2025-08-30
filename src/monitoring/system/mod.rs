@@ -7,10 +7,10 @@
 //! - Thermal/temperature monitoring
 //! - Memory usage tracking
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use serde::{Serialize, Deserialize};
 
 /// System metrics collected from real platform APIs
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,13 +53,13 @@ pub struct NetworkInterface {
 pub trait SystemMonitor: Send + Sync {
     /// Collect current system metrics
     fn collect_metrics(&self) -> Result<SystemMetrics, SystemMonitorError>;
-    
+
     /// Get platform identifier
     fn platform_name(&self) -> &str;
-    
+
     /// Check if real monitoring is available (vs simulation)
     fn is_real_monitoring(&self) -> bool;
-    
+
     /// Get supported metrics for this platform
     fn supported_metrics(&self) -> Vec<MetricType>;
 }
@@ -107,7 +107,7 @@ impl CachedSystemMonitor {
     pub fn new(monitor: Box<dyn SystemMonitor>) -> Self {
         Self::with_cache_duration(monitor, Duration::from_secs(5))
     }
-    
+
     pub fn with_cache_duration(monitor: Box<dyn SystemMonitor>, cache_duration: Duration) -> Self {
         Self {
             inner: monitor,
@@ -115,40 +115,40 @@ impl CachedSystemMonitor {
             cache_duration,
         }
     }
-    
+
     pub fn collect_metrics(&self) -> Result<SystemMetrics, SystemMonitorError> {
         let now = Instant::now();
         let mut cache = self.cache.lock().unwrap();
-        
+
         // Check if cache is valid
         if let Some(ref cached) = *cache {
             if now.duration_since(cached.collected_at) < self.cache_duration {
                 return Ok(cached.metrics.clone());
             }
         }
-        
+
         // Cache expired or doesn't exist, collect new metrics
         let metrics = self.inner.collect_metrics()?;
         *cache = Some(CachedMetrics {
             metrics: metrics.clone(),
             collected_at: now,
         });
-        
+
         Ok(metrics)
     }
-    
+
     pub fn platform_name(&self) -> &str {
         self.inner.platform_name()
     }
-    
+
     pub fn is_real_monitoring(&self) -> bool {
         self.inner.is_real_monitoring()
     }
-    
+
     pub fn supported_metrics(&self) -> Vec<MetricType> {
         self.inner.supported_metrics()
     }
-    
+
     /// Force cache refresh
     pub fn refresh_cache(&self) -> Result<SystemMetrics, SystemMonitorError> {
         let mut cache = self.cache.lock().unwrap();
@@ -171,56 +171,68 @@ impl SystemMonitorFactory {
         {
             Box::new(linux::LinuxSystemMonitor::new())
         }
-        
+
         #[cfg(target_os = "android")]
         {
             Box::new(android::AndroidSystemMonitor::new())
         }
-        
+
         #[cfg(target_os = "ios")]
         {
             Box::new(ios::IOSSystemMonitor::new())
         }
-        
+
         #[cfg(target_os = "macos")]
         {
             Box::new(macos::MacOSSystemMonitor::new())
         }
-        
+
         #[cfg(target_os = "windows")]
         {
             Box::new(windows::WindowsSystemMonitor::new())
         }
-        
-        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "ios", target_os = "macos", target_os = "windows")))]
+
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "windows"
+        )))]
         {
             Box::new(fallback::FallbackSystemMonitor::new())
         }
     }
-    
+
     /// Create a cached monitor with default settings
     pub fn create_cached_monitor() -> CachedSystemMonitor {
         CachedSystemMonitor::new(Self::create_monitor())
     }
-    
+
     /// Get the current platform name
     pub fn current_platform() -> &'static str {
         #[cfg(target_os = "linux")]
         return "linux";
-        
+
         #[cfg(target_os = "android")]
         return "android";
-        
+
         #[cfg(target_os = "ios")]
         return "ios";
-        
+
         #[cfg(target_os = "macos")]
         return "macos";
-        
+
         #[cfg(target_os = "windows")]
         return "windows";
-        
-        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "ios", target_os = "macos", target_os = "windows")))]
+
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "windows"
+        )))]
         return "unknown";
     }
 }
@@ -234,53 +246,53 @@ pub fn global_system_monitor() -> &'static CachedSystemMonitor {
 }
 
 // Platform-specific implementations
-pub mod linux;
-pub mod android; 
+pub mod android;
+pub mod fallback;
 pub mod ios;
+pub mod linux;
 pub mod macos;
 pub mod windows;
-pub mod fallback;
 
 // Re-export platform monitors for direct access if needed
-pub use linux::LinuxSystemMonitor;
 pub use android::AndroidSystemMonitor;
+pub use fallback::FallbackSystemMonitor;
 pub use ios::IOSSystemMonitor;
+pub use linux::LinuxSystemMonitor;
 pub use macos::MacOSSystemMonitor;
 pub use windows::WindowsSystemMonitor;
-pub use fallback::FallbackSystemMonitor;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_system_monitor_creation() {
         let monitor = SystemMonitorFactory::create_monitor();
         let platform = monitor.platform_name();
         println!("Platform: {}", platform);
-        
+
         // Should be able to get supported metrics
         let metrics = monitor.supported_metrics();
         assert!(!metrics.is_empty());
     }
-    
+
     #[tokio::test]
     async fn test_cached_monitor() {
         let monitor = SystemMonitorFactory::create_cached_monitor();
-        
+
         // First call should hit the system
         let start = Instant::now();
         let metrics1 = monitor.collect_metrics().unwrap();
         let first_duration = start.elapsed();
-        
+
         // Second call should use cache
         let start = Instant::now();
         let metrics2 = monitor.collect_metrics().unwrap();
         let second_duration = start.elapsed();
-        
+
         // Cache should make it faster (though this is a rough test)
         assert!(second_duration <= first_duration);
-        
+
         // Metrics should be the same (from cache)
         assert_eq!(metrics1.timestamp, metrics2.timestamp);
     }

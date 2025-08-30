@@ -1,8 +1,8 @@
 //! BitCraps Consensus Mechanism for Decentralized Game State Agreement
-//! 
+//!
 //! This module implements a comprehensive consensus system that allows multiple players
 //! to agree on game state in adversarial conditions without requiring a central authority.
-//! 
+//!
 //! ## Key Features:
 //! - Game state consensus protocol for multiple players
 //! - Fork resolution when players have conflicting game states
@@ -20,26 +20,26 @@
 //! - Cryptographic signatures for all state changes
 //! - Timeout-based progression to prevent stalling
 
-pub mod engine;
-pub mod voting;
+pub mod byzantine_engine;
 pub mod commit_reveal;
-pub mod validation;
+pub mod engine;
 pub mod lockfree_engine;
-pub mod robust_engine;
 pub mod merkle_cache;
 pub mod persistence;
-pub mod byzantine_engine;
+pub mod robust_engine;
+pub mod validation;
+pub mod voting;
 
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use serde::{Serialize, Deserialize};
 
 use crate::protocol::Hash256;
 
 // Re-export main types
-pub use engine::{ConsensusEngine, GameConsensusState, GameProposal, GameOperation};
-pub use voting::{VoteTracker, ConfirmationTracker, Fork};
-pub use commit_reveal::{RandomnessCommit, RandomnessReveal, EntropyPool};
+pub use commit_reveal::{EntropyPool, RandomnessCommit, RandomnessReveal};
+pub use engine::{ConsensusEngine, GameConsensusState, GameOperation, GameProposal};
 pub use validation::{Dispute, DisputeClaim, DisputeEvidence, DisputeVote, DisputeVoteType};
+pub use voting::{ConfirmationTracker, Fork, VoteTracker};
 
 /// Consensus constants
 pub const MIN_CONFIRMATIONS: usize = 2; // Minimum confirmations for consensus
@@ -85,22 +85,22 @@ impl Default for ConsensusConfig {
 pub struct ConsensusMetrics {
     /// Total consensus rounds completed
     pub rounds_completed: u64,
-    
+
     /// Total consensus rounds failed
     pub rounds_failed: u64,
-    
+
     /// Average consensus time (milliseconds)
     pub avg_consensus_time_ms: f64,
-    
+
     /// Fork events resolved
     pub forks_resolved: u32,
-    
+
     /// Memory usage in bytes
     pub memory_usage_bytes: usize,
-    
+
     /// Signature verification count
     pub signatures_verified: u64,
-    
+
     /// Cache hit rate for signature verification
     pub signature_cache_hit_rate: f64,
 }
@@ -110,7 +110,7 @@ pub struct ConsensusMetrics {
 pub struct CompactSignature {
     /// Compressed signature bytes
     pub data: [u8; 32],
-    
+
     /// Recovery ID for public key recovery
     pub recovery_id: u8,
 }
@@ -120,7 +120,7 @@ impl CompactSignature {
     pub fn new(data: [u8; 32], recovery_id: u8) -> Self {
         Self { data, recovery_id }
     }
-    
+
     /// Convert to full signature format
     pub fn to_full_signature(&self) -> [u8; 64] {
         let mut full = [0u8; 64];
@@ -128,7 +128,7 @@ impl CompactSignature {
         // Would implement proper signature conversion
         full
     }
-    
+
     /// Verify signature against message and public key
     pub fn verify(&self, _message: &[u8], _public_key: &[u8; 32]) -> bool {
         // Would implement signature verification

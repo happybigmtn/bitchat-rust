@@ -1,5 +1,5 @@
 //! Cli module for BitCraps UI
-//! 
+//!
 //! This module implements the user interface components for BitCraps
 //! including CLI, TUI, and specialized casino widgets.
 
@@ -11,10 +11,10 @@ use clap::{Parser, Subcommand};
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
-    
+
     #[arg(short, long, default_value = "8080")]
     pub port: u16,
-    
+
     #[arg(short, long)]
     pub config: Option<String>,
 }
@@ -38,4 +38,3 @@ pub enum Commands {
     /// Place a bet in active game
     Bet { bet_type: String, amount: u64 },
 }
-

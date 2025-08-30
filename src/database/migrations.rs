@@ -1,10 +1,10 @@
 //! Database migration system for schema management
 
-use rusqlite::Connection;
-use std::collections::HashMap;
-use chrono::Utc;
-use sha2::{Sha256, Digest};
 use crate::error::{Error, Result};
+use chrono::Utc;
+use rusqlite::Connection;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 
 /// Migration manager for database schema versioning
 pub struct MigrationManager {
@@ -26,7 +26,7 @@ impl Migration {
     pub fn new(version: u32, name: impl Into<String>, up_sql: impl Into<String>) -> Self {
         let up = up_sql.into();
         let checksum = Self::calculate_checksum(&up);
-        
+
         Self {
             version,
             name: name.into(),
@@ -345,7 +345,9 @@ impl MigrationManager {
     /// Run all pending migrations
     pub fn migrate(&mut self) -> Result<MigrationReport> {
         // Take the connection out temporarily to avoid borrow issues
-        let mut conn = self.connection.take()
+        let mut conn = self
+            .connection
+            .take()
             .ok_or_else(|| Error::Database("No connection available".into()))?;
 
         // Create migrations table if it doesn't exist
@@ -360,7 +362,11 @@ impl MigrationManager {
                 match Self::run_migration_static(&mut conn, migration) {
                     Ok(_) => {
                         report.successful.push(migration.version);
-                        tracing::info!("Applied migration v{}: {}", migration.version, migration.name);
+                        tracing::info!(
+                            "Applied migration v{}: {}",
+                            migration.version,
+                            migration.name
+                        );
                     }
                     Err(e) => {
                         report.failed.push((migration.version, e.to_string()));
@@ -375,17 +381,19 @@ impl MigrationManager {
         }
 
         report.final_version = Self::get_current_version_static(&conn)?;
-        
+
         // Put the connection back
         self.connection = Some(conn);
-        
+
         Ok(report)
     }
 
     /// Rollback to a specific version
     pub fn rollback_to(&mut self, target_version: u32) -> Result<MigrationReport> {
         // Take the connection out temporarily to avoid borrow issues
-        let mut conn = self.connection.take()
+        let mut conn = self
+            .connection
+            .take()
             .ok_or_else(|| Error::Database("No connection available".into()))?;
 
         let mut report = MigrationReport::new();
@@ -393,10 +401,10 @@ impl MigrationManager {
 
         if target_version >= current_version {
             self.connection = Some(conn); // Put connection back before returning
-            return Err(Error::Database(
-                format!("Cannot rollback to version {} from current version {}", 
-                    target_version, current_version)
-            ));
+            return Err(Error::Database(format!(
+                "Cannot rollback to version {} from current version {}",
+                target_version, current_version
+            )));
         }
 
         // Rollback migrations in reverse order
@@ -406,11 +414,19 @@ impl MigrationManager {
                 match Self::rollback_migration_static(&mut conn, migration) {
                     Ok(_) => {
                         report.successful.push(migration.version);
-                        tracing::info!("Rolled back migration v{}: {}", migration.version, migration.name);
+                        tracing::info!(
+                            "Rolled back migration v{}: {}",
+                            migration.version,
+                            migration.name
+                        );
                     }
                     Err(e) => {
                         report.failed.push((migration.version, e.to_string()));
-                        tracing::error!("Failed to rollback migration v{}: {}", migration.version, e);
+                        tracing::error!(
+                            "Failed to rollback migration v{}: {}",
+                            migration.version,
+                            e
+                        );
                         break;
                     }
                 }
@@ -418,10 +434,10 @@ impl MigrationManager {
         }
 
         report.final_version = Self::get_current_version_static(&conn)?;
-        
+
         // Put the connection back
         self.connection = Some(conn);
-        
+
         Ok(report)
     }
 
@@ -437,7 +453,8 @@ impl MigrationManager {
             )
             "#,
             [],
-        ).map_err(|e| Error::Database(e.to_string()))?;
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
         Ok(())
     }
 
@@ -449,11 +466,9 @@ impl MigrationManager {
     /// Get current schema version (static version)
     fn get_current_version_static(conn: &Connection) -> Result<u32> {
         let version: Option<u32> = conn
-            .query_row(
-                "SELECT MAX(version) FROM schema_migrations",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
             .unwrap_or(Some(0));
         Ok(version.unwrap_or(0))
     }
@@ -465,7 +480,8 @@ impl MigrationManager {
 
     /// Run a single migration (static version)
     fn run_migration_static(conn: &mut Connection, migration: &Migration) -> Result<()> {
-        let tx = conn.transaction()
+        let tx = conn
+            .transaction()
             .map_err(|e| Error::Database(e.to_string()))?;
 
         // Execute migration SQL
@@ -483,8 +499,7 @@ impl MigrationManager {
             ],
         ).map_err(|e| Error::Database(e.to_string()))?;
 
-        tx.commit()
-            .map_err(|e| Error::Database(e.to_string()))?;
+        tx.commit().map_err(|e| Error::Database(e.to_string()))?;
 
         Ok(())
     }
@@ -496,10 +511,15 @@ impl MigrationManager {
 
     /// Rollback a single migration (static version)
     fn rollback_migration_static(conn: &mut Connection, migration: &Migration) -> Result<()> {
-        let down_sql = migration.down_sql.as_ref()
-            .ok_or_else(|| Error::Database(format!("No rollback SQL for migration v{}", migration.version)))?;
+        let down_sql = migration.down_sql.as_ref().ok_or_else(|| {
+            Error::Database(format!(
+                "No rollback SQL for migration v{}",
+                migration.version
+            ))
+        })?;
 
-        let tx = conn.transaction()
+        let tx = conn
+            .transaction()
             .map_err(|e| Error::Database(e.to_string()))?;
 
         // Execute rollback SQL
@@ -510,10 +530,10 @@ impl MigrationManager {
         tx.execute(
             "DELETE FROM schema_migrations WHERE version = ?",
             [migration.version],
-        ).map_err(|e| Error::Database(e.to_string()))?;
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
 
-        tx.commit()
-            .map_err(|e| Error::Database(e.to_string()))?;
+        tx.commit().map_err(|e| Error::Database(e.to_string()))?;
 
         Ok(())
     }
@@ -570,31 +590,33 @@ impl MigrationManager {
 
     /// Get list of applied migrations
     fn get_applied_migrations(&self, conn: &Connection) -> Result<Vec<(u32, String)>> {
-        let mut stmt = conn.prepare("SELECT version, checksum FROM schema_migrations")
+        let mut stmt = conn
+            .prepare("SELECT version, checksum FROM schema_migrations")
             .map_err(|e| Error::Database(e.to_string()))?;
 
-        let migrations = stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        }).map_err(|e| Error::Database(e.to_string()))?;
+        let migrations = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| Error::Database(e.to_string()))?;
 
-        migrations.collect::<std::result::Result<Vec<_>, _>>()
+        migrations
+            .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| Error::Database(e.to_string()))
     }
 
     /// Get migration status
     pub fn status(&self, conn: &Connection) -> Result<MigrationStatus> {
         let current_version = self.get_current_version(conn)?;
-        let latest_version = self.migrations.iter()
-            .map(|m| m.version)
-            .max()
-            .unwrap_or(0);
+        let latest_version = self.migrations.iter().map(|m| m.version).max().unwrap_or(0);
 
-        let applied = self.get_applied_migrations(conn)?
+        let applied = self
+            .get_applied_migrations(conn)?
             .into_iter()
             .map(|(v, _)| v)
             .collect();
 
-        let pending: Vec<u32> = self.migrations.iter()
+        let pending: Vec<u32> = self
+            .migrations
+            .iter()
             .filter(|m| m.version > current_version)
             .map(|m| m.version)
             .collect();
@@ -669,7 +691,7 @@ mod tests {
     #[test]
     fn test_migration_manager() {
         let conn = Connection::open_in_memory().unwrap();
-        
+
         // Create the migrations table first
         conn.execute(
             "CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -677,10 +699,11 @@ mod tests {
                 applied_at INTEGER NOT NULL
             )",
             [],
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         let mut manager = MigrationManager::new().with_connection(conn);
-        
+
         // Run migrations
         let report = manager.migrate().unwrap();
         assert!(report.is_success());

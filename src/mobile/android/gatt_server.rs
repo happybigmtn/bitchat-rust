@@ -1,18 +1,18 @@
 //! GATT Server Implementation for Android BLE
-//! 
+//!
 //! This module provides a GATT server implementation that works with Android's
 //! BluetoothGattServer API through JNI for data exchange between BitCraps peers.
 
-use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
 use crate::error::BitCrapsError;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 #[cfg(target_os = "android")]
+use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JString};
+#[cfg(target_os = "android")]
+use jni::sys::{jboolean, jbyteArray, jint, jlong, jobject, jstring};
+#[cfg(target_os = "android")]
 use jni::JNIEnv;
-#[cfg(target_os = "android")]
-use jni::objects::{JClass, JString, JObject, JByteArray, GlobalRef};
-#[cfg(target_os = "android")]
-use jni::sys::{jlong, jstring, jboolean, jint, jbyteArray, jobject};
 
 /// BitCraps GATT Service and Characteristic UUIDs
 pub const BITCRAPS_SERVICE_UUID: &str = "12345678-1234-5678-1234-567812345678";
@@ -77,11 +77,12 @@ impl AndroidGattServer {
 
     /// Start the GATT server
     pub async fn start(&self) -> Result<(), BitCrapsError> {
-        let mut state = self.state.lock().map_err(|_| {
-            BitCrapsError::BluetoothError {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| BitCrapsError::BluetoothError {
                 message: "Failed to lock GATT server state".to_string(),
-            }
-        })?;
+            })?;
 
         if state.is_running {
             return Ok(()); // Already running
@@ -89,28 +90,21 @@ impl AndroidGattServer {
 
         #[cfg(target_os = "android")]
         if let (Some(vm), Some(server)) = (&self.java_vm, &self.gatt_server) {
-            let env = vm.attach_current_thread().map_err(|e| {
-                BitCrapsError::BluetoothError {
+            let env = vm
+                .attach_current_thread()
+                .map_err(|e| BitCrapsError::BluetoothError {
                     message: format!("Failed to attach to JVM: {}", e),
-                }
-            })?;
+                })?;
 
             // Call Java method to start GATT server
-            let result = env.call_method(
-                server,
-                "startServer",
-                "()Z",
-                &[],
-            ).map_err(|e| {
-                BitCrapsError::BluetoothError {
+            let result = env
+                .call_method(server, "startServer", "()Z", &[])
+                .map_err(|e| BitCrapsError::BluetoothError {
                     message: format!("Failed to call startServer: {}", e),
-                }
-            })?;
+                })?;
 
-            let success = result.z().map_err(|e| {
-                BitCrapsError::BluetoothError {
-                    message: format!("Failed to get boolean result: {}", e),
-                }
+            let success = result.z().map_err(|e| BitCrapsError::BluetoothError {
+                message: format!("Failed to get boolean result: {}", e),
             })?;
 
             if success {
@@ -138,11 +132,12 @@ impl AndroidGattServer {
 
     /// Stop the GATT server
     pub async fn stop(&self) -> Result<(), BitCrapsError> {
-        let mut state = self.state.lock().map_err(|_| {
-            BitCrapsError::BluetoothError {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| BitCrapsError::BluetoothError {
                 message: "Failed to lock GATT server state".to_string(),
-            }
-        })?;
+            })?;
 
         if !state.is_running {
             return Ok(()); // Not running
@@ -150,23 +145,18 @@ impl AndroidGattServer {
 
         #[cfg(target_os = "android")]
         if let (Some(vm), Some(server)) = (&self.java_vm, &self.gatt_server) {
-            let env = vm.attach_current_thread().map_err(|e| {
-                BitCrapsError::BluetoothError {
+            let env = vm
+                .attach_current_thread()
+                .map_err(|e| BitCrapsError::BluetoothError {
                     message: format!("Failed to attach to JVM: {}", e),
-                }
-            })?;
+                })?;
 
             // Call Java method to stop GATT server
-            let result = env.call_method(
-                server,
-                "stopServer",
-                "()V",
-                &[],
-            ).map_err(|e| {
-                BitCrapsError::BluetoothError {
+            let result = env
+                .call_method(server, "stopServer", "()V", &[])
+                .map_err(|e| BitCrapsError::BluetoothError {
                     message: format!("Failed to call stopServer: {}", e),
-                }
-            })?;
+                })?;
 
             state.is_running = false;
             state.connected_devices.clear();
@@ -191,17 +181,20 @@ impl AndroidGattServer {
             match handler.handle_command(device, data) {
                 Ok(response) => {
                     // Store response for sending back
-                    let mut state = self.state.lock().map_err(|_| {
-                        BitCrapsError::BluetoothError {
-                            message: "Failed to lock GATT server state".to_string(),
-                        }
-                    })?;
-                    
-                    state.pending_responses.insert(device.to_string(), response.clone());
-                    
+                    let mut state =
+                        self.state
+                            .lock()
+                            .map_err(|_| BitCrapsError::BluetoothError {
+                                message: "Failed to lock GATT server state".to_string(),
+                            })?;
+
+                    state
+                        .pending_responses
+                        .insert(device.to_string(), response.clone());
+
                     // Send response immediately if possible
                     self.send_response(device, &response)
-                },
+                }
                 Err(e) => {
                     log::error!("Message handler error for device {}: {}", device, e);
                     Err(e)
@@ -217,45 +210,43 @@ impl AndroidGattServer {
     pub fn send_response(&self, device: &str, data: &[u8]) -> Result<(), BitCrapsError> {
         #[cfg(target_os = "android")]
         if let (Some(vm), Some(server)) = (&self.java_vm, &self.gatt_server) {
-            let env = vm.attach_current_thread().map_err(|e| {
-                BitCrapsError::BluetoothError {
+            let env = vm
+                .attach_current_thread()
+                .map_err(|e| BitCrapsError::BluetoothError {
                     message: format!("Failed to attach to JVM: {}", e),
-                }
-            })?;
+                })?;
 
             // Convert device address to JString
-            let device_jstring = env.new_string(device).map_err(|e| {
-                BitCrapsError::BluetoothError {
-                    message: format!("Failed to create device JString: {}", e),
-                }
-            })?;
+            let device_jstring =
+                env.new_string(device)
+                    .map_err(|e| BitCrapsError::BluetoothError {
+                        message: format!("Failed to create device JString: {}", e),
+                    })?;
 
             // Convert data to byte array
-            let data_array = env.byte_array_from_slice(data).map_err(|e| {
-                BitCrapsError::BluetoothError {
-                    message: format!("Failed to create byte array: {}", e),
-                }
-            })?;
+            let data_array =
+                env.byte_array_from_slice(data)
+                    .map_err(|e| BitCrapsError::BluetoothError {
+                        message: format!("Failed to create byte array: {}", e),
+                    })?;
 
             // Call Java method to send response
-            let result = env.call_method(
-                server,
-                "sendResponse",
-                "(Ljava/lang/String;[B)Z",
-                &[
-                    jni::objects::JValue::Object(&device_jstring),
-                    jni::objects::JValue::Object(&data_array),
-                ],
-            ).map_err(|e| {
-                BitCrapsError::BluetoothError {
+            let result = env
+                .call_method(
+                    server,
+                    "sendResponse",
+                    "(Ljava/lang/String;[B)Z",
+                    &[
+                        jni::objects::JValue::Object(&device_jstring),
+                        jni::objects::JValue::Object(&data_array),
+                    ],
+                )
+                .map_err(|e| BitCrapsError::BluetoothError {
                     message: format!("Failed to call sendResponse: {}", e),
-                }
-            })?;
+                })?;
 
-            let success = result.z().map_err(|e| {
-                BitCrapsError::BluetoothError {
-                    message: format!("Failed to get boolean result: {}", e),
-                }
+            let success = result.z().map_err(|e| BitCrapsError::BluetoothError {
+                message: format!("Failed to get boolean result: {}", e),
             })?;
 
             if success {
@@ -274,7 +265,11 @@ impl AndroidGattServer {
 
         #[cfg(not(target_os = "android"))]
         {
-            log::debug!("Mock response sent to device: {} ({} bytes)", device, data.len());
+            log::debug!(
+                "Mock response sent to device: {} ({} bytes)",
+                device,
+                data.len()
+            );
             Ok(())
         }
     }
@@ -283,45 +278,43 @@ impl AndroidGattServer {
     pub fn send_notification(&self, device: &str, data: &[u8]) -> Result<(), BitCrapsError> {
         #[cfg(target_os = "android")]
         if let (Some(vm), Some(server)) = (&self.java_vm, &self.gatt_server) {
-            let env = vm.attach_current_thread().map_err(|e| {
-                BitCrapsError::BluetoothError {
+            let env = vm
+                .attach_current_thread()
+                .map_err(|e| BitCrapsError::BluetoothError {
                     message: format!("Failed to attach to JVM: {}", e),
-                }
-            })?;
+                })?;
 
             // Convert device address to JString
-            let device_jstring = env.new_string(device).map_err(|e| {
-                BitCrapsError::BluetoothError {
-                    message: format!("Failed to create device JString: {}", e),
-                }
-            })?;
+            let device_jstring =
+                env.new_string(device)
+                    .map_err(|e| BitCrapsError::BluetoothError {
+                        message: format!("Failed to create device JString: {}", e),
+                    })?;
 
             // Convert data to byte array
-            let data_array = env.byte_array_from_slice(data).map_err(|e| {
-                BitCrapsError::BluetoothError {
-                    message: format!("Failed to create byte array: {}", e),
-                }
-            })?;
+            let data_array =
+                env.byte_array_from_slice(data)
+                    .map_err(|e| BitCrapsError::BluetoothError {
+                        message: format!("Failed to create byte array: {}", e),
+                    })?;
 
             // Call Java method to send notification
-            let result = env.call_method(
-                server,
-                "sendNotification",
-                "(Ljava/lang/String;[B)Z",
-                &[
-                    jni::objects::JValue::Object(&device_jstring),
-                    jni::objects::JValue::Object(&data_array),
-                ],
-            ).map_err(|e| {
-                BitCrapsError::BluetoothError {
+            let result = env
+                .call_method(
+                    server,
+                    "sendNotification",
+                    "(Ljava/lang/String;[B)Z",
+                    &[
+                        jni::objects::JValue::Object(&device_jstring),
+                        jni::objects::JValue::Object(&data_array),
+                    ],
+                )
+                .map_err(|e| BitCrapsError::BluetoothError {
                     message: format!("Failed to call sendNotification: {}", e),
-                }
-            })?;
+                })?;
 
-            let success = result.z().map_err(|e| {
-                BitCrapsError::BluetoothError {
-                    message: format!("Failed to get boolean result: {}", e),
-                }
+            let success = result.z().map_err(|e| BitCrapsError::BluetoothError {
+                message: format!("Failed to get boolean result: {}", e),
             })?;
 
             if success {
@@ -340,18 +333,23 @@ impl AndroidGattServer {
 
         #[cfg(not(target_os = "android"))]
         {
-            log::debug!("Mock notification sent to device: {} ({} bytes)", device, data.len());
+            log::debug!(
+                "Mock notification sent to device: {} ({} bytes)",
+                device,
+                data.len()
+            );
             Ok(())
         }
     }
 
     /// Handle device connection
     pub fn handle_device_connected(&self, device: &str) -> Result<(), BitCrapsError> {
-        let mut state = self.state.lock().map_err(|_| {
-            BitCrapsError::BluetoothError {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| BitCrapsError::BluetoothError {
                 message: "Failed to lock GATT server state".to_string(),
-            }
-        })?;
+            })?;
 
         if !state.connected_devices.contains(&device.to_string()) {
             state.connected_devices.push(device.to_string());
@@ -367,11 +365,12 @@ impl AndroidGattServer {
 
     /// Handle device disconnection
     pub fn handle_device_disconnected(&self, device: &str) -> Result<(), BitCrapsError> {
-        let mut state = self.state.lock().map_err(|_| {
-            BitCrapsError::BluetoothError {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| BitCrapsError::BluetoothError {
                 message: "Failed to lock GATT server state".to_string(),
-            }
-        })?;
+            })?;
 
         state.connected_devices.retain(|d| d != device);
         state.pending_responses.remove(device);
@@ -386,23 +385,28 @@ impl AndroidGattServer {
 
     /// Get server state
     pub fn get_state(&self) -> Result<GattServerState, BitCrapsError> {
-        let state = self.state.lock().map_err(|_| {
-            BitCrapsError::BluetoothError {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| BitCrapsError::BluetoothError {
                 message: "Failed to lock GATT server state".to_string(),
-            }
-        })?;
+            })?;
 
         Ok(state.clone())
     }
 
     /// Check if server is running
     pub fn is_running(&self) -> bool {
-        self.state.lock().map(|state| state.is_running).unwrap_or(false)
+        self.state
+            .lock()
+            .map(|state| state.is_running)
+            .unwrap_or(false)
     }
 
     /// Get connected devices count
     pub fn get_connected_devices_count(&self) -> usize {
-        self.state.lock()
+        self.state
+            .lock()
             .map(|state| state.connected_devices.len())
             .unwrap_or(0)
     }
@@ -414,7 +418,7 @@ pub struct DefaultMessageHandler;
 impl MessageHandler for DefaultMessageHandler {
     fn handle_command(&self, device: &str, data: &[u8]) -> Result<Vec<u8>, BitCrapsError> {
         log::debug!("Received command from {}: {} bytes", device, data.len());
-        
+
         // Echo back the same data for testing
         Ok(data.to_vec())
     }

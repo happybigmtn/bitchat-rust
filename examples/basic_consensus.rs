@@ -2,9 +2,9 @@
 //!
 //! Run with: cargo run --example basic_consensus
 
-use bitcraps::protocol::consensus::engine::{ConsensusEngine, ConsensusConfig};
-use bitcraps::protocol::{PeerId, GameId};
 use bitcraps::error::Result;
+use bitcraps::protocol::consensus::engine::{ConsensusConfig, ConsensusEngine};
+use bitcraps::protocol::{GameId, PeerId};
 use std::time::Duration;
 use tokio;
 
@@ -12,10 +12,10 @@ use tokio;
 async fn main() -> Result<()> {
     // Initialize logging
     env_logger::init();
-    
+
     println!("BitCraps Basic Consensus Example");
     println!("=================================\n");
-    
+
     // Create configuration
     let config = ConsensusConfig {
         min_validators: 3,
@@ -25,16 +25,16 @@ async fn main() -> Result<()> {
         byzantine_threshold: 0.33,
         enable_anti_cheat: true,
     };
-    
+
     // Create consensus engine
     let node_id = PeerId::random();
     let game_id = GameId::random();
     let mut engine = ConsensusEngine::new(node_id, config);
-    
+
     println!("Node ID: {:?}", node_id);
     println!("Game ID: {:?}", game_id);
     println!();
-    
+
     // Simulate adding validators
     let validators = vec![
         PeerId::random(),
@@ -42,14 +42,14 @@ async fn main() -> Result<()> {
         PeerId::random(),
         node_id, // Include ourselves
     ];
-    
+
     println!("Adding {} validators...", validators.len());
     for validator in &validators {
         engine.add_validator(*validator)?;
         println!("  Added validator: {:?}", validator);
     }
     println!();
-    
+
     // Create a game proposal
     println!("Creating game proposal...");
     let proposal = engine.create_proposal(
@@ -57,37 +57,37 @@ async fn main() -> Result<()> {
         "PlaceBet".to_string(),
         vec![1, 2, 3, 4], // Dummy bet data
     )?;
-    
+
     println!("Proposal created with ID: {:?}", proposal.id);
     println!("Operation: {}", proposal.operation_type);
     println!();
-    
+
     // Simulate voting (in real system, votes come from network)
     println!("Simulating validator votes...");
-    
+
     // 3 out of 4 vote yes (75% > 66.7% threshold)
     for i in 0..3 {
         let voter = validators[i];
         engine.receive_vote(proposal.id, voter, true)?;
         println!("  {:?} voted: YES", voter);
     }
-    
+
     // One votes no
     engine.receive_vote(proposal.id, validators[3], false)?;
     println!("  {:?} voted: NO", validators[3]);
     println!();
-    
+
     // Check if consensus reached
     if engine.has_consensus(proposal.id)? {
         println!("✓ Consensus reached! Proposal accepted.");
-        
+
         // Execute the proposal
         engine.execute_proposal(proposal.id)?;
         println!("✓ Proposal executed successfully.");
     } else {
         println!("✗ Consensus not reached. Proposal rejected.");
     }
-    
+
     // Display engine statistics
     println!("\nConsensus Engine Statistics:");
     println!("----------------------------");
@@ -96,12 +96,12 @@ async fn main() -> Result<()> {
     println!("Accepted proposals: {}", stats.accepted_proposals);
     println!("Rejected proposals: {}", stats.rejected_proposals);
     println!("Average consensus time: {:?}", stats.avg_consensus_time);
-    
+
     Ok(())
 }
 
 /// Exercise 1: Byzantine Attack Simulation
-/// 
+///
 /// Modify this example to simulate a Byzantine attack where
 /// malicious nodes try to vote multiple times or vote after
 /// the deadline. Verify that the consensus engine properly

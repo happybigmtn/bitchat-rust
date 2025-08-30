@@ -1,5 +1,5 @@
 //! Mobile platform bindings and UniFFI interface implementation
-//! 
+//!
 //! This module provides the cross-platform interface for mobile applications
 //! using UniFFI to generate bindings for Android (Kotlin) and iOS (Swift).
 
@@ -17,38 +17,38 @@ pub mod android;
 pub mod ios;
 
 // Performance optimization modules
-pub mod performance;
+pub mod battery_thermal;
 pub mod ble_optimizer;
-pub mod power_manager;
-pub mod memory_manager;
 pub mod compression;
 pub mod cpu_optimizer;
-pub mod battery_thermal;
+pub mod memory_manager;
 pub mod network_optimizer;
+pub mod performance;
+pub mod power_manager;
 
 // Legacy mobile platform modules
-mod uniffi_impl;
-mod ffi;
-pub mod power_management;
-mod platform_config;
-mod jni_bindings;
-pub mod battery_optimization;
-mod platform_adaptations;
-mod secure_storage;
 mod android_keystore;
-mod ios_keychain;
+pub mod battery_optimization;
 mod biometric_auth;
+mod ffi;
+mod ios_keychain;
+mod jni_bindings;
 mod key_derivation;
 mod permissions;
+mod platform_adaptations;
+mod platform_config;
+pub mod power_management;
+mod secure_storage;
 mod security_integration;
+mod uniffi_impl;
 
 // Re-export all types from modules
-pub use ffi::*;
-pub use power_management::*;
-pub use platform_config::*;
-pub use jni_bindings::*;
 pub use battery_optimization::*;
+pub use ffi::*;
+pub use jni_bindings::*;
 pub use platform_adaptations::*;
+pub use platform_config::*;
+pub use power_management::*;
 pub use secure_storage::*;
 // Don't re-export from android_keystore and ios_keychain to avoid SecurityLevel conflict
 // pub use android_keystore::*;
@@ -163,19 +163,51 @@ pub struct DiceRoll {
 /// Game events for mobile UI updates
 #[derive(Clone)]
 pub enum GameEvent {
-    PeerDiscovered { peer: PeerInfo },
-    PeerConnected { peer_id: String },
-    PeerDisconnected { peer_id: String },
-    GameCreated { game_id: String },
-    GameJoined { game_id: String, peer_id: String },
-    GameLeft { game_id: String, peer_id: String },
-    GameStarted { game_id: String },
-    BetPlaced { peer_id: String, bet_type: BetType, amount: u64 },
-    DiceRolled { roll: DiceRoll },
-    GameEnded { game_id: String, winner_id: Option<String>, payout: u64 },
-    ErrorOccurred { error: BitCrapsError },
-    BatteryOptimizationDetected { reason: String },
-    NetworkStateChanged { new_state: NetworkState },
+    PeerDiscovered {
+        peer: PeerInfo,
+    },
+    PeerConnected {
+        peer_id: String,
+    },
+    PeerDisconnected {
+        peer_id: String,
+    },
+    GameCreated {
+        game_id: String,
+    },
+    GameJoined {
+        game_id: String,
+        peer_id: String,
+    },
+    GameLeft {
+        game_id: String,
+        peer_id: String,
+    },
+    GameStarted {
+        game_id: String,
+    },
+    BetPlaced {
+        peer_id: String,
+        bet_type: BetType,
+        amount: u64,
+    },
+    DiceRolled {
+        roll: DiceRoll,
+    },
+    GameEnded {
+        game_id: String,
+        winner_id: Option<String>,
+        payout: u64,
+    },
+    ErrorOccurred {
+        error: BitCrapsError,
+    },
+    BatteryOptimizationDetected {
+        reason: String,
+    },
+    NetworkStateChanged {
+        new_state: NetworkState,
+    },
 }
 
 /// Different types of bets in craps
@@ -305,18 +337,33 @@ pub fn create_node(config: BitCrapsConfig) -> Result<Arc<BitCrapsNode>, BitCraps
     // Initialize logging if enabled
     if config.enable_logging {
         match config.log_level {
-            LogLevel::Error => env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("error")).init(),
-            LogLevel::Warn => env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init(),
-            LogLevel::Info => env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init(),
-            LogLevel::Debug => env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init(),
-            LogLevel::Trace => env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace")).init(),
+            LogLevel::Error => {
+                env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("error"))
+                    .init()
+            }
+            LogLevel::Warn => {
+                env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
+                    .init()
+            }
+            LogLevel::Info => {
+                env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+                    .init()
+            }
+            LogLevel::Debug => {
+                env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug"))
+                    .init()
+            }
+            LogLevel::Trace => {
+                env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace"))
+                    .init()
+            }
         }
     }
 
     // Create event channel
     let (event_sender, mut event_receiver) = mpsc::unbounded_channel();
     let event_queue = Arc::new(Mutex::new(VecDeque::new()));
-    
+
     // Clone for the receiver task
     let event_queue_clone = Arc::clone(&event_queue);
     tokio::spawn(async move {
@@ -333,7 +380,7 @@ pub fn create_node(config: BitCrapsConfig) -> Result<Arc<BitCrapsNode>, BitCraps
 
     // Initialize power manager
     let power_manager = Arc::new(PowerManager::new(config.power_mode));
-    
+
     // Create initial node status
     let status = Arc::new(Mutex::new(NodeStatus {
         state: NodeState::Initializing,
@@ -349,7 +396,7 @@ pub fn create_node(config: BitCrapsConfig) -> Result<Arc<BitCrapsNode>, BitCraps
     let identity = Arc::new(crate::crypto::BitchatIdentity::generate_with_pow(8));
     let transport = Arc::new(crate::transport::TransportCoordinator::new());
     let mesh_service = Arc::new(crate::mesh::MeshService::new(identity, transport));
-    
+
     let node = Arc::new(BitCrapsNode {
         inner: mesh_service,
         event_queue,

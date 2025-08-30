@@ -1,5 +1,5 @@
 //! Mobile memory management with pooling and strict limits
-//! 
+//!
 //! This module provides comprehensive memory management for mobile devices:
 //! - Enforces <150MB memory usage target
 //! - Pool-based allocation for zero-copy operations
@@ -8,12 +8,15 @@
 //! - Per-component memory budgeting
 //! - Memory leak detection and prevention
 
-use std::sync::{Arc, atomic::{AtomicUsize, AtomicBool, Ordering}};
-use std::time::{Duration, SystemTime};
-use std::collections::{HashMap, VecDeque};
-use tokio::sync::{RwLock, Mutex};
 use bytes::BytesMut;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, VecDeque};
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc,
+};
+use std::time::{Duration, SystemTime};
+use tokio::sync::{Mutex, RwLock};
 
 use super::performance::PowerState;
 
@@ -132,13 +135,13 @@ impl Default for PoolConfig {
 impl Default for ComponentBudgets {
     fn default() -> Self {
         Self {
-            consensus_mb: 30.0,    // 20% for consensus
-            networking_mb: 25.0,   // 16.7% for networking
-            ui_mb: 20.0,          // 13.3% for UI
-            gaming_mb: 35.0,      // 23.3% for gaming state
-            cache_mb: 20.0,       // 13.3% for cache
-            crypto_mb: 10.0,      // 6.7% for crypto
-            other_mb: 10.0,       // 6.7% for everything else
+            consensus_mb: 30.0,  // 20% for consensus
+            networking_mb: 25.0, // 16.7% for networking
+            ui_mb: 20.0,         // 13.3% for UI
+            gaming_mb: 35.0,     // 23.3% for gaming state
+            cache_mb: 20.0,      // 13.3% for cache
+            crypto_mb: 10.0,     // 6.7% for crypto
+            other_mb: 10.0,      // 6.7% for everything else
         }
     }
 }
@@ -285,35 +288,35 @@ enum AllocationPriority {
 pub struct MobileMemoryManager {
     /// Configuration
     config: Arc<RwLock<MemoryManagerConfig>>,
-    
+
     /// Memory pools by size
     pools: HashMap<String, Arc<MemoryPool>>,
-    
+
     /// Current total memory usage (bytes)
     current_usage: Arc<AtomicUsize>,
-    
+
     /// Component memory usage tracking
     component_usage: Arc<RwLock<HashMap<String, ComponentUsage>>>,
-    
+
     /// Memory statistics
     stats: Arc<RwLock<MemoryStats>>,
-    
+
     /// Current power state
     power_state: Arc<RwLock<PowerState>>,
-    
+
     /// Control flags
     is_running: Arc<AtomicBool>,
-    
+
     /// Task handles
     monitoring_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     gc_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
-    
+
     /// Allocation history for leak detection
     allocation_history: Arc<RwLock<VecDeque<(SystemTime, usize, String)>>>,
-    
+
     /// GC trigger flag
     gc_requested: Arc<AtomicBool>,
-    
+
     /// Last GC run timestamp
     last_gc_run: Arc<RwLock<SystemTime>>,
 }
@@ -323,7 +326,7 @@ impl MobileMemoryManager {
     pub fn new(config: MemoryManagerConfig, max_memory_mb: usize) -> Self {
         let mut config = config;
         config.max_memory_mb = max_memory_mb;
-        
+
         let mut manager = Self {
             config: Arc::new(RwLock::new(config.clone())),
             pools: HashMap::new(),
@@ -338,64 +341,76 @@ impl MobileMemoryManager {
             gc_requested: Arc::new(AtomicBool::new(false)),
             last_gc_run: Arc::new(RwLock::new(SystemTime::now())),
         };
-        
+
         // Initialize memory pools
         manager.initialize_pools(&config);
-        
+
         // Initialize component budgets
         tokio::spawn({
             let component_usage = manager.component_usage.clone();
             let budgets = config.component_budgets.clone();
             async move {
                 let mut usage = component_usage.write().await;
-                
-                usage.insert("consensus".to_string(), ComponentUsage {
-                    name: "consensus".to_string(),
-                    current_bytes: 0,
-                    peak_bytes: 0,
-                    budget_bytes: (budgets.consensus_mb * 1024.0 * 1024.0) as u64,
-                    allocation_count: 0,
-                    over_budget_count: 0,
-                    last_update: SystemTime::now(),
-                });
-                
-                usage.insert("networking".to_string(), ComponentUsage {
-                    name: "networking".to_string(),
-                    current_bytes: 0,
-                    peak_bytes: 0,
-                    budget_bytes: (budgets.networking_mb * 1024.0 * 1024.0) as u64,
-                    allocation_count: 0,
-                    over_budget_count: 0,
-                    last_update: SystemTime::now(),
-                });
-                
-                usage.insert("ui".to_string(), ComponentUsage {
-                    name: "ui".to_string(),
-                    current_bytes: 0,
-                    peak_bytes: 0,
-                    budget_bytes: (budgets.ui_mb * 1024.0 * 1024.0) as u64,
-                    allocation_count: 0,
-                    over_budget_count: 0,
-                    last_update: SystemTime::now(),
-                });
-                
-                usage.insert("gaming".to_string(), ComponentUsage {
-                    name: "gaming".to_string(),
-                    current_bytes: 0,
-                    peak_bytes: 0,
-                    budget_bytes: (budgets.gaming_mb * 1024.0 * 1024.0) as u64,
-                    allocation_count: 0,
-                    over_budget_count: 0,
-                    last_update: SystemTime::now(),
-                });
-                
+
+                usage.insert(
+                    "consensus".to_string(),
+                    ComponentUsage {
+                        name: "consensus".to_string(),
+                        current_bytes: 0,
+                        peak_bytes: 0,
+                        budget_bytes: (budgets.consensus_mb * 1024.0 * 1024.0) as u64,
+                        allocation_count: 0,
+                        over_budget_count: 0,
+                        last_update: SystemTime::now(),
+                    },
+                );
+
+                usage.insert(
+                    "networking".to_string(),
+                    ComponentUsage {
+                        name: "networking".to_string(),
+                        current_bytes: 0,
+                        peak_bytes: 0,
+                        budget_bytes: (budgets.networking_mb * 1024.0 * 1024.0) as u64,
+                        allocation_count: 0,
+                        over_budget_count: 0,
+                        last_update: SystemTime::now(),
+                    },
+                );
+
+                usage.insert(
+                    "ui".to_string(),
+                    ComponentUsage {
+                        name: "ui".to_string(),
+                        current_bytes: 0,
+                        peak_bytes: 0,
+                        budget_bytes: (budgets.ui_mb * 1024.0 * 1024.0) as u64,
+                        allocation_count: 0,
+                        over_budget_count: 0,
+                        last_update: SystemTime::now(),
+                    },
+                );
+
+                usage.insert(
+                    "gaming".to_string(),
+                    ComponentUsage {
+                        name: "gaming".to_string(),
+                        current_bytes: 0,
+                        peak_bytes: 0,
+                        budget_bytes: (budgets.gaming_mb * 1024.0 * 1024.0) as u64,
+                        allocation_count: 0,
+                        over_budget_count: 0,
+                        last_update: SystemTime::now(),
+                    },
+                );
+
                 // Initialize other components...
             }
         });
-        
+
         manager
     }
-    
+
     /// Initialize memory pools
     fn initialize_pools(&mut self, config: &MemoryManagerConfig) {
         // Small buffer pool
@@ -407,7 +422,7 @@ impl MobileMemoryManager {
                 config.pools.small_pool_size,
             )),
         );
-        
+
         // Medium buffer pool
         self.pools.insert(
             "medium".to_string(),
@@ -417,7 +432,7 @@ impl MobileMemoryManager {
                 config.pools.medium_pool_size,
             )),
         );
-        
+
         // Large buffer pool
         self.pools.insert(
             "large".to_string(),
@@ -427,7 +442,7 @@ impl MobileMemoryManager {
                 config.pools.large_pool_size,
             )),
         );
-        
+
         // Packet buffer pool
         self.pools.insert(
             "packet".to_string(),
@@ -438,113 +453,121 @@ impl MobileMemoryManager {
             )),
         );
     }
-    
+
     /// Start memory management
     pub async fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
         if self.is_running.swap(true, Ordering::Relaxed) {
             return Ok(()); // Already running
         }
-        
-        log::info!("Starting mobile memory manager (max: {} MB)", 
-                  self.config.read().await.max_memory_mb);
-        
+
+        log::info!(
+            "Starting mobile memory manager (max: {} MB)",
+            self.config.read().await.max_memory_mb
+        );
+
         // Pre-populate pools
         self.prepopulate_pools().await;
-        
+
         // Start monitoring
         self.start_monitoring_loop().await;
-        
+
         // Start GC task
         if self.config.read().await.gc_settings.auto_gc_enabled {
             self.start_gc_loop().await;
         }
-        
+
         log::info!("Mobile memory manager started successfully");
         Ok(())
     }
-    
+
     /// Stop memory management
     pub async fn stop(&self) -> Result<(), Box<dyn std::error::Error>> {
         if !self.is_running.swap(false, Ordering::Relaxed) {
             return Ok(()); // Already stopped
         }
-        
+
         log::info!("Stopping mobile memory manager");
-        
+
         // Stop tasks
         if let Some(task) = self.monitoring_task.lock().await.take() {
             task.abort();
         }
-        
+
         if let Some(task) = self.gc_task.lock().await.take() {
             task.abort();
         }
-        
+
         // Final statistics
         let stats = self.stats.read().await;
-        log::info!("Final memory stats: current: {} MB, peak: {} MB, allocations: {}, denials: {}",
-                  stats.current_usage_bytes / 1024 / 1024,
-                  stats.peak_usage_bytes / 1024 / 1024,
-                  stats.total_allocations,
-                  stats.allocation_denials);
-        
+        log::info!(
+            "Final memory stats: current: {} MB, peak: {} MB, allocations: {}, denials: {}",
+            stats.current_usage_bytes / 1024 / 1024,
+            stats.peak_usage_bytes / 1024 / 1024,
+            stats.total_allocations,
+            stats.allocation_denials
+        );
+
         log::info!("Mobile memory manager stopped");
         Ok(())
     }
-    
+
     /// Set current power state
-    pub async fn set_power_state(&self, state: PowerState) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn set_power_state(
+        &self,
+        state: PowerState,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         *self.power_state.write().await = state;
-        
+
         // Adjust GC aggressiveness based on power state
         match state {
             PowerState::Critical => {
                 // Aggressive memory management in critical power state
                 self.gc_requested.store(true, Ordering::Relaxed);
                 log::info!("Triggered aggressive GC due to critical power state");
-            },
+            }
             PowerState::PowerSaver => {
                 // More frequent GC in power saver mode
                 if self.get_pressure_level().await > 0.6 {
                     self.gc_requested.store(true, Ordering::Relaxed);
                 }
-            },
-            _ => {}, // Normal GC behavior
+            }
+            _ => {} // Normal GC behavior
         }
-        
+
         Ok(())
     }
-    
+
     /// Check if allocation is allowed for component
     pub async fn can_allocate(&self, component: &str, size: usize) -> bool {
         // Check total memory limit
         let current_usage = self.current_usage.load(Ordering::Relaxed);
         let max_bytes = self.config.read().await.max_memory_mb * 1024 * 1024;
-        
+
         if current_usage + size > max_bytes {
             return false;
         }
-        
+
         // Check component budget
         if let Some(usage) = self.component_usage.read().await.get(component) {
             if usage.current_bytes + size as u64 > usage.budget_bytes {
                 // Over budget, but allow critical allocations
-                if size < 1024 { // Small allocations allowed
+                if size < 1024 {
+                    // Small allocations allowed
                     return true;
                 }
                 return false;
             }
         }
-        
+
         // Check memory pressure
         let pressure = self.get_pressure_level().await;
         if pressure > self.config.read().await.critical_threshold {
             return false; // Critical memory pressure
         }
-        
+
         true
     }
-    
+
     /// Allocate buffer from appropriate pool
     pub async fn allocate_buffer(&self, component: &str, size: usize) -> Option<BytesMut> {
         if !self.can_allocate(component, size).await {
@@ -553,13 +576,17 @@ impl MobileMemoryManager {
                 let mut stats = self.stats.write().await;
                 stats.allocation_denials += 1;
             }
-            
-            log::warn!("Memory allocation denied for component '{}', size: {} bytes", component, size);
+
+            log::warn!(
+                "Memory allocation denied for component '{}', size: {} bytes",
+                component,
+                size
+            );
             return None;
         }
-        
+
         let start_time = SystemTime::now();
-        
+
         // Select appropriate pool
         let pool_name = if size <= 256 {
             "small"
@@ -575,7 +602,7 @@ impl MobileMemoryManager {
             self.record_allocation(component, size, start_time).await;
             return Some(buffer);
         };
-        
+
         // Get buffer from pool
         if let Some(pool) = self.pools.get(pool_name) {
             if let Some(buffer) = pool.allocate().await {
@@ -583,20 +610,20 @@ impl MobileMemoryManager {
                 return Some(buffer);
             }
         }
-        
+
         // Fallback to direct allocation
         let buffer = BytesMut::with_capacity(size);
         self.record_allocation(component, size, start_time).await;
         Some(buffer)
     }
-    
+
     /// Return buffer to appropriate pool
     pub async fn return_buffer(&self, component: &str, mut buffer: BytesMut) {
         let size = buffer.capacity();
-        
+
         // Clear buffer data
         buffer.clear();
-        
+
         // Find appropriate pool
         let pool_name = if size <= 512 {
             "small"
@@ -611,63 +638,70 @@ impl MobileMemoryManager {
             self.record_deallocation(component, size).await;
             return;
         };
-        
+
         // Return to pool
         if let Some(pool) = self.pools.get(pool_name) {
             pool.return_buffer(buffer).await;
             self.record_deallocation(component, size).await;
         }
     }
-    
+
     /// Get current memory pressure level (0.0 - 1.0)
     pub async fn get_pressure_level(&self) -> f64 {
         let current_usage = self.current_usage.load(Ordering::Relaxed);
         let max_usage = self.config.read().await.max_memory_mb * 1024 * 1024;
         current_usage as f64 / max_usage as f64
     }
-    
+
     /// Get current memory statistics
     pub async fn get_stats(&self) -> MemoryStats {
         self.stats.read().await.clone()
     }
-    
+
     /// Get memory usage for component
     pub async fn get_component_usage(&self, component: &str) -> Option<ComponentUsage> {
         self.component_usage.read().await.get(component).cloned()
     }
-    
+
     /// Force garbage collection
     pub async fn force_gc(&self) -> Result<(), Box<dyn std::error::Error>> {
         log::info!("Forcing garbage collection");
         self.gc_requested.store(true, Ordering::Relaxed);
-        
+
         // Wait for GC to complete (simplified)
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         Ok(())
     }
-    
+
     /// Pre-populate memory pools
     async fn prepopulate_pools(&self) {
         for (name, pool) in &self.pools {
-            log::debug!("Pre-populating pool '{}' with {} buffers", name, pool.max_size / 2);
-            
+            log::debug!(
+                "Pre-populating pool '{}' with {} buffers",
+                name,
+                pool.max_size / 2
+            );
+
             for _ in 0..(pool.max_size / 2) {
                 let buffer = BytesMut::with_capacity(pool.buffer_size);
                 pool.return_buffer(buffer).await;
             }
         }
-        
+
         log::info!("Memory pools pre-populated");
     }
-    
+
     /// Record allocation
     async fn record_allocation(&self, component: &str, size: usize, start_time: SystemTime) {
-        let allocation_time = SystemTime::now().duration_since(start_time).unwrap_or(Duration::ZERO).as_nanos() as u64;
-        
+        let allocation_time = SystemTime::now()
+            .duration_since(start_time)
+            .unwrap_or(Duration::ZERO)
+            .as_nanos() as u64;
+
         // Update total usage
         self.current_usage.fetch_add(size, Ordering::Relaxed);
-        
+
         // Update component usage
         {
             let mut usage_map = self.component_usage.write().await;
@@ -676,55 +710,63 @@ impl MobileMemoryManager {
                 usage.peak_bytes = usage.peak_bytes.max(usage.current_bytes);
                 usage.allocation_count += 1;
                 usage.last_update = SystemTime::now();
-                
+
                 // Check budget
                 if usage.current_bytes > usage.budget_bytes {
                     usage.over_budget_count += 1;
-                    log::warn!("Component '{}' over budget: {} / {} bytes", 
-                             component, usage.current_bytes, usage.budget_bytes);
+                    log::warn!(
+                        "Component '{}' over budget: {} / {} bytes",
+                        component,
+                        usage.current_bytes,
+                        usage.budget_bytes
+                    );
                 }
             }
         }
-        
+
         // Update statistics
         {
             let mut stats = self.stats.write().await;
             stats.total_allocations += 1;
             stats.current_usage_bytes = self.current_usage.load(Ordering::Relaxed) as u64;
             stats.peak_usage_bytes = stats.peak_usage_bytes.max(stats.current_usage_bytes);
-            stats.pressure_level = stats.current_usage_bytes as f64 / (self.config.read().await.max_memory_mb as f64 * 1024.0 * 1024.0);
-            
+            stats.pressure_level = stats.current_usage_bytes as f64
+                / (self.config.read().await.max_memory_mb as f64 * 1024.0 * 1024.0);
+
             // Update average allocation time
             if stats.total_allocations > 0 {
-                stats.avg_allocation_time_ns = (stats.avg_allocation_time_ns * (stats.total_allocations - 1) + allocation_time) / stats.total_allocations;
+                stats.avg_allocation_time_ns = (stats.avg_allocation_time_ns
+                    * (stats.total_allocations - 1)
+                    + allocation_time)
+                    / stats.total_allocations;
             } else {
                 stats.avg_allocation_time_ns = allocation_time;
             }
         }
-        
+
         // Record in allocation history
         {
             let mut history = self.allocation_history.write().await;
             history.push_back((SystemTime::now(), size, component.to_string()));
-            
+
             // Keep only recent history
             if history.len() > 10000 {
                 history.pop_front();
             }
         }
-        
+
         // Check if GC is needed
         let pressure = self.get_pressure_level().await;
         if pressure > self.config.read().await.gc_settings.gc_trigger_threshold {
             self.gc_requested.store(true, Ordering::Relaxed);
         }
     }
-    
+
     /// Record deallocation
     async fn record_deallocation(&self, component: &str, size: usize) {
         // Update total usage
         self.current_usage.fetch_sub(size, Ordering::Relaxed);
-        
+
         // Update component usage
         {
             let mut usage_map = self.component_usage.write().await;
@@ -733,16 +775,17 @@ impl MobileMemoryManager {
                 usage.last_update = SystemTime::now();
             }
         }
-        
+
         // Update statistics
         {
             let mut stats = self.stats.write().await;
             stats.total_deallocations += 1;
             stats.current_usage_bytes = self.current_usage.load(Ordering::Relaxed) as u64;
-            stats.pressure_level = stats.current_usage_bytes as f64 / (self.config.read().await.max_memory_mb as f64 * 1024.0 * 1024.0);
+            stats.pressure_level = stats.current_usage_bytes as f64
+                / (self.config.read().await.max_memory_mb as f64 * 1024.0 * 1024.0);
         }
     }
-    
+
     /// Start monitoring loop
     async fn start_monitoring_loop(&self) {
         let config = self.config.clone();
@@ -750,44 +793,46 @@ impl MobileMemoryManager {
         let stats = self.stats.clone();
         let allocation_history = self.allocation_history.clone();
         let is_running = self.is_running.clone();
-        
+
         let task = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(
-                Duration::from_secs(config.read().await.monitoring.check_interval_secs)
-            );
-            
+            let mut interval = tokio::time::interval(Duration::from_secs(
+                config.read().await.monitoring.check_interval_secs,
+            ));
+
             while is_running.load(Ordering::Relaxed) {
                 interval.tick().await;
-                
+
                 let current = current_usage.load(Ordering::Relaxed);
                 let max_bytes = config.read().await.max_memory_mb * 1024 * 1024;
                 let pressure = current as f64 / max_bytes as f64;
-                
+
                 // Update pressure level in stats
                 {
                     let mut stats_guard = stats.write().await;
                     stats_guard.current_usage_bytes = current as u64;
                     stats_guard.pressure_level = pressure;
                 }
-                
+
                 // Log periodic statistics
                 if pressure > 0.5 {
-                    log::info!("Memory usage: {} MB / {} MB ({:.1}% pressure)",
-                             current / 1024 / 1024,
-                             max_bytes / 1024 / 1024,
-                             pressure * 100.0);
+                    log::info!(
+                        "Memory usage: {} MB / {} MB ({:.1}% pressure)",
+                        current / 1024 / 1024,
+                        max_bytes / 1024 / 1024,
+                        pressure * 100.0
+                    );
                 }
-                
+
                 // Leak detection
                 if config.read().await.monitoring.leak_detection_enabled {
                     Self::detect_leaks(&allocation_history, &config).await;
                 }
             }
         });
-        
+
         *self.monitoring_task.lock().await = Some(task);
     }
-    
+
     /// Start garbage collection loop
     async fn start_gc_loop(&self) {
         let gc_requested = self.gc_requested.clone();
@@ -795,80 +840,85 @@ impl MobileMemoryManager {
         let config = self.config.clone();
         let stats = self.stats.clone();
         let is_running = self.is_running.clone();
-        
+
         let task = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60)); // Check every minute
-            
+
             while is_running.load(Ordering::Relaxed) {
                 interval.tick().await;
-                
+
                 let should_gc = gc_requested.load(Ordering::Relaxed) || {
                     let force_interval = config.read().await.gc_settings.force_gc_interval_secs;
                     if force_interval > 0 {
                         let last_gc = *last_gc_run.read().await;
-                        last_gc.duration_since(SystemTime::now()).unwrap_or(Duration::ZERO).as_secs() >= force_interval
+                        last_gc
+                            .duration_since(SystemTime::now())
+                            .unwrap_or(Duration::ZERO)
+                            .as_secs()
+                            >= force_interval
                     } else {
                         false
                     }
                 };
-                
+
                 if should_gc {
                     log::info!("Running garbage collection");
-                    
+
                     // Reset flag
                     gc_requested.store(false, Ordering::Relaxed);
-                    
+
                     // Perform GC (in a real implementation, this would trigger actual GC)
                     // For now, just simulate the process
                     tokio::time::sleep(Duration::from_millis(50)).await;
-                    
+
                     // Update statistics
                     {
                         let mut stats_guard = stats.write().await;
                         stats_guard.gc_runs += 1;
                     }
-                    
+
                     // Update last GC time
                     *last_gc_run.write().await = SystemTime::now();
-                    
+
                     log::debug!("Garbage collection completed");
                 }
             }
         });
-        
+
         *self.gc_task.lock().await = Some(task);
     }
-    
+
     /// Detect memory leaks
     async fn detect_leaks(
         allocation_history: &Arc<RwLock<VecDeque<(SystemTime, usize, String)>>>,
         config: &Arc<RwLock<MemoryManagerConfig>>,
     ) {
-        let window_duration = Duration::from_secs(
-            config.read().await.monitoring.leak_detection_window_secs
-        );
+        let window_duration =
+            Duration::from_secs(config.read().await.monitoring.leak_detection_window_secs);
         let cutoff_time = SystemTime::now() - window_duration;
-        
+
         let history = allocation_history.read().await;
-        let recent_allocations: Vec<_> = history.iter()
+        let recent_allocations: Vec<_> = history
+            .iter()
             .filter(|(time, _, _)| *time >= cutoff_time)
             .collect();
-        
+
         // Simple leak detection: look for components with high allocation rates
         let mut component_allocations: HashMap<String, (usize, u64)> = HashMap::new();
-        
+
         for (_, size, component) in recent_allocations {
-            let entry = component_allocations.entry(component.clone())
+            let entry = component_allocations
+                .entry(component.clone())
                 .or_insert((0, 0));
             entry.0 += 1; // Count
             entry.1 += *size as u64; // Total size
         }
-        
+
         // Flag components with suspicious allocation patterns
         for (component, (count, total_size)) in component_allocations {
             let allocations_per_minute = count as f64 / (window_duration.as_secs() as f64 / 60.0);
             let avg_size = total_size / count as u64;
-            
+
             // Heuristic: more than 100 allocations per minute with average size > 1KB
             if allocations_per_minute > 100.0 && avg_size > 1024 {
                 log::warn!("Potential memory leak detected in component '{}': {:.1} allocs/min, avg size: {} bytes",
@@ -893,71 +943,83 @@ impl MemoryPool {
             created_at: SystemTime::now(),
         }
     }
-    
+
     /// Allocate buffer from pool
     async fn allocate(&self) -> Option<BytesMut> {
         let start_time = SystemTime::now();
-        
+
         // Try to get from pool
         let mut available = self.available.lock().await;
-        
+
         {
             let mut stats = self.stats.write().await;
             stats.allocation_requests += 1;
         }
-        
+
         if let Some(mut buffer) = available.pop() {
             buffer.clear();
             buffer.resize(self.buffer_size, 0);
             self.total_allocated.fetch_add(1, Ordering::Relaxed);
-            
+
             // Update statistics
             {
                 let mut stats = self.stats.write().await;
                 stats.allocation_hits += 1;
                 stats.current_usage = available.len();
-                
-                let allocation_time = SystemTime::now().duration_since(start_time).unwrap_or(Duration::ZERO).as_nanos() as u64;
+
+                let allocation_time = SystemTime::now()
+                    .duration_since(start_time)
+                    .unwrap_or(Duration::ZERO)
+                    .as_nanos() as u64;
                 stats.avg_allocation_time_ns = if stats.allocation_requests > 1 {
-                    (stats.avg_allocation_time_ns * (stats.allocation_requests - 1) + allocation_time) / stats.allocation_requests
+                    (stats.avg_allocation_time_ns * (stats.allocation_requests - 1)
+                        + allocation_time)
+                        / stats.allocation_requests
                 } else {
                     allocation_time
                 };
             }
-            
+
             Some(buffer)
         } else {
             // Create new buffer
             let buffer = BytesMut::with_capacity(self.buffer_size);
             self.current_size.fetch_add(1, Ordering::Relaxed);
-            
+
             // Update statistics
             {
                 let mut stats = self.stats.write().await;
                 stats.allocation_misses += 1;
-                stats.peak_usage = stats.peak_usage.max(self.current_size.load(Ordering::Relaxed));
+                stats.peak_usage = stats
+                    .peak_usage
+                    .max(self.current_size.load(Ordering::Relaxed));
                 stats.total_memory_bytes += self.buffer_size as u64;
-                
-                let allocation_time = SystemTime::now().duration_since(start_time).unwrap_or(Duration::ZERO).as_nanos() as u64;
+
+                let allocation_time = SystemTime::now()
+                    .duration_since(start_time)
+                    .unwrap_or(Duration::ZERO)
+                    .as_nanos() as u64;
                 stats.avg_allocation_time_ns = if stats.allocation_requests > 1 {
-                    (stats.avg_allocation_time_ns * (stats.allocation_requests - 1) + allocation_time) / stats.allocation_requests
+                    (stats.avg_allocation_time_ns * (stats.allocation_requests - 1)
+                        + allocation_time)
+                        / stats.allocation_requests
                 } else {
                     allocation_time
                 };
             }
-            
+
             Some(buffer)
         }
     }
-    
+
     /// Return buffer to pool
     async fn return_buffer(&self, buffer: BytesMut) {
         let mut available = self.available.lock().await;
-        
+
         if available.len() < self.max_size && buffer.capacity() == self.buffer_size {
             available.push(buffer);
             self.total_returned.fetch_add(1, Ordering::Relaxed);
-            
+
             // Update statistics
             {
                 let mut stats = self.stats.write().await;
@@ -991,7 +1053,7 @@ impl MemoryStats {
 impl MobileMemoryManager {
     pub async fn get_metrics(&self) -> super::performance::MemoryMetrics {
         let stats = self.stats.read().await;
-        
+
         super::performance::MemoryMetrics {
             current_usage_mb: stats.current_usage_bytes as f64 / 1024.0 / 1024.0,
             pressure_level: stats.pressure_level,

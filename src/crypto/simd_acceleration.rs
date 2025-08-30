@@ -1,8 +1,8 @@
 //! SIMD-accelerated cryptographic operations for high-performance verification
 
-use ed25519_dalek::{Signature, VerifyingKey, Verifier};
-use sha2::{Sha256, Digest};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use rayon::prelude::*;
+use sha2::{Digest, Sha256};
 
 /// SIMD acceleration availability
 #[derive(Debug, Clone, Copy)]
@@ -54,7 +54,7 @@ impl SimdCrypto {
             _capabilities: SimdCapabilities::detect(),
         }
     }
-    
+
     /// Batch verify signatures using parallel processing
     pub fn batch_verify(
         &self,
@@ -65,18 +65,16 @@ impl SimdCrypto {
         if signatures.len() != messages.len() || signatures.len() != public_keys.len() {
             return vec![false; signatures.len()];
         }
-        
+
         // Use rayon for parallel verification
         signatures
             .par_iter()
             .zip(messages.par_iter())
             .zip(public_keys.par_iter())
-            .map(|((sig, msg), pk)| {
-                pk.verify(msg, sig).is_ok()
-            })
+            .map(|((sig, msg), pk)| pk.verify(msg, sig).is_ok())
             .collect()
     }
-    
+
     /// Batch hash computation
     pub fn batch_hash(&self, messages: &[Vec<u8>]) -> Vec<[u8; 32]> {
         messages
@@ -126,7 +124,7 @@ impl SimdHash {
             hasher_type: HashType::Blake3, // Blake3 is SIMD-optimized by default
         }
     }
-    
+
     pub fn hash_data(&self, data: &[u8]) -> Vec<u8> {
         match self.hasher_type {
             HashType::Sha256 => {
@@ -134,12 +132,10 @@ impl SimdHash {
                 hasher.update(data);
                 hasher.finalize().to_vec()
             }
-            HashType::Blake3 => {
-                blake3::hash(data).as_bytes().to_vec()
-            }
+            HashType::Blake3 => blake3::hash(data).as_bytes().to_vec(),
         }
     }
-    
+
     pub fn hash_parallel(&self, chunks: &[Vec<u8>]) -> Vec<Vec<u8>> {
         chunks
             .par_iter()
@@ -151,67 +147,63 @@ impl SimdHash {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use ed25519_dalek::Signer;
-    
+
     #[test]
     fn test_simd_capabilities() {
         let caps = SimdCapabilities::detect();
         println!("SIMD Capabilities: {:?}", caps);
         // Test passes regardless of capabilities
     }
-    
+
     #[test]
     fn test_batch_verify() {
         let crypto = SimdCrypto::new();
-        
+
         let mut signatures = Vec::new();
         let mut messages = Vec::new();
         let mut public_keys = Vec::new();
-        
+
         for i in 0..4 {
             // Use ed25519_dalek types directly for this test
             let signing_key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
             let verifying_key = signing_key.verifying_key();
             let message = format!("Message {}", i).into_bytes();
             let signature = signing_key.sign(&message);
-            
+
             signatures.push(signature);
             messages.push(message);
             public_keys.push(verifying_key);
         }
-        
+
         let results = crypto.batch_verify(&signatures, &messages, &public_keys);
         assert!(results.iter().all(|&r| r));
     }
-    
+
     #[test]
     fn test_simd_xor() {
         let mut a = vec![0xFF; 32];
         let b = vec![0xAA; 32];
-        
+
         SimdXor::xor(&mut a, &b);
-        
+
         for byte in a {
             assert_eq!(byte, 0xFF ^ 0xAA);
         }
     }
-    
+
     #[test]
     fn test_simd_hash() {
         let hasher = SimdHash::new();
         let data = b"Test data for hashing";
-        
+
         let hash = hasher.hash_data(data);
         assert!(!hash.is_empty());
-        
+
         // Test parallel hashing
-        let chunks = vec![
-            b"chunk1".to_vec(),
-            b"chunk2".to_vec(),
-            b"chunk3".to_vec(),
-        ];
-        
+        let chunks = vec![b"chunk1".to_vec(), b"chunk2".to_vec(), b"chunk3".to_vec()];
+
         let hashes = hasher.hash_parallel(&chunks);
         assert_eq!(hashes.len(), 3);
     }

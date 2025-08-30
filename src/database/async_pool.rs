@@ -1,14 +1,14 @@
 //! Async database pool wrapper to eliminate synchronous bottlenecks
-//! 
+//!
 //! This module provides a fully async interface to SQLite using tokio's
 //! blocking thread pool to handle the synchronous rusqlite operations.
 
+use rusqlite::{params, Connection};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::path::Path;
 use tokio::sync::{RwLock, Semaphore};
 use tokio::task;
-use rusqlite::{Connection, params};
 
 use crate::error::{Error, Result};
 
@@ -72,29 +72,29 @@ impl AsyncDatabasePool {
     pub async fn new(config: AsyncDbConfig) -> Result<Self> {
         // Ensure database directory exists
         if let Some(parent) = Path::new(&config.path).parent() {
-            tokio::fs::create_dir_all(parent).await
+            tokio::fs::create_dir_all(parent)
+                .await
                 .map_err(|e| Error::Io(e))?;
         }
-        
+
         // Initialize schema
         let path = config.path.clone();
         let enable_wal = config.enable_wal;
         let busy_timeout = config.busy_timeout.as_millis() as i32;
-        
+
         task::spawn_blocking(move || -> Result<()> {
-            let conn = Connection::open(&path)
-                .map_err(|e| Error::Database(e.to_string()))?;
-            
+            let conn = Connection::open(&path).map_err(|e| Error::Database(e.to_string()))?;
+
             // Enable WAL mode
             if enable_wal {
                 conn.execute("PRAGMA journal_mode = WAL", [])
                     .map_err(|e| Error::Database(e.to_string()))?;
             }
-            
+
             // Set busy timeout
             conn.busy_timeout(Duration::from_millis(busy_timeout as u64))
                 .map_err(|e| Error::Database(e.to_string()))?;
-            
+
             // Initialize schema
             conn.execute_batch(
                 "
@@ -126,12 +126,15 @@ impl AsyncDatabasePool {
                 CREATE INDEX IF NOT EXISTS idx_peers_last_seen ON peers(last_seen);
                 CREATE INDEX IF NOT EXISTS idx_transactions_timestamp ON transactions(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_game_state_updated ON game_state(updated_at);
-                "
-            ).map_err(|e| Error::Database(e.to_string()))?;
-            
+                ",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
             Ok(())
-        }).await.map_err(|e| Error::Database(format!("Task join error: {}", e)))??;
-        
+        })
+        .await
+        .map_err(|e| Error::Database(format!("Task join error: {}", e)))??;
+
         // Create connection pool
         let mut connections = Vec::with_capacity(config.max_connections);
         for i in 0..config.max_connections {
@@ -144,20 +147,20 @@ impl AsyncDatabasePool {
                 total_queries: 0,
             });
         }
-        
+
         let pool = Self {
             config: config.clone(),
             connections: Arc::new(RwLock::new(connections)),
             semaphore: Arc::new(Semaphore::new(config.max_connections)),
             stats: Arc::new(RwLock::new(PoolStats::default())),
         };
-        
+
         // Start background maintenance
         pool.start_maintenance_tasks();
-        
+
         Ok(pool)
     }
-    
+
     /// Execute a query with a callback
     pub async fn execute<F, R>(&self, f: F) -> Result<R>
     where
@@ -165,27 +168,28 @@ impl AsyncDatabasePool {
         R: Send + 'static,
     {
         let start = Instant::now();
-        
+
         // Acquire semaphore permit
-        let _permit = self.semaphore.acquire().await
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
             .map_err(|_| Error::Database("Failed to acquire connection permit".to_string()))?;
-        
+
         // Get available connection
         let conn_info = {
             let mut connections = self.connections.write().await;
-            connections.iter_mut()
-                .find(|c| !c.in_use)
-                .map(|c| {
-                    c.in_use = true;
-                    c.last_used = Instant::now();
-                    c.total_queries += 1;
-                    (c.id, c.path.clone())
-                })
+            connections.iter_mut().find(|c| !c.in_use).map(|c| {
+                c.in_use = true;
+                c.last_used = Instant::now();
+                c.total_queries += 1;
+                (c.id, c.path.clone())
+            })
         };
-        
-        let (conn_id, path) = conn_info
-            .ok_or_else(|| Error::Database("No available connections".to_string()))?;
-        
+
+        let (conn_id, path) =
+            conn_info.ok_or_else(|| Error::Database("No available connections".to_string()))?;
+
         // Update stats
         {
             let mut stats = self.stats.write().await;
@@ -193,36 +197,37 @@ impl AsyncDatabasePool {
             stats.total_queries += 1;
             stats.total_wait_time_ms += start.elapsed().as_millis() as u64;
         }
-        
+
         // Execute in blocking thread
         let result = task::spawn_blocking(move || -> Result<R> {
-            let conn = Connection::open(&path)
-                .map_err(|e| Error::Database(e.to_string()))?;
-            
+            let conn = Connection::open(&path).map_err(|e| Error::Database(e.to_string()))?;
+
             // Set pragmas
             conn.execute("PRAGMA journal_mode = WAL", [])
                 .map_err(|e| Error::Database(e.to_string()))?;
             conn.busy_timeout(Duration::from_secs(5))
                 .map_err(|e| Error::Database(e.to_string()))?;
-            
+
             // Execute user function
             f(&conn)
-        }).await.map_err(|e| Error::Database(format!("Task join error: {}", e)))?;
-        
+        })
+        .await
+        .map_err(|e| Error::Database(format!("Task join error: {}", e)))?;
+
         // Release connection
         {
             let mut connections = self.connections.write().await;
             if let Some(conn) = connections.iter_mut().find(|c| c.id == conn_id) {
                 conn.in_use = false;
             }
-            
+
             let mut stats = self.stats.write().await;
             stats.active_connections -= 1;
         }
-        
+
         result
     }
-    
+
     /// Execute a transaction
     pub async fn transaction<F, R>(&self, f: F) -> Result<R>
     where
@@ -230,27 +235,28 @@ impl AsyncDatabasePool {
         R: Send + 'static,
     {
         let start = Instant::now();
-        
+
         // Acquire semaphore permit
-        let _permit = self.semaphore.acquire().await
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
             .map_err(|_| Error::Database("Failed to acquire connection permit".to_string()))?;
-        
+
         // Get available connection
         let conn_info = {
             let mut connections = self.connections.write().await;
-            connections.iter_mut()
-                .find(|c| !c.in_use)
-                .map(|c| {
-                    c.in_use = true;
-                    c.last_used = Instant::now();
-                    c.total_queries += 1;
-                    (c.id, c.path.clone())
-                })
+            connections.iter_mut().find(|c| !c.in_use).map(|c| {
+                c.in_use = true;
+                c.last_used = Instant::now();
+                c.total_queries += 1;
+                (c.id, c.path.clone())
+            })
         };
-        
-        let (conn_id, path) = conn_info
-            .ok_or_else(|| Error::Database("No available connections".to_string()))?;
-        
+
+        let (conn_id, path) =
+            conn_info.ok_or_else(|| Error::Database("No available connections".to_string()))?;
+
         // Update stats
         {
             let mut stats = self.stats.write().await;
@@ -258,26 +264,25 @@ impl AsyncDatabasePool {
             stats.total_queries += 1;
             stats.total_wait_time_ms += start.elapsed().as_millis() as u64;
         }
-        
+
         // Execute in blocking thread
         let result = task::spawn_blocking(move || -> Result<R> {
-            let mut conn = Connection::open(&path)
-                .map_err(|e| Error::Database(e.to_string()))?;
-            
+            let mut conn = Connection::open(&path).map_err(|e| Error::Database(e.to_string()))?;
+
             // Set pragmas
             conn.execute("PRAGMA journal_mode = WAL", [])
                 .map_err(|e| Error::Database(e.to_string()))?;
             conn.busy_timeout(Duration::from_secs(5))
                 .map_err(|e| Error::Database(e.to_string()))?;
-            
+
             // Create and use transaction
-            let tx = conn.transaction()
+            let tx = conn
+                .transaction()
                 .map_err(|e| Error::Database(e.to_string()))?;
-            
+
             match f(&tx) {
                 Ok(result) => {
-                    tx.commit()
-                        .map_err(|e| Error::Database(e.to_string()))?;
+                    tx.commit().map_err(|e| Error::Database(e.to_string()))?;
                     Ok(result)
                 }
                 Err(e) => {
@@ -285,22 +290,24 @@ impl AsyncDatabasePool {
                     Err(e)
                 }
             }
-        }).await.map_err(|e| Error::Database(format!("Task join error: {}", e)))?;
-        
+        })
+        .await
+        .map_err(|e| Error::Database(format!("Task join error: {}", e)))?;
+
         // Release connection
         {
             let mut connections = self.connections.write().await;
             if let Some(conn) = connections.iter_mut().find(|c| c.id == conn_id) {
                 conn.in_use = false;
             }
-            
+
             let mut stats = self.stats.write().await;
             stats.active_connections -= 1;
         }
-        
+
         result
     }
-    
+
     /// Query with results
     pub async fn query<T, F>(&self, sql: &str, params: Vec<String>, f: F) -> Result<Vec<T>>
     where
@@ -308,75 +315,82 @@ impl AsyncDatabasePool {
         T: Send + 'static,
     {
         let sql = sql.to_string();
-        
+
         self.execute(move |conn| {
-            let mut stmt = conn.prepare(&sql)
+            let mut stmt = conn
+                .prepare(&sql)
                 .map_err(|e| Error::Database(e.to_string()))?;
-            
-            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter()
-                .map(|p| p as &dyn rusqlite::ToSql)
-                .collect();
-            
-            let results = stmt.query_map(&param_refs[..], f)
+
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+
+            let results = stmt
+                .query_map(&param_refs[..], f)
                 .map_err(|e| Error::Database(e.to_string()))?
                 .collect::<std::result::Result<Vec<_>, _>>()
                 .map_err(|e| Error::Database(e.to_string()))?;
-            
+
             Ok(results)
-        }).await
+        })
+        .await
     }
-    
+
     /// Simple execute with no results
     pub async fn execute_sql(&self, sql: &str, params: Vec<String>) -> Result<usize> {
         let sql = sql.to_string();
-        
+
         self.execute(move |conn| {
-            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter()
-                .map(|p| p as &dyn rusqlite::ToSql)
-                .collect();
-            
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+
             conn.execute(&sql, &param_refs[..])
                 .map_err(|e| Error::Database(e.to_string()))
-        }).await
+        })
+        .await
     }
-    
+
     /// Get pool statistics
     pub async fn get_stats(&self) -> PoolStats {
         self.stats.read().await.clone()
     }
-    
+
     /// Start background maintenance tasks
     fn start_maintenance_tasks(&self) {
         let stats = self.stats.clone();
         let interval_duration = self.config.checkpoint_interval;
         let path = self.config.path.clone();
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(interval_duration);
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // Run checkpoint
                 let checkpoint_path = path.clone();
                 if let Ok(()) = task::spawn_blocking(move || -> Result<()> {
                     let conn = Connection::open(&checkpoint_path)
                         .map_err(|e| Error::Database(e.to_string()))?;
-                    
+
                     conn.execute("PRAGMA wal_checkpoint(TRUNCATE)", [])
                         .map_err(|e| Error::Database(e.to_string()))?;
-                    
+
                     Ok(())
-                }).await.unwrap_or_else(|e| Err(Error::Database(format!("Checkpoint failed: {}", e)))) {
+                })
+                .await
+                .unwrap_or_else(|e| Err(Error::Database(format!("Checkpoint failed: {}", e))))
+                {
                     log::debug!("Database checkpoint completed");
                 }
-                
+
                 // Log stats periodically
                 let current_stats = stats.read().await;
-                log::debug!("Database pool stats: active={}/{}, queries={}", 
-                          current_stats.active_connections,
-                          current_stats.total_connections,
-                          current_stats.total_queries);
+                log::debug!(
+                    "Database pool stats: active={}/{}, queries={}",
+                    current_stats.active_connections,
+                    current_stats.total_connections,
+                    current_stats.total_queries
+                );
             }
         });
     }
@@ -385,33 +399,40 @@ impl AsyncDatabasePool {
 /// Example high-level async operations
 impl AsyncDatabasePool {
     /// Store peer information
-    pub async fn store_peer(&self, peer_id: &[u8; 32], public_key: &[u8], address: Option<String>) -> Result<()> {
+    pub async fn store_peer(
+        &self,
+        peer_id: &[u8; 32],
+        public_key: &[u8],
+        address: Option<String>,
+    ) -> Result<()> {
         let peer_id = peer_id.to_vec();
         let public_key = public_key.to_vec();
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
-        
+
         self.execute(move |conn| {
             conn.execute(
                 "INSERT OR REPLACE INTO peers (peer_id, public_key, address, last_seen) 
                  VALUES (?1, ?2, ?3, ?4)",
                 params![peer_id, public_key, address, timestamp],
-            ).map_err(|e| Error::Database(e.to_string()))?;
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
             Ok(())
-        }).await
+        })
+        .await
     }
-    
+
     /// Get peer information
     pub async fn get_peer(&self, peer_id: &[u8; 32]) -> Result<Option<PeerInfo>> {
         let peer_id = peer_id.to_vec();
-        
+
         self.execute(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT public_key, address, last_seen, reputation FROM peers WHERE peer_id = ?1"
             ).map_err(|e| Error::Database(e.to_string()))?;
-            
+
             let peer = match stmt.query_row(params![peer_id], |row| {
                 Ok(PeerInfo {
                     public_key: row.get(0)?,
@@ -422,11 +443,12 @@ impl AsyncDatabasePool {
             }) {
                 Ok(p) => Some(p),
                 Err(rusqlite::Error::QueryReturnedNoRows) => None,
-                Err(e) => return Err(Error::Database(e.to_string()))
+                Err(e) => return Err(Error::Database(e.to_string())),
             };
-            
+
             Ok(peer)
-        }).await
+        })
+        .await
     }
 }
 
@@ -442,68 +464,68 @@ pub struct PeerInfo {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    
+
     #[tokio::test]
     async fn test_async_pool() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        
+
         let config = AsyncDbConfig {
             path: db_path.to_str().unwrap().to_string(),
             max_connections: 5,
             ..Default::default()
         };
-        
+
         let pool = AsyncDatabasePool::new(config).await.unwrap();
-        
+
         // Test storing and retrieving peer
         let peer_id = [1u8; 32];
         let public_key = [2u8; 32];
-        
+
         pool.store_peer(&peer_id, &public_key, Some("127.0.0.1:8333".to_string()))
             .await
             .unwrap();
-        
+
         let peer_info = pool.get_peer(&peer_id).await.unwrap();
         assert!(peer_info.is_some());
-        
+
         let info = peer_info.unwrap();
         assert_eq!(info.public_key, public_key.to_vec());
         assert_eq!(info.address, Some("127.0.0.1:8333".to_string()));
     }
-    
+
     #[tokio::test]
     async fn test_concurrent_access() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        
+
         let config = AsyncDbConfig {
             path: db_path.to_str().unwrap().to_string(),
             max_connections: 3,
             ..Default::default()
         };
-        
+
         let pool = Arc::new(AsyncDatabasePool::new(config).await.unwrap());
-        
+
         // Spawn multiple concurrent tasks
         let mut handles = vec![];
-        
+
         for i in 0..10 {
             let pool_clone = pool.clone();
             let handle = tokio::spawn(async move {
                 let peer_id = [i as u8; 32];
                 let public_key = [(i + 1) as u8; 32];
-                
+
                 pool_clone.store_peer(&peer_id, &public_key, None).await
             });
             handles.push(handle);
         }
-        
+
         // Wait for all tasks
         for handle in handles {
             handle.await.unwrap().unwrap();
         }
-        
+
         // Verify stats
         let stats = pool.get_stats().await;
         assert_eq!(stats.total_queries, 10);

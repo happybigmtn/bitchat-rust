@@ -1,9 +1,9 @@
+use crate::protocol::BitchatPacket;
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Notify;
-use std::sync::Arc;
-use crate::protocol::BitchatPacket;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MessagePriority {
@@ -22,13 +22,13 @@ pub struct MessageQueue {
     normal_receiver: Receiver<BitchatPacket>,
     low_sender: Sender<BitchatPacket>,
     low_receiver: Receiver<BitchatPacket>,
-    
+
     // Size tracking per priority
     high_size: AtomicUsize,
     normal_size: AtomicUsize,
     low_size: AtomicUsize,
     max_size: usize,
-    
+
     // Notification for async waiting
     notify: Arc<Notify>,
 }
@@ -38,7 +38,7 @@ impl MessageQueue {
         let (high_sender, high_receiver) = unbounded();
         let (normal_sender, normal_receiver) = unbounded();
         let (low_sender, low_receiver) = unbounded();
-        
+
         Self {
             high_sender,
             high_receiver,
@@ -53,14 +53,14 @@ impl MessageQueue {
             notify: Arc::new(Notify::new()),
         }
     }
-    
+
     pub fn enqueue(&self, packet: BitchatPacket) -> Result<(), &'static str> {
         // Check total size limit atomically
         let total_size = self.len();
         if total_size >= self.max_size {
             return Err("Queue is full");
         }
-        
+
         // Determine priority based on packet type and route to appropriate channel
         match packet.packet_type {
             p if (0x20..=0x27).contains(&p) => {
@@ -98,7 +98,7 @@ impl MessageQueue {
             }
         }
     }
-    
+
     pub fn dequeue(&self) -> Option<BitchatPacket> {
         // Check high priority queue first - O(1) operation
         match self.high_receiver.try_recv() {
@@ -113,7 +113,7 @@ impl MessageQueue {
                 // Channel disconnected, should not happen in normal operation
             }
         }
-        
+
         // Check normal priority queue - O(1) operation
         match self.normal_receiver.try_recv() {
             Ok(packet) => {
@@ -127,7 +127,7 @@ impl MessageQueue {
                 // Channel disconnected, should not happen in normal operation
             }
         }
-        
+
         // Check low priority queue - O(1) operation
         match self.low_receiver.try_recv() {
             Ok(packet) => {
@@ -140,19 +140,19 @@ impl MessageQueue {
             }
         }
     }
-    
+
     /// Non-blocking dequeue that returns immediately if no messages available
     pub fn try_dequeue(&self) -> Option<BitchatPacket> {
         self.dequeue()
     }
-    
+
     /// Get current total queue size
     pub fn len(&self) -> usize {
         self.high_size.load(Ordering::Acquire)
             + self.normal_size.load(Ordering::Acquire)
             + self.low_size.load(Ordering::Acquire)
     }
-    
+
     /// Get size of each priority queue
     pub fn len_by_priority(&self) -> (usize, usize, usize) {
         (
@@ -161,17 +161,17 @@ impl MessageQueue {
             self.low_size.load(Ordering::Acquire),
         )
     }
-    
+
     /// Check if queue is empty
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    
+
     /// Get maximum queue size
     pub fn max_size(&self) -> usize {
         self.max_size
     }
-    
+
     /// Async dequeue that waits for messages without busy-waiting
     pub async fn dequeue_async(&self) -> Option<BitchatPacket> {
         loop {
@@ -179,23 +179,23 @@ impl MessageQueue {
             if let Some(packet) = self.dequeue() {
                 return Some(packet);
             }
-            
+
             // No messages available, wait for notification
             self.notify.notified().await;
         }
     }
-    
+
     /// Async dequeue with timeout
     pub async fn dequeue_async_timeout(&self, timeout: Duration) -> Option<BitchatPacket> {
         // Try immediate dequeue first
         if let Some(packet) = self.dequeue() {
             return Some(packet);
         }
-        
+
         // Wait with timeout
         match tokio::time::timeout(timeout, self.notify.notified()).await {
             Ok(_) => self.dequeue(), // Check again after notification
-            Err(_) => None, // Timeout
+            Err(_) => None,          // Timeout
         }
     }
 }
@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn test_priority_ordering() {
         let queue = MessageQueue::new(1000);
-        
+
         // Create test packets with different priorities
         let high_packet = BitchatPacket {
             version: 1,
@@ -223,7 +223,7 @@ mod tests {
             sequence: 1000,
             payload: Some(vec![1, 2, 3]),
         };
-        
+
         let normal_packet = BitchatPacket {
             version: 1,
             packet_type: 0x10, // Normal priority
@@ -237,7 +237,7 @@ mod tests {
             sequence: 2000,
             payload: Some(vec![4, 5, 6]),
         };
-        
+
         let low_packet = BitchatPacket {
             version: 1,
             packet_type: 0x01, // Low priority
@@ -251,32 +251,32 @@ mod tests {
             sequence: 3000,
             payload: Some(vec![7, 8, 9]),
         };
-        
+
         // Enqueue in mixed order
         queue.enqueue(low_packet.clone()).unwrap();
         queue.enqueue(high_packet.clone()).unwrap();
         queue.enqueue(normal_packet.clone()).unwrap();
-        
+
         // Dequeue should return high priority first
         let first = queue.dequeue().unwrap();
         assert_eq!(first.packet_type, 0x20);
-        
+
         // Then normal priority
         let second = queue.dequeue().unwrap();
         assert_eq!(second.packet_type, 0x10);
-        
+
         // Finally low priority
         let third = queue.dequeue().unwrap();
         assert_eq!(third.packet_type, 0x01);
-        
+
         // Queue should be empty
         assert!(queue.dequeue().is_none());
     }
-    
+
     #[test]
     fn test_o1_performance() {
         let queue = MessageQueue::new(10000);
-        
+
         // Fill queue with mixed priority packets
         for i in 0..1000 {
             let packet_type = match i % 3 {
@@ -284,7 +284,7 @@ mod tests {
                 1 => 0x10, // Normal
                 _ => 0x01, // Low
             };
-            
+
             let packet = BitchatPacket {
                 version: 1,
                 packet_type,
@@ -298,20 +298,20 @@ mod tests {
                 sequence: i as u64,
                 payload: Some(vec![i as u8]),
             };
-            
+
             queue.enqueue(packet).unwrap();
         }
-        
+
         // Measure dequeue performance - should be O(1)
         let start = Instant::now();
         let mut dequeued_count = 0;
-        
+
         while let Some(_packet) = queue.dequeue() {
             dequeued_count += 1;
         }
-        
+
         let duration = start.elapsed();
-        
+
         assert_eq!(dequeued_count, 1000);
         // With O(1) operations, this should complete very quickly
         // even for 1000 items. With the old O(n log n) approach,

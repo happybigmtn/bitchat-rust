@@ -10,22 +10,21 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, RwLock, Mutex};
+use tokio::sync::{mpsc, Mutex, RwLock};
 
 use crate::error::{Error, Result};
 use crate::protocol::PeerId;
 use crate::transport::{
-    Transport, TransportAddress, TransportEvent,
-    nat_traversal::NetworkHandler,
+    nat_traversal::NetworkHandler, Transport, TransportAddress, TransportEvent,
 };
 
 /// Transport priority levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TransportPriority {
-    Critical = 0,    // Reserved for essential communications
-    High = 1,        // Game-critical data
-    Normal = 2,      // Regular game traffic
-    Low = 3,         // Background/maintenance traffic
+    Critical = 0, // Reserved for essential communications
+    High = 1,     // Game-critical data
+    Normal = 2,   // Regular game traffic
+    Low = 3,      // Background/maintenance traffic
 }
 
 /// Transport performance metrics
@@ -147,12 +146,9 @@ pub struct IntelligentTransportCoordinator {
 
 impl IntelligentTransportCoordinator {
     /// Create new intelligent transport coordinator
-    pub fn new(
-        config: IntelligentCoordinatorConfig,
-        nat_handler: NetworkHandler,
-    ) -> Self {
+    pub fn new(config: IntelligentCoordinatorConfig, nat_handler: NetworkHandler) -> Self {
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
-        
+
         Self {
             config,
             transports: Arc::new(RwLock::new(HashMap::new())),
@@ -192,49 +188,61 @@ impl IntelligentTransportCoordinator {
 
         println!("Added transport: {}", transport_id);
         self.start_transport_monitoring(transport_id).await;
-        
+
         Ok(())
     }
 
     /// Intelligently select best transport for a peer
-    pub async fn select_optimal_transport(&self, peer_id: PeerId, message_priority: TransportPriority) -> Result<String> {
+    pub async fn select_optimal_transport(
+        &self,
+        peer_id: PeerId,
+        message_priority: TransportPriority,
+    ) -> Result<String> {
         let transports = self.transports.read().await;
         let routing_table = self.routing_table.read().await;
-        
+
         // Check if we have a preferred transport for this peer
         if let Some(preferred_transport_id) = routing_table.get(&peer_id) {
             if let Some(transport) = transports.get(preferred_transport_id) {
-                if transport.health_status != TransportHealth::Failed &&
-                   transport.health_status != TransportHealth::Critical {
+                if transport.health_status != TransportHealth::Failed
+                    && transport.health_status != TransportHealth::Critical
+                {
                     return Ok(preferred_transport_id.clone());
                 }
             }
         }
-        
+
         // Find optimal transport based on multiple criteria
         let mut best_transport_id = None;
         let mut best_score = f32::MIN;
-        
+
         for (transport_id, transport) in transports.iter() {
             if transport.health_status == TransportHealth::Failed {
                 continue;
             }
-            
-            let score = self.calculate_transport_score(transport, message_priority).await;
-            
+
+            let score = self
+                .calculate_transport_score(transport, message_priority)
+                .await;
+
             if score > best_score {
                 best_score = score;
                 best_transport_id = Some(transport_id.clone());
             }
         }
-        
-        best_transport_id.ok_or_else(|| Error::Network("No suitable transport available".to_string()))
+
+        best_transport_id
+            .ok_or_else(|| Error::Network("No suitable transport available".to_string()))
     }
 
     /// Calculate transport selection score
-    async fn calculate_transport_score(&self, transport: &ManagedTransport, priority: TransportPriority) -> f32 {
+    async fn calculate_transport_score(
+        &self,
+        transport: &ManagedTransport,
+        priority: TransportPriority,
+    ) -> f32 {
         let mut score = 0.0;
-        
+
         // Health status weight (40%)
         let health_weight = match transport.health_status {
             TransportHealth::Optimal => 1.0,
@@ -244,20 +252,21 @@ impl IntelligentTransportCoordinator {
             TransportHealth::Failed => 0.0,
         };
         score += health_weight * 0.4;
-        
+
         // Performance metrics weight (30%)
         let latency_score = 1.0 - (transport.metrics.latency.as_millis() as f32 / 1000.0).min(1.0);
         let loss_score = 1.0 - transport.metrics.packet_loss.min(1.0);
         let reliability_score = transport.metrics.reliability;
-        
+
         let performance_score = (latency_score + loss_score + reliability_score) / 3.0;
         score += performance_score * 0.3;
-        
+
         // Load balancing weight (20%)
-        let load_factor = transport.active_connections.len() as f32 / transport.capabilities.max_connections as f32;
+        let load_factor = transport.active_connections.len() as f32
+            / transport.capabilities.max_connections as f32;
         let load_score = 1.0 - load_factor.min(1.0);
         score += load_score * 0.2;
-        
+
         // Priority matching weight (10%)
         let priority_score = match (transport.transport_type.clone(), priority) {
             (TransportType::TcpTls, TransportPriority::Critical) => 1.0,
@@ -268,43 +277,55 @@ impl IntelligentTransportCoordinator {
             _ => 0.5,
         };
         score += priority_score * 0.1;
-        
+
         score
     }
 
     /// Connect to a peer using optimal transport with failover
-    pub async fn connect_with_failover(&self, peer_id: PeerId, preferred_address: Option<TransportAddress>) -> Result<()> {
+    pub async fn connect_with_failover(
+        &self,
+        peer_id: PeerId,
+        preferred_address: Option<TransportAddress>,
+    ) -> Result<()> {
         // Try preferred address first if provided
         if let Some(address) = preferred_address {
             if let Ok(transport_id) = self.connect_via_address(peer_id, address).await {
                 return Ok(());
             }
         }
-        
+
         // Use intelligent selection
         let transport_priorities = [
             TransportPriority::High,
             TransportPriority::Normal,
             TransportPriority::Low,
         ];
-        
+
         for priority in &transport_priorities {
             match self.select_optimal_transport(peer_id, *priority).await {
                 Ok(transport_id) => {
-                    if self.attempt_connection(peer_id, &transport_id).await.is_ok() {
+                    if self
+                        .attempt_connection(peer_id, &transport_id)
+                        .await
+                        .is_ok()
+                    {
                         return Ok(());
                     }
                 }
                 Err(_) => continue,
             }
         }
-        
+
         // Last resort: try NAT traversal
         self.attempt_nat_traversal_connection(peer_id).await
     }
 
     /// Attempt connection via specific address
-    async fn connect_via_address(&self, peer_id: PeerId, address: TransportAddress) -> Result<String> {
+    async fn connect_via_address(
+        &self,
+        peer_id: PeerId,
+        address: TransportAddress,
+    ) -> Result<String> {
         let transport_id = self.find_transport_for_address(&address).await?;
         self.attempt_connection(peer_id, &transport_id).await?;
         Ok(transport_id)
@@ -313,7 +334,7 @@ impl IntelligentTransportCoordinator {
     /// Find transport that can handle specific address type
     async fn find_transport_for_address(&self, address: &TransportAddress) -> Result<String> {
         let transports = self.transports.read().await;
-        
+
         for (transport_id, transport) in transports.iter() {
             let compatible = match (address, &transport.transport_type) {
                 (TransportAddress::Tcp(_), TransportType::Tcp) => true,
@@ -323,28 +344,37 @@ impl IntelligentTransportCoordinator {
                 (TransportAddress::Bluetooth(_), TransportType::Ble) => true,
                 _ => false,
             };
-            
+
             if compatible && transport.health_status != TransportHealth::Failed {
                 return Ok(transport_id.clone());
             }
         }
-        
-        Err(Error::Network(format!("No transport available for address: {:?}", address)))
+
+        Err(Error::Network(format!(
+            "No transport available for address: {:?}",
+            address
+        )))
     }
 
     /// Attempt connection using specific transport
     async fn attempt_connection(&self, peer_id: PeerId, transport_id: &str) -> Result<()> {
         let mut transports = self.transports.write().await;
-        
+
         if let Some(transport) = transports.get_mut(transport_id) {
             // This is a simplified version - in reality we'd need the actual address
             let dummy_address = match transport.transport_type {
-                TransportType::Tcp | TransportType::TcpTls => TransportAddress::Tcp("127.0.0.1:8080".parse().unwrap()),
-                TransportType::Udp | TransportType::UdpWithNatTraversal => TransportAddress::Udp("127.0.0.1:8080".parse().unwrap()),
+                TransportType::Tcp | TransportType::TcpTls => {
+                    TransportAddress::Tcp("127.0.0.1:8080".parse().unwrap())
+                }
+                TransportType::Udp | TransportType::UdpWithNatTraversal => {
+                    TransportAddress::Udp("127.0.0.1:8080".parse().unwrap())
+                }
                 TransportType::Ble => TransportAddress::Bluetooth("dummy".to_string()),
-                TransportType::TurnRelay => TransportAddress::Udp("127.0.0.1:8080".parse().unwrap()),
+                TransportType::TurnRelay => {
+                    TransportAddress::Udp("127.0.0.1:8080".parse().unwrap())
+                }
             };
-            
+
             match transport.transport.connect(dummy_address.clone()).await {
                 Ok(connected_peer_id) => {
                     // Record connection
@@ -357,70 +387,98 @@ impl IntelligentTransportCoordinator {
                         messages_received: 0,
                         error_count: 0,
                     };
-                    
-                    transport.active_connections.insert(peer_id, connection_info);
-                    
+
+                    transport
+                        .active_connections
+                        .insert(peer_id, connection_info);
+
                     // Update routing table
                     {
                         let mut routing_table = self.routing_table.write().await;
                         routing_table.insert(peer_id, transport_id.to_string());
                     }
-                    
+
                     // Update peer connections
                     {
                         let mut peer_connections = self.peer_connections.write().await;
-                        peer_connections.entry(peer_id).or_insert_with(Vec::new).push(transport_id.to_string());
+                        peer_connections
+                            .entry(peer_id)
+                            .or_insert_with(Vec::new)
+                            .push(transport_id.to_string());
                     }
-                    
-                    println!("Connected to peer {:?} via transport: {}", peer_id, transport_id);
+
+                    println!(
+                        "Connected to peer {:?} via transport: {}",
+                        peer_id, transport_id
+                    );
                     Ok(())
                 }
                 Err(e) => {
                     transport.health_status = TransportHealth::Degraded;
-                    Err(Error::Network(format!("Connection failed via {}: {}", transport_id, e)))
+                    Err(Error::Network(format!(
+                        "Connection failed via {}: {}",
+                        transport_id, e
+                    )))
                 }
             }
         } else {
-            Err(Error::Network(format!("Transport not found: {}", transport_id)))
+            Err(Error::Network(format!(
+                "Transport not found: {}",
+                transport_id
+            )))
         }
     }
 
     /// Attempt NAT traversal connection
     async fn attempt_nat_traversal_connection(&self, peer_id: PeerId) -> Result<()> {
         println!("Attempting NAT traversal for peer: {:?}", peer_id);
-        
+
         // Use dummy address for demonstration
         let target_address = "192.168.1.100:8080".parse().unwrap();
-        
+
         match self.nat_handler.setup_nat_traversal().await {
             Ok(_) => {
-                println!("NAT traversal successful: {:?} -> {}", peer_id, target_address);
-                
+                println!(
+                    "NAT traversal successful: {:?} -> {}",
+                    peer_id, target_address
+                );
+
                 // Create UDP transport connection through NAT traversal
-                self.connect_via_address(peer_id, TransportAddress::Udp(target_address)).await?;
+                self.connect_via_address(peer_id, TransportAddress::Udp(target_address))
+                    .await?;
                 Ok(())
             }
-            Err(e) => {
-                Err(Error::Network(format!("NAT traversal failed: {}", e)))
-            }
+            Err(e) => Err(Error::Network(format!("NAT traversal failed: {}", e))),
         }
     }
 
     /// Send message with intelligent routing
-    pub async fn send_intelligent(&self, peer_id: PeerId, data: Vec<u8>, priority: TransportPriority) -> Result<()> {
+    pub async fn send_intelligent(
+        &self,
+        peer_id: PeerId,
+        data: Vec<u8>,
+        priority: TransportPriority,
+    ) -> Result<()> {
         // Select best transport for this message
         let transport_id = self.select_optimal_transport(peer_id, priority).await?;
-        
+
         // Attempt to send
         let send_success = {
             let mut transports = self.transports.write().await;
             if let Some(transport) = transports.get_mut(&transport_id) {
-                transport.transport.send(peer_id, data.clone()).await.is_ok()
+                transport
+                    .transport
+                    .send(peer_id, data.clone())
+                    .await
+                    .is_ok()
             } else {
-                return Err(Error::Network(format!("Transport not found: {}", transport_id)));
+                return Err(Error::Network(format!(
+                    "Transport not found: {}",
+                    transport_id
+                )));
             }
         };
-        
+
         if send_success {
             // Update metrics
             self.update_transport_success(&transport_id, peer_id).await;
@@ -428,7 +486,7 @@ impl IntelligentTransportCoordinator {
         } else {
             // Update metrics and attempt failover
             self.update_transport_failure(&transport_id, peer_id).await;
-            
+
             if self.config.enable_adaptive_routing {
                 self.attempt_failover_send(peer_id, data, priority).await
             } else {
@@ -438,17 +496,26 @@ impl IntelligentTransportCoordinator {
     }
 
     /// Attempt failover send using alternative transport
-    async fn attempt_failover_send(&self, peer_id: PeerId, data: Vec<u8>, priority: TransportPriority) -> Result<()> {
+    async fn attempt_failover_send(
+        &self,
+        peer_id: PeerId,
+        data: Vec<u8>,
+        priority: TransportPriority,
+    ) -> Result<()> {
         // Get alternative transports for this peer
         let peer_connections = self.peer_connections.read().await;
         let transport_ids = peer_connections.get(&peer_id).cloned().unwrap_or_default();
-        
+
         for transport_id in transport_ids {
             let send_success = {
                 let mut transports = self.transports.write().await;
                 if let Some(transport) = transports.get_mut(&transport_id) {
                     if transport.health_status != TransportHealth::Failed {
-                        transport.transport.send(peer_id, data.clone()).await.is_ok()
+                        transport
+                            .transport
+                            .send(peer_id, data.clone())
+                            .await
+                            .is_ok()
                     } else {
                         continue;
                     }
@@ -456,19 +523,19 @@ impl IntelligentTransportCoordinator {
                     continue;
                 }
             };
-            
+
             if send_success {
                 // Update routing table to prefer this transport
                 {
                     let mut routing_table = self.routing_table.write().await;
                     routing_table.insert(peer_id, transport_id.clone());
                 }
-                
+
                 println!("Failover successful via transport: {}", transport_id);
                 return Ok(());
             }
         }
-        
+
         Err(Error::Network("All failover attempts failed".to_string()))
     }
 
@@ -477,13 +544,13 @@ impl IntelligentTransportCoordinator {
         let transports = self.transports.clone();
         let config = self.config.clone();
         let performance_history = self.performance_history.clone();
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(config.health_check_interval);
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // Perform health check
                 let health_status = {
                     let transports_guard = transports.read().await;
@@ -493,26 +560,27 @@ impl IntelligentTransportCoordinator {
                         break; // Transport removed
                     }
                 };
-                
+
                 // Update transport health
                 {
                     let mut transports_guard = transports.write().await;
                     if let Some(transport) = transports_guard.get_mut(&transport_id) {
                         transport.health_status = health_status.clone();
                         transport.last_health_check = Instant::now();
-                        
+
                         // Update performance history
                         let mut history = performance_history.write().await;
-                        let transport_history = history.entry(transport_id.clone()).or_insert_with(Vec::new);
+                        let transport_history =
+                            history.entry(transport_id.clone()).or_insert_with(Vec::new);
                         transport_history.push(transport.metrics.clone());
-                        
+
                         // Keep only recent history (last 100 entries)
                         if transport_history.len() > 100 {
                             transport_history.drain(0..50);
                         }
                     }
                 }
-                
+
                 if health_status == TransportHealth::Failed {
                     println!("Transport {} marked as failed", transport_id);
                 }
@@ -525,23 +593,23 @@ impl IntelligentTransportCoordinator {
         let metrics = &transport.metrics;
         let connection_count = transport.active_connections.len();
         let max_connections = transport.capabilities.max_connections;
-        
+
         // Calculate health score
         let mut score = 1.0;
-        
+
         // Latency impact
         if metrics.latency > Duration::from_millis(1000) {
             score -= 0.3;
         } else if metrics.latency > Duration::from_millis(500) {
             score -= 0.1;
         }
-        
+
         // Packet loss impact
         score -= metrics.packet_loss * 0.4;
-        
+
         // Reliability impact
         score -= (1.0 - metrics.reliability) * 0.3;
-        
+
         // Connection load impact
         let load_factor = connection_count as f32 / max_connections as f32;
         if load_factor > 0.9 {
@@ -549,7 +617,7 @@ impl IntelligentTransportCoordinator {
         } else if load_factor > 0.7 {
             score -= 0.1;
         }
-        
+
         // Convert score to health status
         match score {
             s if s >= 0.8 => TransportHealth::Optimal,
@@ -568,7 +636,7 @@ impl IntelligentTransportCoordinator {
                 connection.messages_sent += 1;
                 connection.last_activity = Instant::now();
             }
-            
+
             // Update reliability (simple moving average)
             transport.metrics.reliability = (transport.metrics.reliability * 0.9) + 0.1;
         }
@@ -582,10 +650,10 @@ impl IntelligentTransportCoordinator {
                 connection.error_count += 1;
                 connection.last_activity = Instant::now();
             }
-            
+
             // Update reliability (penalize failures)
             transport.metrics.reliability = (transport.metrics.reliability * 0.9) + 0.0;
-            
+
             // Update packet loss estimate
             transport.metrics.packet_loss = (transport.metrics.packet_loss * 0.9) + 0.1;
         }
@@ -595,7 +663,7 @@ impl IntelligentTransportCoordinator {
     pub async fn get_transport_statistics(&self) -> HashMap<String, TransportStatistics> {
         let transports = self.transports.read().await;
         let mut stats = HashMap::new();
-        
+
         for (transport_id, transport) in transports.iter() {
             let transport_stats = TransportStatistics {
                 transport_type: transport.transport_type.clone(),
@@ -603,28 +671,48 @@ impl IntelligentTransportCoordinator {
                 active_connections: transport.active_connections.len(),
                 max_connections: transport.capabilities.max_connections,
                 metrics: transport.metrics.clone(),
-                total_messages_sent: transport.active_connections.values().map(|c| c.messages_sent).sum(),
-                total_messages_received: transport.active_connections.values().map(|c| c.messages_received).sum(),
-                total_errors: transport.active_connections.values().map(|c| c.error_count).sum(),
+                total_messages_sent: transport
+                    .active_connections
+                    .values()
+                    .map(|c| c.messages_sent)
+                    .sum(),
+                total_messages_received: transport
+                    .active_connections
+                    .values()
+                    .map(|c| c.messages_received)
+                    .sum(),
+                total_errors: transport
+                    .active_connections
+                    .values()
+                    .map(|c| c.error_count)
+                    .sum(),
             };
-            
+
             stats.insert(transport_id.clone(), transport_stats);
         }
-        
+
         stats
     }
 
     /// Broadcast message to all connected peers with transport optimization
-    pub async fn broadcast_optimized(&self, data: Vec<u8>, priority: TransportPriority) -> Result<u32> {
+    pub async fn broadcast_optimized(
+        &self,
+        data: Vec<u8>,
+        priority: TransportPriority,
+    ) -> Result<u32> {
         let peer_connections = self.peer_connections.read().await;
         let mut successful_sends = 0u32;
-        
+
         for peer_id in peer_connections.keys() {
-            if self.send_intelligent(*peer_id, data.clone(), priority).await.is_ok() {
+            if self
+                .send_intelligent(*peer_id, data.clone(), priority)
+                .await
+                .is_ok()
+            {
                 successful_sends += 1;
             }
         }
-        
+
         Ok(successful_sends)
     }
 }
@@ -647,7 +735,7 @@ mod tests {
     use super::*;
     use crate::transport::nat_traversal::NetworkHandler;
     use tokio::net::UdpSocket;
-    
+
     #[tokio::test]
     async fn test_transport_score_calculation() {
         let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -656,7 +744,7 @@ mod tests {
             IntelligentCoordinatorConfig::default(),
             nat_handler,
         );
-        
+
         let capabilities = TransportCapabilities {
             supports_broadcast: true,
             supports_multicast: false,
@@ -665,12 +753,12 @@ mod tests {
             requires_pairing: false,
             encryption_available: true,
         };
-        
+
         let transport = ManagedTransport {
             transport_id: "test".to_string(),
             transport_type: TransportType::TcpTls,
             transport: Box::new(crate::transport::tcp_transport::TcpTransport::new(
-                crate::transport::tcp_transport::TcpTransportConfig::default()
+                crate::transport::tcp_transport::TcpTransportConfig::default(),
             )),
             metrics: TransportMetrics {
                 latency: Duration::from_millis(50),
@@ -685,13 +773,15 @@ mod tests {
             last_health_check: Instant::now(),
             priority_score: 0.0,
         };
-        
-        let score = coordinator.calculate_transport_score(&transport, TransportPriority::Critical).await;
-        
+
+        let score = coordinator
+            .calculate_transport_score(&transport, TransportPriority::Critical)
+            .await;
+
         // Should be high score for optimal transport with critical priority
         assert!(score > 0.8, "Score should be high: {}", score);
     }
-    
+
     #[tokio::test]
     async fn test_health_assessment() {
         let capabilities = TransportCapabilities {
@@ -702,16 +792,16 @@ mod tests {
             requires_pairing: false,
             encryption_available: true,
         };
-        
+
         let transport = ManagedTransport {
             transport_id: "test".to_string(),
             transport_type: TransportType::Udp,
             transport: Box::new(crate::transport::tcp_transport::TcpTransport::new(
-                crate::transport::tcp_transport::TcpTransportConfig::default()
+                crate::transport::tcp_transport::TcpTransportConfig::default(),
             )),
             metrics: TransportMetrics {
                 latency: Duration::from_millis(2000), // High latency
-                packet_loss: 0.5, // High packet loss
+                packet_loss: 0.5,                     // High packet loss
                 throughput: 1000,
                 reliability: 0.3, // Low reliability
                 last_updated: Instant::now(),
@@ -722,10 +812,13 @@ mod tests {
             last_health_check: Instant::now(),
             priority_score: 0.0,
         };
-        
+
         let health = IntelligentTransportCoordinator::assess_transport_health(&transport).await;
-        
+
         // Should be degraded or failed due to poor metrics
-        assert!(matches!(health, TransportHealth::Failed | TransportHealth::Critical));
+        assert!(matches!(
+            health,
+            TransportHealth::Failed | TransportHealth::Critical
+        ));
     }
 }

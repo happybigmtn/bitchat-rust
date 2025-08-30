@@ -1,11 +1,11 @@
 //! Comprehensive monitoring and metrics collection for production deployment
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use std::collections::VecDeque;
 use parking_lot::RwLock;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// System-wide metrics collector
 pub struct MetricsCollector {
@@ -43,27 +43,31 @@ impl MetricsCollector {
             start_time: Instant::now(),
         }
     }
-    
+
     /// Get uptime in seconds
     pub fn uptime_seconds(&self) -> u64 {
         self.start_time.elapsed().as_secs()
     }
-    
+
     /// Update resource metrics from real system monitoring
     pub fn update_from_system_monitor(&self) {
-        if let Ok(system_metrics) = crate::monitoring::system::global_system_monitor().collect_metrics() {
+        if let Ok(system_metrics) =
+            crate::monitoring::system::global_system_monitor().collect_metrics()
+        {
             self.resources.update_from_system_metrics(&system_metrics);
-            
+
             // Log system monitoring status
-            log::debug!("Updated metrics from system monitor: CPU {}%, Memory {} MB, Battery: {:?}%", 
-                        system_metrics.cpu_usage_percent,
-                        system_metrics.used_memory_bytes / 1024 / 1024,
-                        system_metrics.battery_level);
+            log::debug!(
+                "Updated metrics from system monitor: CPU {}%, Memory {} MB, Battery: {:?}%",
+                system_metrics.cpu_usage_percent,
+                system_metrics.used_memory_bytes / 1024 / 1024,
+                system_metrics.battery_level
+            );
         } else {
             log::warn!("Failed to collect system metrics, using fallback values");
         }
     }
-    
+
     /// Start periodic system monitoring updates
     pub fn start_system_monitoring() -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
@@ -74,16 +78,16 @@ impl MetricsCollector {
             }
         })
     }
-    
+
     /// Check if we have real system monitoring (vs simulated)
     pub fn is_real_system_monitoring(&self) -> bool {
         crate::monitoring::system::global_system_monitor().is_real_monitoring()
     }
-    
+
     /// Export metrics in Prometheus format
     pub fn export_prometheus(&self) -> String {
         let mut output = String::new();
-        
+
         // Network metrics
         output.push_str(&format!(
             "# HELP bitcraps_network_messages_sent Total messages sent\n\
@@ -91,28 +95,28 @@ impl MetricsCollector {
              bitcraps_network_messages_sent {}\n",
             self.network.messages_sent.load(Ordering::Relaxed)
         ));
-        
+
         output.push_str(&format!(
             "# HELP bitcraps_network_messages_received Total messages received\n\
              # TYPE bitcraps_network_messages_received counter\n\
              bitcraps_network_messages_received {}\n",
             self.network.messages_received.load(Ordering::Relaxed)
         ));
-        
+
         output.push_str(&format!(
             "# HELP bitcraps_network_bytes_sent Total bytes sent\n\
              # TYPE bitcraps_network_bytes_sent counter\n\
              bitcraps_network_bytes_sent {}\n",
             self.network.bytes_sent.load(Ordering::Relaxed)
         ));
-        
+
         output.push_str(&format!(
             "# HELP bitcraps_network_active_connections Active connections\n\
              # TYPE bitcraps_network_active_connections gauge\n\
              bitcraps_network_active_connections {}\n",
             self.network.active_connections.load(Ordering::Relaxed)
         ));
-        
+
         // Consensus metrics
         output.push_str(&format!(
             "# HELP bitcraps_consensus_proposals_accepted Accepted proposals\n\
@@ -120,14 +124,14 @@ impl MetricsCollector {
              bitcraps_consensus_proposals_accepted {}\n",
             self.consensus.proposals_accepted.load(Ordering::Relaxed)
         ));
-        
+
         output.push_str(&format!(
             "# HELP bitcraps_consensus_latency_ms Average consensus latency\n\
              # TYPE bitcraps_consensus_latency_ms gauge\n\
              bitcraps_consensus_latency_ms {}\n",
             self.consensus.average_latency_ms()
         ));
-        
+
         // Gaming metrics
         output.push_str(&format!(
             "# HELP bitcraps_games_total Total games played\n\
@@ -135,14 +139,14 @@ impl MetricsCollector {
              bitcraps_games_total {}\n",
             self.gaming.total_games.load(Ordering::Relaxed)
         ));
-        
+
         output.push_str(&format!(
             "# HELP bitcraps_bets_total Total bets placed\n\
              # TYPE bitcraps_bets_total counter\n\
              bitcraps_bets_total {}\n",
             self.gaming.total_bets.load(Ordering::Relaxed)
         ));
-        
+
         // Resource metrics
         output.push_str(&format!(
             "# HELP bitcraps_memory_usage_bytes Current memory usage\n\
@@ -150,14 +154,14 @@ impl MetricsCollector {
              bitcraps_memory_usage_bytes {}\n",
             self.resources.memory_usage_bytes.load(Ordering::Relaxed)
         ));
-        
+
         output.push_str(&format!(
             "# HELP bitcraps_cpu_usage_percent CPU usage percentage\n\
              # TYPE bitcraps_cpu_usage_percent gauge\n\
              bitcraps_cpu_usage_percent {}\n",
             self.resources.cpu_usage_percent.load(Ordering::Relaxed)
         ));
-        
+
         // Battery metrics (if available)
         if let Some(battery_level) = self.resources.get_battery_level() {
             output.push_str(&format!(
@@ -167,7 +171,7 @@ impl MetricsCollector {
                 battery_level
             ));
         }
-        
+
         if let Some(battery_charging) = self.resources.is_battery_charging() {
             output.push_str(&format!(
                 "# HELP bitcraps_battery_charging Battery charging status (1=charging, 0=discharging)\n\
@@ -176,7 +180,7 @@ impl MetricsCollector {
                 if battery_charging { 1 } else { 0 }
             ));
         }
-        
+
         // Temperature metrics (if available)
         if let Some(temperature) = self.resources.get_temperature() {
             output.push_str(&format!(
@@ -186,14 +190,18 @@ impl MetricsCollector {
                 temperature
             ));
         }
-        
+
         output.push_str(&format!(
             "# HELP bitcraps_thermal_throttling Thermal throttling active (1=yes, 0=no)\n\
              # TYPE bitcraps_thermal_throttling gauge\n\
              bitcraps_thermal_throttling {}\n",
-            if self.resources.is_thermal_throttling() { 1 } else { 0 }
+            if self.resources.is_thermal_throttling() {
+                1
+            } else {
+                0
+            }
         ));
-        
+
         // Error metrics
         output.push_str(&format!(
             "# HELP bitcraps_errors_total Total errors\n\
@@ -201,7 +209,7 @@ impl MetricsCollector {
              bitcraps_errors_total {}\n",
             self.errors.total_errors.load(Ordering::Relaxed)
         ));
-        
+
         // Uptime
         output.push_str(&format!(
             "# HELP bitcraps_uptime_seconds Uptime in seconds\n\
@@ -209,14 +217,17 @@ impl MetricsCollector {
              bitcraps_uptime_seconds {}\n",
             self.uptime_seconds()
         ));
-        
+
         output
     }
-    
+
     /// Export metrics as JSON
     pub fn export_json(&self) -> serde_json::Result<String> {
         let snapshot = MetricsSnapshot {
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
             uptime_seconds: self.uptime_seconds(),
             network: NetworkSnapshot {
                 messages_sent: self.network.messages_sent.load(Ordering::Relaxed),
@@ -253,7 +264,7 @@ impl MetricsCollector {
                 gaming_errors: self.errors.gaming_errors.load(Ordering::Relaxed),
             },
         };
-        
+
         serde_json::to_string_pretty(&snapshot)
     }
 }
@@ -283,17 +294,18 @@ impl NetworkMetrics {
             average_latency: Arc::new(RwLock::new(LatencyTracker::new(100))),
         }
     }
-    
+
     pub fn record_message_sent(&self, bytes: usize) {
         self.messages_sent.fetch_add(1, Ordering::Relaxed);
         self.bytes_sent.fetch_add(bytes as u64, Ordering::Relaxed);
     }
-    
+
     pub fn record_message_received(&self, bytes: usize) {
         self.messages_received.fetch_add(1, Ordering::Relaxed);
-        self.bytes_received.fetch_add(bytes as u64, Ordering::Relaxed);
+        self.bytes_received
+            .fetch_add(bytes as u64, Ordering::Relaxed);
     }
-    
+
     pub fn record_latency(&self, latency_ms: f64) {
         self.average_latency.write().add_sample(latency_ms);
     }
@@ -320,7 +332,7 @@ impl ConsensusMetrics {
             latency_samples: Arc::new(RwLock::new(LatencyTracker::new(100))),
         }
     }
-    
+
     pub fn record_proposal(&self, accepted: bool, latency_ms: f64) {
         self.proposals_submitted.fetch_add(1, Ordering::Relaxed);
         if accepted {
@@ -330,7 +342,7 @@ impl ConsensusMetrics {
         }
         self.latency_samples.write().add_sample(latency_ms);
     }
-    
+
     pub fn average_latency_ms(&self) -> f64 {
         self.latency_samples.read().average()
     }
@@ -359,12 +371,12 @@ impl GamingMetrics {
             disputes: AtomicU64::new(0),
         }
     }
-    
+
     pub fn record_bet(&self, amount: u64) {
         self.total_bets.fetch_add(1, Ordering::Relaxed);
         self.total_volume.fetch_add(amount, Ordering::Relaxed);
     }
-    
+
     pub fn record_payout(&self, amount: u64) {
         self.total_payouts.fetch_add(amount, Ordering::Relaxed);
     }
@@ -387,11 +399,11 @@ impl PerformanceMetrics {
             compression_ratio: Arc::new(RwLock::new(1.0)),
         }
     }
-    
+
     pub fn record_operation(&self, latency_ms: f64) {
         self.operation_latencies.write().add_sample(latency_ms);
     }
-    
+
     pub fn update_throughput(&self, ops_per_sec: f64) {
         *self.throughput_ops_per_sec.write() = ops_per_sec;
     }
@@ -428,46 +440,51 @@ impl ResourceMetrics {
             thermal_throttling: Arc::new(RwLock::new(false)),
         }
     }
-    
+
     pub fn update_memory(&self, bytes: u64) {
         self.memory_usage_bytes.store(bytes, Ordering::Relaxed);
     }
-    
+
     pub fn update_cpu(&self, percent: usize) {
-        self.cpu_usage_percent.store(percent.min(100), Ordering::Relaxed);
+        self.cpu_usage_percent
+            .store(percent.min(100), Ordering::Relaxed);
     }
-    
+
     /// Update resource metrics from real system monitoring
-    pub fn update_from_system_metrics(&self, system_metrics: &crate::monitoring::system::SystemMetrics) {
+    pub fn update_from_system_metrics(
+        &self,
+        system_metrics: &crate::monitoring::system::SystemMetrics,
+    ) {
         // Update basic metrics
         self.update_memory(system_metrics.used_memory_bytes);
         self.update_cpu(system_metrics.cpu_usage_percent as usize);
-        self.thread_count.store(system_metrics.thread_count as usize, Ordering::Relaxed);
-        
+        self.thread_count
+            .store(system_metrics.thread_count as usize, Ordering::Relaxed);
+
         // Update battery metrics
         *self.battery_level.write() = system_metrics.battery_level;
         *self.battery_charging.write() = system_metrics.battery_charging;
-        
+
         // Update thermal metrics
         *self.temperature_celsius.write() = system_metrics.temperature_celsius;
         *self.thermal_throttling.write() = system_metrics.thermal_throttling;
     }
-    
+
     /// Get current battery level if available
     pub fn get_battery_level(&self) -> Option<f32> {
         *self.battery_level.read()
     }
-    
+
     /// Get current battery charging status if available
     pub fn is_battery_charging(&self) -> Option<bool> {
         *self.battery_charging.read()
     }
-    
+
     /// Get current temperature if available
     pub fn get_temperature(&self) -> Option<f32> {
         *self.temperature_celsius.read()
     }
-    
+
     /// Check if thermal throttling is active
     pub fn is_thermal_throttling(&self) -> bool {
         *self.thermal_throttling.read()
@@ -495,28 +512,37 @@ impl ErrorMetrics {
             recent_errors: Arc::new(RwLock::new(VecDeque::with_capacity(100))),
         }
     }
-    
+
     pub fn record_error(&self, category: ErrorCategory, message: String, is_critical: bool) {
         self.total_errors.fetch_add(1, Ordering::Relaxed);
-        
+
         match category {
-            ErrorCategory::Network => { self.network_errors.fetch_add(1, Ordering::Relaxed); },
-            ErrorCategory::Consensus => { self.consensus_errors.fetch_add(1, Ordering::Relaxed); },
-            ErrorCategory::Gaming => { self.gaming_errors.fetch_add(1, Ordering::Relaxed); },
-            ErrorCategory::Other => {},
+            ErrorCategory::Network => {
+                self.network_errors.fetch_add(1, Ordering::Relaxed);
+            }
+            ErrorCategory::Consensus => {
+                self.consensus_errors.fetch_add(1, Ordering::Relaxed);
+            }
+            ErrorCategory::Gaming => {
+                self.gaming_errors.fetch_add(1, Ordering::Relaxed);
+            }
+            ErrorCategory::Other => {}
         };
-        
+
         if is_critical {
             self.critical_errors.fetch_add(1, Ordering::Relaxed);
         }
-        
+
         let event = ErrorEvent {
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
             category,
             message,
             is_critical,
         };
-        
+
         let mut errors = self.recent_errors.write();
         if errors.len() >= 100 {
             errors.pop_front();
@@ -556,14 +582,14 @@ impl LatencyTracker {
             max_samples,
         }
     }
-    
+
     pub fn add_sample(&mut self, latency_ms: f64) {
         if self.samples.len() >= self.max_samples {
             self.samples.pop_front();
         }
         self.samples.push_back(latency_ms);
     }
-    
+
     pub fn average(&self) -> f64 {
         if self.samples.is_empty() {
             0.0
@@ -571,15 +597,15 @@ impl LatencyTracker {
             self.samples.iter().sum::<f64>() / self.samples.len() as f64
         }
     }
-    
+
     pub fn percentile(&self, p: f64) -> f64 {
         if self.samples.is_empty() {
             return 0.0;
         }
-        
+
         let mut sorted: Vec<f64> = self.samples.iter().copied().collect();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        
+
         let index = ((p / 100.0) * (sorted.len() - 1) as f64) as usize;
         sorted[index]
     }
@@ -649,38 +675,41 @@ lazy_static::lazy_static! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_metrics_collection() {
         let metrics = MetricsCollector::new();
-        
+
         // Record some metrics
         metrics.network.record_message_sent(100);
         metrics.network.record_message_received(200);
         metrics.consensus.record_proposal(true, 10.0);
         metrics.gaming.record_bet(100);
-        
+
         // Check values
         assert_eq!(metrics.network.messages_sent.load(Ordering::Relaxed), 1);
         assert_eq!(metrics.network.bytes_sent.load(Ordering::Relaxed), 100);
-        assert_eq!(metrics.consensus.proposals_accepted.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            metrics.consensus.proposals_accepted.load(Ordering::Relaxed),
+            1
+        );
         assert_eq!(metrics.gaming.total_bets.load(Ordering::Relaxed), 1);
     }
-    
+
     #[test]
     fn test_prometheus_export() {
         let metrics = MetricsCollector::new();
         metrics.network.record_message_sent(100);
-        
+
         let prometheus = metrics.export_prometheus();
         assert!(prometheus.contains("bitcraps_network_messages_sent 1"));
     }
-    
+
     #[test]
     fn test_json_export() {
         let metrics = MetricsCollector::new();
         metrics.network.record_message_sent(100);
-        
+
         let json = metrics.export_json().unwrap();
         assert!(json.contains("\"messages_sent\": 1"));
     }

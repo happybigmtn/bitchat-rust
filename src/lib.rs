@@ -1,8 +1,8 @@
 //! BitCraps - A decentralized, peer-to-peer casino protocol
-#![allow(dead_code)]  // Allow dead code during development
-#![allow(unused_variables)]  // Allow unused variables during development
-#![allow(unused_assignments)]  // Allow unused assignments during development
-//! 
+#![allow(dead_code)] // Allow dead code during development
+#![allow(unused_variables)] // Allow unused variables during development
+#![allow(unused_assignments)] // Allow unused assignments during development
+//!
 //! Feynman Explanation: This is the "master blueprint" for our decentralized casino.
 //! Think of it as a city plan where each module is a different district:
 //! - protocol: The "language" everyone speaks (like traffic laws)
@@ -12,106 +12,77 @@
 //! - gaming: The "casino floor" with all the games
 //! - session: The "secure phone lines" for encrypted communication
 //! - token: The "bank" managing CRAP tokens
-//! 
+//!
 //! All modules are now implemented and working together to create a complete
 //! decentralized craps casino over Bluetooth mesh networks.
 
-pub mod error;
+pub mod app; // Main application coordinator
+pub mod cache; // Multi-tier caching system
 pub mod config;
+pub mod contracts; // Smart contract integration and cross-chain bridges
+pub mod coordinator; // Network coordination and monitoring
+pub mod crypto; // Cryptographic foundations
 pub mod database;
-pub mod validation;
-pub mod logging;      // Production logging and observability
-pub mod resilience;   // Network resilience and fault tolerance
-pub mod keystore;     // Secure key management
-pub mod memory_pool;  // Memory pooling for performance optimization
-pub mod protocol;     // Core protocol and binary serialization
-pub mod crypto;       // Cryptographic foundations
-pub mod transport;    // Network transport layer (Bluetooth mesh)
-pub mod mesh;         // Mesh networking coordination
-pub mod discovery;    // Peer discovery (Bluetooth, DHT)
-pub mod coordinator;  // Network coordination and monitoring
-pub mod gaming;       // Gaming interfaces and session management
-pub mod session;      // Session management with Noise protocol
-pub mod token;        // Token economics and CRAP tokens
-pub mod ui;           // User interface (CLI and TUI)
-pub mod platform;     // Platform-specific integrations (Android, iOS)
-pub mod monitoring;   // Production monitoring and metrics
+pub mod discovery; // Peer discovery (Bluetooth, DHT)
+pub mod economics; // Advanced token economics and supply management
+pub mod error;
+pub mod gaming; // Gaming interfaces and session management
+pub mod keystore; // Secure key management
+pub mod logging; // Production logging and observability
+pub mod memory_pool; // Memory pooling for performance optimization
+pub mod mesh; // Mesh networking coordination
+pub mod mobile; // Mobile platform bindings and UniFFI interface
+pub mod monitoring; // Production monitoring and metrics
 pub mod optimization; // Performance optimizations
-pub mod persistence;  // Data persistence layer
-pub mod cache;        // Multi-tier caching system
-pub mod mobile;       // Mobile platform bindings and UniFFI interface
-pub mod performance;  // Performance benchmarking and analysis
-pub mod profiling;    // Performance profiling and analysis
-pub mod economics;    // Advanced token economics and supply management
-pub mod treasury;     // Treasury management and automated market making
-pub mod contracts;    // Smart contract integration and cross-chain bridges
-pub mod app;          // Main application coordinator
-pub mod security;     // Security hardening and input validation
+pub mod performance; // Performance benchmarking and analysis
+pub mod persistence; // Data persistence layer
+pub mod platform; // Platform-specific integrations (Android, iOS)
+pub mod profiling; // Performance profiling and analysis
+pub mod protocol; // Core protocol and binary serialization
+pub mod resilience; // Network resilience and fault tolerance
+pub mod security;
+pub mod session; // Session management with Noise protocol
+pub mod token; // Token economics and CRAP tokens
+pub mod transport; // Network transport layer (Bluetooth mesh)
+pub mod treasury; // Treasury management and automated market making
+pub mod ui; // User interface (CLI and TUI)
+pub mod validation; // Security hardening and input validation
 
 // UniFFI type tag (required by generated code)
 #[cfg(feature = "uniffi")]
 pub struct UniFfiTag;
 
-
 // Re-export commonly used types for easy access
+pub use coordinator::{HealthMetrics, MultiTransportCoordinator, NetworkMonitor, NetworkTopology};
+pub use crypto::{BitchatIdentity, BitchatKeypair, GameCrypto, ProofOfWork};
+pub use discovery::{BluetoothDiscovery, DhtDiscovery, DhtPeer, DiscoveredPeer};
 pub use error::{Error, Result};
-pub use protocol::{
-    PeerId, GameId, BetType, DiceRoll, CrapTokens,
-};
+pub use mesh::{MeshPeer, MeshService};
+pub use protocol::craps::{CrapsGame, GamePhase};
+pub use protocol::runtime::GameRuntime;
 pub use protocol::versioning::{
-    ProtocolVersion, ProtocolFeature, ProtocolCompatibility, VersionedMessage,
+    ProtocolCompatibility, ProtocolFeature, ProtocolVersion, VersionedMessage,
 };
-pub use crypto::{
-    BitchatKeypair, BitchatIdentity, GameCrypto, ProofOfWork,
-};
-pub use transport::{
-    TransportCoordinator, BluetoothTransport, TransportAddress,
-};
-pub use mesh::{
-    MeshService, MeshPeer,
-};
-pub use discovery::{
-    BluetoothDiscovery, DhtDiscovery, DiscoveredPeer, DhtPeer,
-};
-pub use coordinator::{
-    MultiTransportCoordinator, NetworkMonitor, NetworkTopology, HealthMetrics,
-};
-pub use protocol::craps::{
-    CrapsGame, GamePhase,
-};
-pub use protocol::runtime::{
-    GameRuntime,
-};
+pub use protocol::{BetType, CrapTokens, DiceRoll, GameId, PeerId};
+pub use transport::{BluetoothTransport, TransportAddress, TransportCoordinator};
 pub const TREASURY_ADDRESS: PeerId = [0xFFu8; 32];
-pub use session::{
-    SessionManager, BitchatSession, SessionLimits,
-};
-pub use token::{
-    TokenLedger, ProofOfRelay, Account, TransactionType,
-};
-pub use ui::{
-    Cli, Commands,
-};
-pub use monitoring::{
-    NetworkDashboard, NetworkMetrics, HealthCheck,
-};
-pub use persistence::PersistenceManager;
-pub use economics::{
-    TokenEconomics, EconomicsConfig, AdvancedStakingPosition, EconomicsStats,
-};
-pub use app::{
-    BitCrapsApp, ApplicationConfig,
-};
-pub use treasury::{
-    TreasuryManager, TreasuryConfig, TreasuryWallet, AutomatedMarketMaker, TreasuryStats,
-};
+pub use app::{ApplicationConfig, BitCrapsApp};
 pub use contracts::{
-    ContractManager, BlockchainNetwork, TokenContract, StakingContract, BridgeContract,
+    BlockchainNetwork, BridgeContract, ContractManager, StakingContract, TokenContract,
 };
+pub use economics::{AdvancedStakingPosition, EconomicsConfig, EconomicsStats, TokenEconomics};
+pub use monitoring::{HealthCheck, NetworkDashboard, NetworkMetrics};
+pub use persistence::PersistenceManager;
 pub use security::{
-    SecurityManager, SecurityConfig, SecurityLimits, InputValidator, RateLimiter, 
-    DosProtection, SecurityEventLogger, SecurityEvent, SecurityLevel,
+    DosProtection, InputValidator, RateLimiter, SecurityConfig, SecurityEvent, SecurityEventLogger,
+    SecurityLevel, SecurityLimits, SecurityManager,
 };
+pub use session::{BitchatSession, SessionLimits, SessionManager};
+pub use token::{Account, ProofOfRelay, TokenLedger, TransactionType};
+pub use treasury::{
+    AutomatedMarketMaker, TreasuryConfig, TreasuryManager, TreasuryStats, TreasuryWallet,
+};
+pub use ui::{Cli, Commands};
 
 /// Application configuration
 #[derive(Debug, Clone)]

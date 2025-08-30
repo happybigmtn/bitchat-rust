@@ -1,5 +1,5 @@
 //! Mesh networking for BitCraps with Security Hardening
-//! 
+//!
 //! This module implements the mesh networking layer including:
 //! - Mesh service coordination with input validation
 //! - Peer management and discovery
@@ -10,40 +10,40 @@
 //! - Message deduplication
 //! - Comprehensive security event logging
 
-pub mod service;
-pub mod components;
-pub mod deduplication;
-pub mod message_queue;
-pub mod game_session;
-pub mod anti_cheat;
-pub mod kademlia_dht;
-pub mod gateway;
 pub mod advanced_routing;
-pub mod resilience;
+pub mod anti_cheat;
+pub mod components;
 pub mod consensus_message_handler;
+pub mod deduplication;
+pub mod game_session;
+pub mod gateway;
+pub mod kademlia_dht;
+pub mod message_queue;
+pub mod resilience;
+pub mod service;
 
+use lru::LruCache;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::interval;
-use lru::LruCache;
-use std::num::NonZeroUsize;
-use serde::{Serialize, Deserialize};
 
-use crate::protocol::{PeerId, BitchatPacket, RoutingInfo};
-use crate::transport::{TransportCoordinator, TransportEvent};
 use crate::crypto::BitchatIdentity;
 use crate::error::{Error, Result};
+use crate::protocol::{BitchatPacket, PeerId, RoutingInfo};
 use crate::token::ProofOfRelay;
+use crate::transport::{TransportCoordinator, TransportEvent};
 
 pub use consensus_message_handler::{
-    ConsensusMessageHandler, ConsensusMessageConfig, ConsensusMessageStats,
+    ConsensusMessageConfig, ConsensusMessageHandler, ConsensusMessageStats,
     MeshConsensusIntegration,
 };
 
 // Re-export game session management
-pub use game_session::{GameSessionManager, GameSession, SessionState};
+pub use game_session::{GameSession, GameSessionManager, SessionState};
 
 /// Maximum number of messages to cache for deduplication
 const MAX_MESSAGE_CACHE_SIZE: usize = 10000;
@@ -97,28 +97,43 @@ struct CachedMessage {
 /// Mesh network events
 #[derive(Debug, Clone)]
 pub enum MeshEvent {
-    PeerJoined { peer: MeshPeer },
-    PeerLeft { peer_id: PeerId, reason: String },
-    MessageReceived { from: PeerId, packet: BitchatPacket },
-    RouteDiscovered { destination: PeerId, route: RouteInfo },
-    NetworkPartition { isolated_peers: Vec<PeerId> },
-    QueueOverflow { dropped_events: usize }, // Backpressure indicator
+    PeerJoined {
+        peer: MeshPeer,
+    },
+    PeerLeft {
+        peer_id: PeerId,
+        reason: String,
+    },
+    MessageReceived {
+        from: PeerId,
+        packet: BitchatPacket,
+    },
+    RouteDiscovered {
+        destination: PeerId,
+        route: RouteInfo,
+    },
+    NetworkPartition {
+        isolated_peers: Vec<PeerId>,
+    },
+    QueueOverflow {
+        dropped_events: usize,
+    }, // Backpressure indicator
 }
 
 /// Event queue configuration for backpressure management
 #[derive(Debug, Clone)]
 pub struct EventQueueConfig {
     pub max_queue_size: usize,
-    pub high_water_mark: usize,    // When to start dropping low-priority events
+    pub high_water_mark: usize, // When to start dropping low-priority events
     pub drop_strategy: DropStrategy,
 }
 
 /// Strategy for dropping events when queue is full
 #[derive(Debug, Clone)]
 pub enum DropStrategy {
-    DropOldest,        // Drop oldest events (FIFO)
-    DropLowPriority,   // Drop low-priority events first
-    Backpressure,      // Block senders until space available
+    DropOldest,      // Drop oldest events (FIFO)
+    DropLowPriority, // Drop low-priority events first
+    Backpressure,    // Block senders until space available
 }
 
 impl Default for EventQueueConfig {
@@ -132,23 +147,21 @@ impl Default for EventQueueConfig {
 }
 
 impl MeshService {
-    pub fn new(
-        identity: Arc<BitchatIdentity>,
-        transport: Arc<TransportCoordinator>,
-    ) -> Self {
+    pub fn new(identity: Arc<BitchatIdentity>, transport: Arc<TransportCoordinator>) -> Self {
         let event_queue_config = EventQueueConfig::default();
         let (event_sender, _) = mpsc::channel(event_queue_config.max_queue_size);
         let security_config = crate::security::SecurityConfig::default();
         let security_manager = Arc::new(crate::security::SecurityManager::new(security_config));
-        
+
         Self {
             identity,
             transport,
             peers: Arc::new(RwLock::new(HashMap::new())),
             routing_table: Arc::new(RwLock::new(HashMap::new())),
-            message_cache: Arc::new(RwLock::new(
-                LruCache::new(NonZeroUsize::new(MAX_MESSAGE_CACHE_SIZE).expect("MAX_MESSAGE_CACHE_SIZE constant must be greater than 0"))
-            )),
+            message_cache: Arc::new(RwLock::new(LruCache::new(
+                NonZeroUsize::new(MAX_MESSAGE_CACHE_SIZE)
+                    .expect("MAX_MESSAGE_CACHE_SIZE constant must be greater than 0"),
+            ))),
             event_sender,
             event_queue_config,
             is_running: Arc::new(RwLock::new(false)),
@@ -156,25 +169,25 @@ impl MeshService {
             security_manager,
         }
     }
-    
+
     /// Set the proof of relay system for mining rewards
     pub fn set_proof_of_relay(&mut self, proof_of_relay: Arc<ProofOfRelay>) {
         self.proof_of_relay = Some(proof_of_relay);
     }
-    
+
     /// Set consensus message handler for processing consensus packets
     pub fn set_consensus_handler(&mut self, handler: Arc<ConsensusMessageHandler>) {
         // Store handler for consensus message processing
         // In practice, this would integrate more deeply with the mesh service
         log::info!("Consensus message handler registered with mesh service");
     }
-    
+
     /// Set heartbeat interval for mobile battery optimization
     pub fn set_heartbeat_interval(&self, _interval: Duration) {
         // TODO: Implement heartbeat interval configuration
         // This would update internal timers for peer keepalive messages
     }
-    
+
     /// Set peer timeout for mobile connections
     pub fn set_peer_timeout(&self, _timeout: Duration) {
         // TODO: Implement peer timeout configuration
@@ -196,11 +209,11 @@ impl MeshService {
                     Ok(_) => {}
                     Err(mpsc::error::TrySendError::Full(dropped_event)) => {
                         log::warn!("Event queue full, dropping event: {:?}", dropped_event);
-                        
+
                         // Send overflow notification if not already overflowing
-                        let _ = self.event_sender.try_send(MeshEvent::QueueOverflow { 
-                            dropped_events: 1 
-                        });
+                        let _ = self
+                            .event_sender
+                            .try_send(MeshEvent::QueueOverflow { dropped_events: 1 });
                     }
                     Err(mpsc::error::TrySendError::Closed(_)) => {
                         log::error!("Failed to send mesh event: channel closed");
@@ -213,44 +226,54 @@ impl MeshService {
     /// Get event priority for drop strategy
     fn get_event_priority(event: &MeshEvent) -> u8 {
         match event {
-            MeshEvent::NetworkPartition { .. } => 0,  // Highest priority
+            MeshEvent::NetworkPartition { .. } => 0, // Highest priority
             MeshEvent::PeerLeft { .. } => 1,
             MeshEvent::PeerJoined { .. } => 2,
             MeshEvent::RouteDiscovered { .. } => 3,
             MeshEvent::MessageReceived { .. } => 4,
-            MeshEvent::QueueOverflow { .. } => 5,     // Lowest priority
+            MeshEvent::QueueOverflow { .. } => 5, // Lowest priority
         }
     }
-    
+
     /// Start the mesh service
     pub async fn start(&self) -> Result<()> {
         *self.is_running.write().await = true;
-        
+
         // Start transport layer
         self.transport.start_listening().await?;
-        
+
         // Start mesh maintenance tasks
         self.start_peer_discovery().await;
         self.start_route_maintenance().await;
         self.start_message_processing().await;
         self.start_cleanup_tasks().await;
-        
-        log::info!("Mesh service started with peer ID: {:?}", self.identity.peer_id);
+
+        log::info!(
+            "Mesh service started with peer ID: {:?}",
+            self.identity.peer_id
+        );
         Ok(())
     }
-    
+
     /// Stop the mesh service
     pub async fn stop(&self) {
         *self.is_running.write().await = false;
         log::info!("Mesh service stopped");
     }
-    
+
     /// Send a packet to a specific peer or broadcast with security validation
-    pub async fn send_packet(&self, mut packet: BitchatPacket, sender_ip: std::net::IpAddr) -> Result<()> {
+    pub async fn send_packet(
+        &self,
+        mut packet: BitchatPacket,
+        sender_ip: std::net::IpAddr,
+    ) -> Result<()> {
         // Validate network message before processing
-        let message_data = packet.serialize().map_err(|e| crate::error::Error::Protocol(format!("Packet serialization failed: {}", e)))?;
-        self.security_manager.validate_network_message(&message_data, sender_ip)?;
-        
+        let message_data = packet.serialize().map_err(|e| {
+            crate::error::Error::Protocol(format!("Packet serialization failed: {}", e))
+        })?;
+        self.security_manager
+            .validate_network_message(&message_data, sender_ip)?;
+
         if let Some(destination) = packet.get_receiver() {
             // Send to specific peer
             self.route_packet_to_peer(packet, destination).await
@@ -259,42 +282,46 @@ impl MeshService {
             self.broadcast_packet(packet).await
         }
     }
-    
+
     /// Broadcast packet to all connected peers
     pub async fn broadcast_packet(&self, mut packet: BitchatPacket) -> Result<()> {
         // Add our identity as sender if not already set
         if packet.get_sender().is_none() {
             packet.add_sender(self.identity.peer_id);
         }
-        
+
         // Add to message cache to prevent loops
         let packet_hash = self.calculate_packet_hash(&packet);
         self.add_to_message_cache(packet_hash).await;
-        
+
         // Send via transport coordinator
         self.transport.broadcast_packet(packet).await
     }
-    
+
     /// Route packet to a specific peer
-    async fn route_packet_to_peer(&self, mut packet: BitchatPacket, destination: PeerId) -> Result<()> {
+    async fn route_packet_to_peer(
+        &self,
+        mut packet: BitchatPacket,
+        destination: PeerId,
+    ) -> Result<()> {
         // Check if we are the destination
         if destination == self.identity.peer_id {
             self.handle_received_packet(packet, destination).await;
             return Ok(());
         }
-        
+
         // Add routing information
         if let Ok(Some(routing_info)) = packet.get_routing_info() {
             // Update existing routing info
             let mut updated_routing = routing_info;
             updated_routing.route_history.push(self.identity.peer_id);
             updated_routing.max_hops -= 1;
-            
+
             if updated_routing.max_hops == 0 {
                 log::warn!("Packet TTL expired, dropping");
                 return Ok(());
             }
-            
+
             packet.add_routing_info(&updated_routing)?;
         } else {
             // Add initial routing info
@@ -306,17 +333,18 @@ impl MeshService {
             };
             packet.add_routing_info(&routing_info)?;
         }
-        
+
         // Look up route
         let next_hop = self.find_next_hop(destination).await;
-        
+
         match next_hop {
             Some(next_peer) => {
                 // Send to next hop
                 let mut serialized_packet = packet;
-                let data = serialized_packet.serialize()
+                let data = serialized_packet
+                    .serialize()
                     .map_err(|e| Error::Protocol(format!("Packet serialization failed: {}", e)))?;
-                
+
                 self.transport.send_to_peer(next_peer, data).await
             }
             None => {
@@ -326,11 +354,11 @@ impl MeshService {
             }
         }
     }
-    
+
     /// Find next hop for reaching destination
     async fn find_next_hop(&self, destination: PeerId) -> Option<PeerId> {
         let routing_table = self.routing_table.read().await;
-        
+
         // Check if we have a direct route
         if let Some(route) = routing_table.get(&destination) {
             // Check if route is still fresh (less than 5 minutes old)
@@ -338,16 +366,16 @@ impl MeshService {
                 return Some(route.next_hop);
             }
         }
-        
+
         // Check if peer is directly connected
         let peers = self.peers.read().await;
         if peers.contains_key(&destination) {
             return Some(destination);
         }
-        
+
         None
     }
-    
+
     /// Static method to process received packet (used by spawned task)
     async fn process_received_packet(
         packet: BitchatPacket,
@@ -363,13 +391,13 @@ impl MeshService {
             log::debug!("Dropping duplicate packet");
             return;
         }
-        
+
         // Add to cache
         Self::add_to_message_cache_static(packet_hash, message_cache).await;
-        
+
         // Update peer activity
         Self::update_peer_activity_static(from, peers).await;
-        
+
         // Check if packet is for us
         if let Some(destination) = packet.get_receiver() {
             if destination == identity.peer_id {
@@ -380,10 +408,10 @@ impl MeshService {
                 }
             }
         }
-        
+
         // Note: Forwarding logic simplified for now to avoid circular dependencies
     }
-    
+
     /// Handle received packet from transport layer
     async fn handle_received_packet(&self, packet: BitchatPacket, from: PeerId) {
         // Check message cache to prevent loops
@@ -392,13 +420,13 @@ impl MeshService {
             log::debug!("Dropping duplicate packet");
             return;
         }
-        
+
         // Add to cache
         self.add_to_message_cache(packet_hash).await;
-        
+
         // Update peer activity
         self.update_peer_activity(from).await;
-        
+
         // Check if packet is for us
         if let Some(destination) = packet.get_receiver() {
             if destination == self.identity.peer_id {
@@ -408,30 +436,33 @@ impl MeshService {
                 return;
             }
         }
-        
+
         // Forward packet if not expired
         if packet.should_forward() {
             let mut forwarded_packet = packet;
             forwarded_packet.decrement_ttl();
-            
+
             // Record relay event for mining rewards
             if let Some(proof_of_relay) = &self.proof_of_relay {
                 let packet_hash = self.calculate_packet_hash_for_relay(&forwarded_packet);
                 let source = forwarded_packet.get_sender().unwrap_or([0u8; 32]);
                 let destination = forwarded_packet.get_receiver().unwrap_or([0u8; 32]);
                 let hop_count = 8 - forwarded_packet.ttl; // Calculate hops so far
-                
-                if let Err(e) = proof_of_relay.record_relay(
-                    self.identity.peer_id,
-                    packet_hash,
-                    source,
-                    destination,
-                    hop_count,
-                ).await {
+
+                if let Err(e) = proof_of_relay
+                    .record_relay(
+                        self.identity.peer_id,
+                        packet_hash,
+                        source,
+                        destination,
+                        hop_count,
+                    )
+                    .await
+                {
                     log::warn!("Failed to record relay for mining: {}", e);
                 }
             }
-            
+
             if let Some(destination) = forwarded_packet.get_receiver() {
                 let _ = Box::pin(self.route_packet_to_peer(forwarded_packet, destination)).await;
             } else {
@@ -440,50 +471,50 @@ impl MeshService {
             }
         }
     }
-    
+
     /// Start peer discovery task
     async fn start_peer_discovery(&self) {
         let _transport = self.transport.clone();
         let _peers = self.peers.clone();
         let is_running = self.is_running.clone();
         let _event_sender = self.event_sender.clone();
-        
+
         tokio::spawn(async move {
             let mut discovery_interval = interval(Duration::from_secs(30));
-            
+
             while *is_running.read().await {
                 discovery_interval.tick().await;
-                
+
                 // Discovery logic would go here
                 // For now, just check transport events
                 log::debug!("Running peer discovery cycle");
             }
         });
     }
-    
+
     /// Start route maintenance task
     async fn start_route_maintenance(&self) {
         let routing_table = self.routing_table.clone();
         let _peers = self.peers.clone();
         let is_running = self.is_running.clone();
-        
+
         tokio::spawn(async move {
             let mut maintenance_interval = interval(Duration::from_secs(60));
-            
+
             while *is_running.read().await {
                 maintenance_interval.tick().await;
-                
+
                 // Clean up stale routes
                 let mut table = routing_table.write().await;
                 let cutoff = Instant::now() - Duration::from_secs(600); // 10 minutes
-                
+
                 table.retain(|_, route| route.last_updated > cutoff);
-                
+
                 log::debug!("Route maintenance: {} routes active", table.len());
             }
         });
     }
-    
+
     /// Start message processing task
     async fn start_message_processing(&self) {
         let transport = self.transport.clone();
@@ -492,7 +523,7 @@ impl MeshService {
         let event_sender = self.event_sender.clone();
         let identity = self.identity.clone();
         let is_running = self.is_running.clone();
-        
+
         tokio::spawn(async move {
             while *is_running.read().await {
                 if let Some(event) = transport.next_event().await {
@@ -509,7 +540,8 @@ impl MeshService {
                                     &peers,
                                     &event_sender,
                                     &identity,
-                                ).await;
+                                )
+                                .await;
                             }
                         }
                         TransportEvent::Connected { peer_id, address } => {
@@ -526,34 +558,38 @@ impl MeshService {
             }
         });
     }
-    
+
     /// Start cleanup tasks
     async fn start_cleanup_tasks(&self) {
         let message_cache = self.message_cache.clone();
         let peers = self.peers.clone();
         let is_running = self.is_running.clone();
-        
+
         tokio::spawn(async move {
             let mut cleanup_interval = interval(Duration::from_secs(300)); // 5 minutes
-            
+
             while *is_running.read().await {
                 cleanup_interval.tick().await;
-                
+
                 // Clean message cache - remove old entries AND handle memory pressure
                 let mut cache = message_cache.write().await;
                 let cutoff = Instant::now() - Duration::from_secs(600); // 10 minutes
-                
+
                 // Check memory pressure first
                 let cache_size = cache.len();
                 const MAX_CACHE_SIZE: usize = 10000;
                 const HIGH_WATER_MARK: usize = (MAX_CACHE_SIZE as f64 * 0.8) as usize;
                 const LOW_WATER_MARK: usize = MAX_CACHE_SIZE / 2;
-                
+
                 if cache_size > HIGH_WATER_MARK {
                     // Memory pressure - aggressively evict oldest entries
                     let to_remove = cache_size - LOW_WATER_MARK;
-                    log::warn!("Message cache memory pressure: {} entries, removing {}", cache_size, to_remove);
-                    
+                    log::warn!(
+                        "Message cache memory pressure: {} entries, removing {}",
+                        cache_size,
+                        to_remove
+                    );
+
                     // LRU eviction - remove least recently used
                     for _ in 0..to_remove {
                         cache.pop_lru();
@@ -566,31 +602,34 @@ impl MeshService {
                             keys_to_remove.push(*key);
                         }
                     }
-                    
+
                     // Remove expired entries
                     for key in keys_to_remove {
                         cache.pop(&key);
                     }
                 }
-                
+
                 // Clean inactive peers
                 let mut peer_map = peers.write().await;
                 let inactive_cutoff = Instant::now() - Duration::from_secs(300); // 5 minutes
                 peer_map.retain(|_, peer| peer.last_seen > inactive_cutoff);
-                
-                log::debug!("Cleanup: {} cached messages, {} active peers", 
-                          cache.len(), peer_map.len());
+
+                log::debug!(
+                    "Cleanup: {} cached messages, {} active peers",
+                    cache.len(),
+                    peer_map.len()
+                );
             }
         });
     }
-    
+
     /// Static version of calculate_packet_hash
     fn calculate_packet_hash_static(packet: &BitchatPacket) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
-        
+
         // Hash key packet fields
         packet.packet_type.hash(&mut hasher);
         if let Some(sender) = packet.get_sender() {
@@ -599,38 +638,37 @@ impl MeshService {
         if let Some(timestamp) = packet.get_timestamp() {
             timestamp.hash(&mut hasher);
         }
-        
+
         hasher.finish()
     }
-    
+
     /// Calculate hash of packet for deduplication
     fn calculate_packet_hash(&self, packet: &BitchatPacket) -> u64 {
         Self::calculate_packet_hash_static(packet)
     }
-    
+
     /// Calculate packet hash for relay tracking (256-bit hash)
     fn calculate_packet_hash_for_relay(&self, packet: &BitchatPacket) -> [u8; 32] {
-        use sha2::{Sha256, Digest};
-        
+        use sha2::{Digest, Sha256};
+
         let mut hasher = Sha256::new();
         hasher.update([packet.version, packet.packet_type, packet.flags, packet.ttl]);
         hasher.update(packet.total_length.to_be_bytes());
         hasher.update(packet.sequence.to_be_bytes());
-        
+
         // Add TLV data to hash
         for tlv in &packet.tlv_data {
             hasher.update([tlv.field_type]);
             hasher.update(tlv.length.to_be_bytes());
             hasher.update(&tlv.value);
         }
-        
+
         let result = hasher.finalize();
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&result);
         hash
     }
-    
-    
+
     /// Static version of is_message_cached
     async fn is_message_cached_static(
         packet_hash: u64,
@@ -638,12 +676,12 @@ impl MeshService {
     ) -> bool {
         message_cache.read().await.contains(&packet_hash)
     }
-    
+
     /// Check if message is in cache
     async fn is_message_cached(&self, packet_hash: u64) -> bool {
         Self::is_message_cached_static(packet_hash, &self.message_cache).await
     }
-    
+
     /// Static version of add_to_message_cache
     async fn add_to_message_cache_static(
         packet_hash: u64,
@@ -654,22 +692,22 @@ impl MeshService {
             first_seen: Instant::now(),
             forwarded_to: HashSet::new(),
         };
-        
+
         message_cache.write().await.put(packet_hash, cached_msg);
     }
-    
+
     /// Add message to cache
     async fn add_to_message_cache(&self, packet_hash: u64) {
         Self::add_to_message_cache_static(packet_hash, &self.message_cache).await;
     }
-    
+
     /// Static version of update_peer_activity
     async fn update_peer_activity_static(
         peer_id: PeerId,
         peers: &Arc<RwLock<HashMap<PeerId, MeshPeer>>>,
     ) {
         let mut peer_map = peers.write().await;
-        
+
         if let Some(peer) = peer_map.get_mut(&peer_id) {
             peer.last_seen = Instant::now();
             peer.packets_received += 1;
@@ -682,18 +720,18 @@ impl MeshService {
                 packets_sent: 0,
                 packets_received: 1,
                 latency: None,
-                reputation: 0.5, // Start with neutral reputation
+                reputation: 0.5,    // Start with neutral reputation
                 is_treasury: false, // Will be determined later
             };
-            
+
             peer_map.insert(peer_id, new_peer);
         }
     }
-    
+
     /// Update peer activity
     async fn update_peer_activity(&self, peer_id: PeerId) {
         Self::update_peer_activity_static(peer_id, &self.peers).await;
-        
+
         // Send event after updating (only in instance method)
         let peers = self.peers.read().await;
         if let Some(peer) = peers.get(&peer_id) {
@@ -709,13 +747,13 @@ impl MeshService {
             }
         }
     }
-    
+
     /// Get mesh statistics
     pub async fn get_stats(&self) -> MeshStats {
         let peers = self.peers.read().await;
         let routing_table = self.routing_table.read().await;
         let message_cache = self.message_cache.read().await;
-        
+
         MeshStats {
             connected_peers: peers.len(),
             known_routes: routing_table.len(),
@@ -724,44 +762,50 @@ impl MeshService {
             total_packets_sent: peers.values().map(|p| p.packets_sent).sum(),
         }
     }
-    
+
     /// Get connected peers
     pub async fn get_connected_peers(&self) -> Vec<MeshPeer> {
         self.peers.read().await.values().cloned().collect()
     }
-    
+
     /// Broadcast a message to all connected peers
     pub async fn broadcast_message(&self, msg: MeshMessage) -> Result<()> {
         // Serialize the message once
         let serialized = bincode::serialize(&msg)?;
-        
+
         // Send to all connected peers
         let peers = self.peers.read().await;
         for peer_id in peers.keys() {
-            self.transport.send_to_peer(*peer_id, serialized.clone()).await?;
+            self.transport
+                .send_to_peer(*peer_id, serialized.clone())
+                .await?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Poll for game discovery responses
     pub async fn poll_discovery_response(&self) -> Option<MeshMessage> {
         // For now, return None as we need to restructure message caching
         // to store the actual messages instead of just hashes
         None
     }
-    
+
     /// Send a message to a specific peer
     pub async fn send_message(&self, msg: MeshMessage, peer_id: PeerId) -> Result<()> {
         let serialized = bincode::serialize(&msg)?;
         self.transport.send_to_peer(peer_id, serialized).await
     }
-    
+
     /// Send a message and wait for response
-    pub async fn send_and_wait_response(&self, msg: MeshMessage, peer_id: PeerId) -> Result<Option<MeshMessage>> {
+    pub async fn send_and_wait_response(
+        &self,
+        msg: MeshMessage,
+        peer_id: PeerId,
+    ) -> Result<Option<MeshMessage>> {
         // Send the message
         self.send_message(msg.clone(), peer_id).await?;
-        
+
         // For now, just return None as we need to restructure message handling
         // to properly track responses
         Ok(None)
@@ -808,15 +852,15 @@ pub struct MeshStats {
 mod tests {
     use super::*;
     use crate::crypto::BitchatKeypair;
-    
+
     #[tokio::test]
     async fn test_mesh_service_creation() {
         let keypair = BitchatKeypair::generate();
         let identity = Arc::new(BitchatIdentity::from_keypair_with_pow(keypair, 8));
         let transport = Arc::new(TransportCoordinator::new());
-        
+
         let mesh = MeshService::new(identity, transport);
-        
+
         let stats = mesh.get_stats().await;
         assert_eq!(stats.connected_peers, 0);
         assert_eq!(stats.known_routes, 0);
@@ -828,36 +872,36 @@ mod tests {
         let keypair = BitchatKeypair::generate();
         let identity = Arc::new(BitchatIdentity::from_keypair_with_pow(keypair, 8));
         let transport = Arc::new(TransportCoordinator::new());
-        
+
         let mesh = MeshService::new(identity, transport);
-        
+
         // Test that cache is initialized empty
         let initial_stats = mesh.get_stats().await;
         assert_eq!(initial_stats.cached_messages, 0);
-        
+
         // Add some messages to cache
         for i in 0..50u64 {
             mesh.add_to_message_cache(i).await;
         }
-        
+
         let stats_after_adds = mesh.get_stats().await;
         assert_eq!(stats_after_adds.cached_messages, 50);
-        
+
         // Test cache deduplication
         mesh.add_to_message_cache(0).await; // duplicate
         let stats_after_dup = mesh.get_stats().await;
         assert_eq!(stats_after_dup.cached_messages, 50); // should still be 50
-        
+
         // Test that cache is bounded - add more than max size
         // Since MAX_MESSAGE_CACHE_SIZE is 10000, we can't easily test eviction
         // but we can test that it doesn't grow unbounded by checking the size
         for i in 50..150u64 {
             mesh.add_to_message_cache(i).await;
         }
-        
+
         let stats_final = mesh.get_stats().await;
         assert_eq!(stats_final.cached_messages, 150);
-        
+
         // Verify message is cached
         assert!(mesh.is_message_cached(0).await);
         assert!(mesh.is_message_cached(149).await);
@@ -870,12 +914,12 @@ mod tests {
         let keypair = BitchatKeypair::generate();
         let identity = Arc::new(BitchatIdentity::from_keypair_with_pow(keypair, 8));
         let transport = Arc::new(TransportCoordinator::new());
-        
+
         // Create a small LRU cache directly to test eviction
         let test_cache: Arc<RwLock<LruCache<u64, CachedMessage>>> = Arc::new(RwLock::new(
-            LruCache::new(NonZeroUsize::new(3).expect("Cache size 3 is a positive constant")) // Small cache for testing
+            LruCache::new(NonZeroUsize::new(3).expect("Cache size 3 is a positive constant")), // Small cache for testing
         ));
-        
+
         // Add items to fill cache
         for i in 0..3u64 {
             let cached_msg = CachedMessage {
@@ -885,13 +929,13 @@ mod tests {
             };
             test_cache.write().await.put(i, cached_msg);
         }
-        
+
         // Cache should be full
         assert_eq!(test_cache.read().await.len(), 3);
         assert!(test_cache.read().await.contains(&0));
         assert!(test_cache.read().await.contains(&1));
         assert!(test_cache.read().await.contains(&2));
-        
+
         // Add one more item - should evict the least recently used (0)
         let cached_msg = CachedMessage {
             packet_hash: 3,
@@ -899,7 +943,7 @@ mod tests {
             forwarded_to: HashSet::new(),
         };
         test_cache.write().await.put(3, cached_msg);
-        
+
         // Cache should still be size 3, but 0 should be evicted
         assert_eq!(test_cache.read().await.len(), 3);
         assert!(!test_cache.read().await.contains(&0)); // Evicted

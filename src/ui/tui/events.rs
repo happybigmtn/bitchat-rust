@@ -1,18 +1,18 @@
 //! Events module for BitCraps UI
-//! 
+//!
 //! This module implements the user interface components for BitCraps
 //! including CLI, TUI, and specialized casino widgets.
 
-use serde::{Serialize, Deserialize};
-use rusqlite::params;
-use std::fs;
-use std::collections::HashMap;
-use std::time::{Duration, UNIX_EPOCH};
-use std::path::Path;
-use rusqlite::Connection;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use super::widgets::ChatMessage;
+use rusqlite::params;
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::{Duration, UNIX_EPOCH};
+use tokio::sync::Mutex;
 
 // Add missing error types
 #[derive(Debug)]
@@ -22,19 +22,25 @@ pub struct ConfigError {
 
 impl From<std::io::Error> for ConfigError {
     fn from(err: std::io::Error) -> Self {
-        ConfigError { message: err.to_string() }
+        ConfigError {
+            message: err.to_string(),
+        }
     }
 }
 
 impl From<toml::de::Error> for ConfigError {
     fn from(err: toml::de::Error) -> Self {
-        ConfigError { message: err.to_string() }
+        ConfigError {
+            message: err.to_string(),
+        }
     }
 }
 
 impl From<toml::ser::Error> for ConfigError {
     fn from(err: toml::ser::Error) -> Self {
-        ConfigError { message: err.to_string() }
+        ConfigError {
+            message: err.to_string(),
+        }
     }
 }
 
@@ -45,19 +51,25 @@ pub struct StorageError {
 
 impl From<rusqlite::Error> for StorageError {
     fn from(err: rusqlite::Error) -> Self {
-        StorageError { message: err.to_string() }
+        StorageError {
+            message: err.to_string(),
+        }
     }
 }
 
 impl From<serde_json::Error> for StorageError {
     fn from(err: serde_json::Error) -> Self {
-        StorageError { message: err.to_string() }
+        StorageError {
+            message: err.to_string(),
+        }
     }
 }
 
 impl From<std::time::SystemTimeError> for StorageError {
     fn from(err: std::time::SystemTimeError) -> Self {
-        StorageError { message: err.to_string() }
+        StorageError {
+            message: err.to_string(),
+        }
     }
 }
 
@@ -116,13 +128,13 @@ impl Config {
         let content = fs::read_to_string(path)?;
         Ok(toml::from_str(&content)?)
     }
-    
+
     pub fn save_to_file(&self, path: &Path) -> Result<(), ConfigError> {
         let content = toml::to_string_pretty(self)?;
         fs::write(path, content)?;
         Ok(())
     }
-    
+
     pub fn default() -> Self {
         Config {
             network: NetworkConfig {
@@ -158,7 +170,7 @@ pub struct MessageStore {
 impl MessageStore {
     pub fn new(db_path: &Path) -> Result<Self, StorageError> {
         let conn = Connection::open(db_path)?;
-        
+
         conn.execute(
             "CREATE TABLE IF NOT EXISTS messages (
                 id TEXT PRIMARY KEY,
@@ -169,12 +181,12 @@ impl MessageStore {
             )",
             [],
         )?;
-        
+
         Ok(MessageStore {
             db: Arc::new(Mutex::new(conn)),
         })
     }
-    
+
     pub async fn save_message(&self, message: &ChatMessage) -> Result<(), StorageError> {
         let db = self.db.lock().await;
         db.execute(
@@ -189,31 +201,40 @@ impl MessageStore {
         )?;
         Ok(())
     }
-    
+
     pub async fn load_messages(&self, limit: usize) -> Result<Vec<ChatMessage>, StorageError> {
         let db = self.db.lock().await;
         let mut stmt = db.prepare(
             "SELECT id, sender, content, timestamp, channel FROM messages 
-             ORDER BY timestamp DESC LIMIT ?1"
+             ORDER BY timestamp DESC LIMIT ?1",
         )?;
-        
+
         let rows = stmt.query_map([limit], |row| {
             let sender_str: String = row.get(1)?;
             let sender = sender_str.as_bytes().try_into().map_err(|_| {
-                rusqlite::Error::InvalidColumnType(1, "Invalid PeerId format".to_string(), rusqlite::types::Type::Text)
+                rusqlite::Error::InvalidColumnType(
+                    1,
+                    "Invalid PeerId format".to_string(),
+                    rusqlite::types::Type::Text,
+                )
             })?;
-            
+
             Ok(ChatMessage {
                 id: row.get(0)?,
                 sender,
-                content: serde_json::from_str(&row.get::<_, String>(2)?)
-                    .map_err(|e| rusqlite::Error::InvalidColumnType(2, e.to_string(), rusqlite::types::Type::Text))?,
+                content: serde_json::from_str(&row.get::<_, String>(2)?).map_err(|e| {
+                    rusqlite::Error::InvalidColumnType(
+                        2,
+                        e.to_string(),
+                        rusqlite::types::Type::Text,
+                    )
+                })?,
                 timestamp: UNIX_EPOCH + Duration::from_secs(row.get(3)?),
                 channel: row.get(4)?,
             })
         })?;
-        
-        rows.collect::<Result<Vec<_>, _>>().map_err(StorageError::from)
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StorageError::from)
     }
 }
-

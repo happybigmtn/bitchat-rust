@@ -3,20 +3,20 @@
 //! Gateway nodes provide internet connectivity for isolated mesh networks,
 //! enabling global BitCraps gameplay while maintaining local mesh efficiency.
 
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::net::{SocketAddr, IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
-use tokio::sync::{mpsc, RwLock, Mutex};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::interval;
-use serde::{Deserialize, Serialize};
 
-use crate::protocol::PeerId;
-use crate::protocol::versioning::ProtocolVersion;
 use crate::crypto::BitchatIdentity;
 use crate::error::{Error, Result};
 use crate::mesh::MeshService;
+use crate::protocol::versioning::ProtocolVersion;
+use crate::protocol::PeerId;
 
 /// Gateway node configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,7 +157,7 @@ struct GatewayRoute {
 
 /// Bandwidth monitoring for QoS
 pub struct BandwidthMonitor {
-    local_usage: Arc<Mutex<f64>>, // Mbps
+    local_usage: Arc<Mutex<f64>>,    // Mbps
     internet_usage: Arc<Mutex<f64>>, // Mbps
     usage_history: Arc<RwLock<Vec<(Instant, f64, f64)>>>,
     limits: GatewayConfig,
@@ -176,15 +176,40 @@ struct RelayStatistics {
 /// Gateway events
 #[derive(Debug, Clone)]
 pub enum GatewayEvent {
-    LocalPeerConnected { peer_id: PeerId },
-    LocalPeerDisconnected { peer_id: PeerId, reason: String },
-    InternetPeerConnected { peer_id: PeerId, address: SocketAddr },
-    InternetPeerDisconnected { peer_id: PeerId, reason: String },
-    PeerDisconnected { peer_id: PeerId, reason: String },
-    MessageRelayed { from: PeerId, to: PeerId, bytes: usize },
-    BandwidthLimitReached { interface: String, limit_mbps: f64 },
-    GatewayDiscovered { gateway: GatewayInfo },
-    RelayRewardEarned { tokens: u64 },
+    LocalPeerConnected {
+        peer_id: PeerId,
+    },
+    LocalPeerDisconnected {
+        peer_id: PeerId,
+        reason: String,
+    },
+    InternetPeerConnected {
+        peer_id: PeerId,
+        address: SocketAddr,
+    },
+    InternetPeerDisconnected {
+        peer_id: PeerId,
+        reason: String,
+    },
+    PeerDisconnected {
+        peer_id: PeerId,
+        reason: String,
+    },
+    MessageRelayed {
+        from: PeerId,
+        to: PeerId,
+        bytes: usize,
+    },
+    BandwidthLimitReached {
+        interface: String,
+        limit_mbps: f64,
+    },
+    GatewayDiscovered {
+        gateway: GatewayInfo,
+    },
+    RelayRewardEarned {
+        tokens: u64,
+    },
 }
 
 impl GatewayNode {
@@ -195,7 +220,7 @@ impl GatewayNode {
         mesh_service: Arc<MeshService>,
     ) -> Self {
         let (event_sender, _) = mpsc::unbounded_channel();
-        
+
         Self {
             identity,
             mesh_service,
@@ -210,100 +235,105 @@ impl GatewayNode {
             config,
         }
     }
-    
+
     /// Start gateway node
     pub async fn start(&self) -> Result<()> {
         *self.is_running.write().await = true;
-        
+
         // Start local interface (mesh)
         self.start_local_interface().await?;
-        
+
         // Start internet interface
         self.start_internet_interface().await?;
-        
+
         // Start gateway discovery
         self.start_gateway_discovery().await;
-        
+
         // Start heartbeat service
         self.start_heartbeat_service().await;
-        
+
         // Start bandwidth monitoring
         self.start_bandwidth_monitoring().await;
-        
+
         // Start relay reward system
         if self.config.enable_relay_rewards {
             self.start_relay_rewards().await;
         }
-        
-        log::info!("Gateway node started at local:{} internet:{}",
-                   self.config.local_interface.bind_address,
-                   self.config.internet_interface.bind_address);
-        
+
+        log::info!(
+            "Gateway node started at local:{} internet:{}",
+            self.config.local_interface.bind_address,
+            self.config.internet_interface.bind_address
+        );
+
         Ok(())
     }
-    
+
     /// Stop gateway node
     pub async fn stop(&self) {
         *self.is_running.write().await = false;
         log::info!("Gateway node stopped");
     }
-    
+
     /// Start local interface (mesh side)
     async fn start_local_interface(&self) -> Result<()> {
         match self.config.local_interface.protocol {
             GatewayProtocol::Tcp => {
-                self.start_tcp_server(self.config.local_interface.bind_address, true).await
+                self.start_tcp_server(self.config.local_interface.bind_address, true)
+                    .await
             }
             GatewayProtocol::Udp => {
-                self.start_udp_server(self.config.local_interface.bind_address, true).await
+                self.start_udp_server(self.config.local_interface.bind_address, true)
+                    .await
             }
-            _ => Err(Error::Transport("Protocol not supported for local interface".to_string())),
+            _ => Err(Error::Transport(
+                "Protocol not supported for local interface".to_string(),
+            )),
         }
     }
-    
+
     /// Start internet interface
     async fn start_internet_interface(&self) -> Result<()> {
         match self.config.internet_interface.protocol {
             GatewayProtocol::Tcp => {
-                self.start_tcp_server(self.config.internet_interface.bind_address, false).await
+                self.start_tcp_server(self.config.internet_interface.bind_address, false)
+                    .await
             }
             GatewayProtocol::Udp => {
-                self.start_udp_server(self.config.internet_interface.bind_address, false).await
+                self.start_udp_server(self.config.internet_interface.bind_address, false)
+                    .await
             }
-            GatewayProtocol::WebSocket => {
-                self.start_websocket_server().await
-            }
-            GatewayProtocol::Quic => {
-                self.start_quic_server().await
-            }
+            GatewayProtocol::WebSocket => self.start_websocket_server().await,
+            GatewayProtocol::Quic => self.start_quic_server().await,
         }
     }
-    
+
     /// Start TCP server
     async fn start_tcp_server(&self, addr: SocketAddr, is_local: bool) -> Result<()> {
-        let listener = TcpListener::bind(addr).await
+        let listener = TcpListener::bind(addr)
+            .await
             .map_err(|e| Error::Transport(format!("Failed to bind TCP listener: {}", e)))?;
-        
+
         let local_peers = self.local_peers.clone();
         let internet_peers = self.internet_peers.clone();
         let identity = self.identity.clone();
         let event_sender = self.event_sender.clone();
         let is_running = self.is_running.clone();
         let bandwidth_monitor = self.bandwidth_monitor.clone();
-        
+
         tokio::spawn(async move {
             while *is_running.read().await {
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
                         log::info!("New TCP connection from {}", peer_addr);
-                        
+
                         // Handle connection in separate task
                         let local_peers_task = local_peers.clone();
                         let internet_peers_task = internet_peers.clone();
                         let identity_task = identity.clone();
                         let event_sender_task = event_sender.clone();
                         let bandwidth_monitor_task = bandwidth_monitor.clone();
-                        
+
                         tokio::spawn(async move {
                             Self::handle_tcp_connection(
                                 stream,
@@ -314,7 +344,8 @@ impl GatewayNode {
                                 identity_task,
                                 event_sender_task,
                                 bandwidth_monitor_task,
-                            ).await;
+                            )
+                            .await;
                         });
                     }
                     Err(e) => {
@@ -323,20 +354,21 @@ impl GatewayNode {
                 }
             }
         });
-        
+
         Ok(())
     }
-    
+
     /// Start UDP server
     async fn start_udp_server(&self, addr: SocketAddr, _is_local: bool) -> Result<()> {
-        let socket = UdpSocket::bind(addr).await
+        let socket = UdpSocket::bind(addr)
+            .await
             .map_err(|e| Error::Transport(format!("Failed to bind UDP socket: {}", e)))?;
-        
+
         let is_running = self.is_running.clone();
-        
+
         tokio::spawn(async move {
             let mut buffer = [0u8; 65536];
-            
+
             while *is_running.read().await {
                 match socket.recv_from(&mut buffer).await {
                     Ok((len, peer_addr)) => {
@@ -349,24 +381,24 @@ impl GatewayNode {
                 }
             }
         });
-        
+
         Ok(())
     }
-    
+
     /// Start WebSocket server (placeholder)
     async fn start_websocket_server(&self) -> Result<()> {
         // WebSocket implementation would go here
         log::warn!("WebSocket server not yet implemented");
         Ok(())
     }
-    
+
     /// Start QUIC server (placeholder)
     async fn start_quic_server(&self) -> Result<()> {
         // QUIC implementation would go here
         log::warn!("QUIC server not yet implemented");
         Ok(())
     }
-    
+
     /// Handle TCP connection
     async fn handle_tcp_connection(
         mut stream: TcpStream,
@@ -379,17 +411,17 @@ impl GatewayNode {
         bandwidth_monitor: Arc<BandwidthMonitor>,
     ) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        
+
         // Generate temporary peer ID from address
         let peer_id = Self::peer_id_from_addr(peer_addr);
-        
+
         // Perform handshake
         let handshake_data = identity.public_key().to_vec();
         if let Err(e) = stream.write_all(&handshake_data).await {
             log::error!("Failed to send handshake: {}", e);
             return;
         }
-        
+
         // Read peer handshake
         let mut peer_handshake = vec![0u8; 32];
         match stream.read_exact(&mut peer_handshake).await {
@@ -397,39 +429,52 @@ impl GatewayNode {
                 // Store peer information
                 if is_local {
                     let mut peers = local_peers.write().await;
-                    peers.insert(peer_id, LocalPeer {
+                    peers.insert(
                         peer_id,
-                        address: Some(peer_addr),
-                        connected_at: Instant::now(),
-                        last_activity: Instant::now(),
-                        last_seen: Instant::now(),
-                        bytes_sent: 0,
-                        bytes_received: 0,
-                        bytes_relayed: 0,
-                        messages_relayed: 0,
-                        reputation: 1.0,
-                    });
+                        LocalPeer {
+                            peer_id,
+                            address: Some(peer_addr),
+                            connected_at: Instant::now(),
+                            last_activity: Instant::now(),
+                            last_seen: Instant::now(),
+                            bytes_sent: 0,
+                            bytes_received: 0,
+                            bytes_relayed: 0,
+                            messages_relayed: 0,
+                            reputation: 1.0,
+                        },
+                    );
                     let _ = event_sender.send(GatewayEvent::LocalPeerConnected { peer_id });
                 } else {
                     let mut peers = internet_peers.write().await;
-                    peers.insert(peer_id, InternetPeer {
+                    peers.insert(
+                        peer_id,
+                        InternetPeer {
+                            peer_id,
+                            address: peer_addr,
+                            connected_at: Instant::now(),
+                            last_activity: Instant::now(),
+                            last_ping: Instant::now(),
+                            rtt: Duration::from_millis(0),
+                            bandwidth_usage: 0.0,
+                            protocol_version: ProtocolVersion::CURRENT,
+                            bytes_relayed: 0,
+                            relay_fee_earned: 0,
+                        },
+                    );
+                    let _ = event_sender.send(GatewayEvent::InternetPeerConnected {
                         peer_id,
                         address: peer_addr,
-                        connected_at: Instant::now(),
-                        last_activity: Instant::now(),
-                        last_ping: Instant::now(),
-                        rtt: Duration::from_millis(0),
-                        bandwidth_usage: 0.0,
-                        protocol_version: ProtocolVersion::CURRENT,
-                        bytes_relayed: 0,
-                        relay_fee_earned: 0,
                     });
-                    let _ = event_sender.send(GatewayEvent::InternetPeerConnected { peer_id, address: peer_addr });
                 }
-                
-                log::info!("Successfully connected to peer {} at {} (local: {})", 
-                         hex::encode(&peer_id[..8]), peer_addr, is_local);
-                
+
+                log::info!(
+                    "Successfully connected to peer {} at {} (local: {})",
+                    hex::encode(&peer_id[..8]),
+                    peer_addr,
+                    is_local
+                );
+
                 // Start message relay loop
                 let mut buffer = vec![0u8; 65536];
                 loop {
@@ -441,7 +486,7 @@ impl GatewayNode {
                         Ok(n) => {
                             // Update bandwidth monitoring
                             bandwidth_monitor.update_usage(is_local, n).await;
-                            
+
                             // Relay message to appropriate destination
                             if is_local {
                                 // Local to internet relay
@@ -451,18 +496,27 @@ impl GatewayNode {
                                 }
                             } else {
                                 // Internet to local relay
-                                if let Some(peers) = internet_peers.write().await.get_mut(&peer_id) {
+                                if let Some(peers) = internet_peers.write().await.get_mut(&peer_id)
+                                {
                                     peers.bytes_relayed += n as u64;
                                     peers.last_activity = Instant::now();
                                     peers.relay_fee_earned += 1; // Simple fee calculation
                                 }
                             }
-                            
+
                             // Process message (would include actual routing logic)
-                            log::trace!("Relayed {} bytes from peer {}", n, hex::encode(&peer_id[..8]));
+                            log::trace!(
+                                "Relayed {} bytes from peer {}",
+                                n,
+                                hex::encode(&peer_id[..8])
+                            );
                         }
                         Err(e) => {
-                            log::error!("Read error from peer {}: {}", hex::encode(&peer_id[..8]), e);
+                            log::error!(
+                                "Read error from peer {}: {}",
+                                hex::encode(&peer_id[..8]),
+                                e
+                            );
                             break;
                         }
                     }
@@ -472,157 +526,164 @@ impl GatewayNode {
                 log::error!("Failed to read peer handshake: {}", e);
             }
         }
-        
+
         // Clean up on disconnect
         if is_local {
             local_peers.write().await.remove(&peer_id);
-            let _ = event_sender.send(GatewayEvent::LocalPeerDisconnected { 
-                peer_id, 
-                reason: "Connection closed".to_string() 
+            let _ = event_sender.send(GatewayEvent::LocalPeerDisconnected {
+                peer_id,
+                reason: "Connection closed".to_string(),
             });
         } else {
             internet_peers.write().await.remove(&peer_id);
-            let _ = event_sender.send(GatewayEvent::InternetPeerDisconnected { 
-                peer_id, 
-                reason: "Connection closed".to_string() 
+            let _ = event_sender.send(GatewayEvent::InternetPeerDisconnected {
+                peer_id,
+                reason: "Connection closed".to_string(),
             });
         }
-        
+
         log::info!("Peer {} disconnected", hex::encode(&peer_id[..8]));
     }
-    
+
     /// Generate peer ID from socket address (temporary solution)
     fn peer_id_from_addr(addr: SocketAddr) -> PeerId {
-        use sha2::{Sha256, Digest};
-        
+        use sha2::{Digest, Sha256};
+
         let mut hasher = Sha256::new();
         hasher.update(addr.to_string().as_bytes());
         let hash = hasher.finalize();
-        
+
         let mut peer_id = [0u8; 32];
         peer_id.copy_from_slice(&hash);
         peer_id
     }
-    
+
     /// Start gateway discovery
     async fn start_gateway_discovery(&self) {
         let gateway_registry = self.gateway_registry.clone();
         let is_running = self.is_running.clone();
         let discovery_interval = self.config.discovery_interval;
-        
+
         tokio::spawn(async move {
             let mut interval = interval(discovery_interval);
-            
+
             while *is_running.read().await {
                 interval.tick().await;
-                
+
                 // Discovery logic - broadcast gateway announcement
                 log::debug!("Running gateway discovery");
-                
+
                 // In a real implementation, this would:
                 // 1. Broadcast gateway announcement to known peers
                 // 2. Listen for other gateway announcements
                 // 3. Update gateway registry
                 // 4. Calculate optimal routing paths
-                
+
                 let registry = gateway_registry.read().await;
                 log::debug!("Known gateways: {}", registry.len());
             }
         });
     }
-    
+
     /// Start heartbeat service
     async fn start_heartbeat_service(&self) {
         let local_peers = self.local_peers.clone();
         let internet_peers = self.internet_peers.clone();
         let is_running = self.is_running.clone();
         let heartbeat_interval = self.config.heartbeat_interval;
-        
+
         tokio::spawn(async move {
             let mut interval = interval(heartbeat_interval);
-            
+
             while *is_running.read().await {
                 interval.tick().await;
-                
+
                 // Send heartbeats to all peers
                 let local_count = local_peers.read().await.len();
                 let internet_count = internet_peers.read().await.len();
-                
-                log::debug!("Heartbeat: {} local peers, {} internet peers", local_count, internet_count);
+
+                log::debug!(
+                    "Heartbeat: {} local peers, {} internet peers",
+                    local_count,
+                    internet_count
+                );
             }
         });
     }
-    
+
     /// Start bandwidth monitoring
     async fn start_bandwidth_monitoring(&self) {
         let bandwidth_monitor = self.bandwidth_monitor.clone();
         let is_running = self.is_running.clone();
-        
+
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(1));
-            
+
             while *is_running.read().await {
                 interval.tick().await;
-                
+
                 // Update bandwidth usage statistics
                 let local_usage = *bandwidth_monitor.local_usage.lock().await;
                 let internet_usage = *bandwidth_monitor.internet_usage.lock().await;
-                
+
                 // Add to history
                 {
                     let mut history = bandwidth_monitor.usage_history.write().await;
                     history.push((Instant::now(), local_usage, internet_usage));
-                    
+
                     // Keep only last 3600 entries (1 hour at 1 second intervals)
                     if history.len() > 3600 {
                         let drain_count = history.len() - 3600;
                         history.drain(0..drain_count);
                     }
                 }
-                
-                log::trace!("Bandwidth usage: local={:.2}Mbps, internet={:.2}Mbps", 
-                           local_usage, internet_usage);
+
+                log::trace!(
+                    "Bandwidth usage: local={:.2}Mbps, internet={:.2}Mbps",
+                    local_usage,
+                    internet_usage
+                );
             }
         });
     }
-    
+
     /// Start relay reward system
     async fn start_relay_rewards(&self) {
         let relay_stats = self.relay_stats.clone();
         let is_running = self.is_running.clone();
         let event_sender = self.event_sender.clone();
-        
+
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(60)); // Check every minute
-            
+
             while *is_running.read().await {
                 interval.tick().await;
-                
+
                 // Calculate relay rewards
                 let mut stats = relay_stats.write().await;
-                
+
                 // Simple reward calculation: 1 token per message relayed
                 let tokens_earned = stats.messages_relayed - stats.tokens_earned;
-                
+
                 if tokens_earned > 0 {
                     stats.tokens_earned += tokens_earned;
-                    let _ = event_sender.send(GatewayEvent::RelayRewardEarned { 
-                        tokens: tokens_earned 
+                    let _ = event_sender.send(GatewayEvent::RelayRewardEarned {
+                        tokens: tokens_earned,
                     });
-                    
+
                     log::info!("Relay rewards earned: {} tokens", tokens_earned);
                 }
             }
         });
     }
-    
+
     /// Get gateway statistics
     pub async fn get_stats(&self) -> GatewayStats {
         let local_peers = self.local_peers.read().await;
         let internet_peers = self.internet_peers.read().await;
         let gateway_registry = self.gateway_registry.read().await;
         let relay_stats = self.relay_stats.read().await;
-        
+
         let bandwidth_usage = {
             let local_usage = *self.bandwidth_monitor.local_usage.lock().await;
             let internet_usage = *self.bandwidth_monitor.internet_usage.lock().await;
@@ -633,7 +694,7 @@ impl GatewayNode {
                 internet_limit_mbps: self.config.internet_interface.max_bandwidth_mbps,
             }
         };
-        
+
         GatewayStats {
             local_peers: local_peers.len(),
             internet_peers: internet_peers.len(),
@@ -642,7 +703,10 @@ impl GatewayNode {
             bytes_relayed: relay_stats.bytes_relayed,
             tokens_earned: relay_stats.tokens_earned,
             bandwidth_usage,
-            uptime: relay_stats.uptime_start.map(|start| start.elapsed()).unwrap_or(Duration::ZERO),
+            uptime: relay_stats
+                .uptime_start
+                .map(|start| start.elapsed())
+                .unwrap_or(Duration::ZERO),
         }
     }
 }
@@ -656,11 +720,11 @@ impl BandwidthMonitor {
             limits: config,
         }
     }
-    
+
     /// Update bandwidth usage
     pub async fn update_usage(&self, is_local: bool, bytes: usize) {
         let mbps = (bytes as f64 * 8.0) / 1_000_000.0; // Convert to Mbps
-        
+
         if is_local {
             let mut usage = self.local_usage.lock().await;
             *usage = (*usage * 0.9) + (mbps * 0.1); // Exponential moving average
@@ -669,7 +733,7 @@ impl BandwidthMonitor {
             *usage = (*usage * 0.9) + (mbps * 0.1);
         }
     }
-    
+
     /// Check if bandwidth limit is reached
     pub async fn is_limit_reached(&self, is_local: bool) -> bool {
         if is_local {
@@ -723,29 +787,32 @@ impl GatewayDiscovery {
             discovery_peers: HashSet::new(),
         }
     }
-    
+
     /// Discover gateways in the network
     pub async fn discover_gateways(&mut self) -> Result<Vec<GatewayInfo>> {
         // Implementation would broadcast discovery messages
         // and collect responses from gateway nodes
-        
+
         let gateways = self.known_gateways.read().await;
         Ok(gateways.values().cloned().collect())
     }
-    
+
     /// Select best gateway based on criteria
-    pub async fn select_best_gateway(&self, criteria: GatewaySelectionCriteria) -> Option<GatewayInfo> {
+    pub async fn select_best_gateway(
+        &self,
+        criteria: GatewaySelectionCriteria,
+    ) -> Option<GatewayInfo> {
         let gateways = self.known_gateways.read().await;
-        
+
         let mut candidates: Vec<_> = gateways.values().collect();
-        
+
         // Filter by criteria
         candidates.retain(|gw| {
-            gw.current_load < criteria.max_load &&
-            gw.uptime_percentage > criteria.min_uptime &&
-            gw.relay_fee <= criteria.max_relay_fee
+            gw.current_load < criteria.max_load
+                && gw.uptime_percentage > criteria.min_uptime
+                && gw.relay_fee <= criteria.max_relay_fee
         });
-        
+
         // Sort by preference
         match criteria.preference {
             GatewayPreference::LowestLatency => {
@@ -757,11 +824,19 @@ impl GatewayDiscovery {
                 candidates.first().cloned().cloned()
             }
             GatewayPreference::HighestBandwidth => {
-                candidates.sort_by(|a, b| b.max_bandwidth_mbps.partial_cmp(&a.max_bandwidth_mbps).unwrap());
+                candidates.sort_by(|a, b| {
+                    b.max_bandwidth_mbps
+                        .partial_cmp(&a.max_bandwidth_mbps)
+                        .unwrap()
+                });
                 candidates.first().cloned().cloned()
             }
             GatewayPreference::MostReliable => {
-                candidates.sort_by(|a, b| b.uptime_percentage.partial_cmp(&a.uptime_percentage).unwrap());
+                candidates.sort_by(|a, b| {
+                    b.uptime_percentage
+                        .partial_cmp(&a.uptime_percentage)
+                        .unwrap()
+                });
                 candidates.first().cloned().cloned()
             }
         }
@@ -789,8 +864,8 @@ pub enum GatewayPreference {
 impl Default for GatewaySelectionCriteria {
     fn default() -> Self {
         Self {
-            max_load: 0.8, // 80% maximum load
-            min_uptime: 0.95, // 95% minimum uptime
+            max_load: 0.8,     // 80% maximum load
+            min_uptime: 0.95,  // 95% minimum uptime
             max_relay_fee: 10, // Maximum 10 tokens per relay
             preference: GatewayPreference::MostReliable,
         }
@@ -800,10 +875,10 @@ impl Default for GatewaySelectionCriteria {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::{BitchatKeypair, BitchatIdentity};
+    use crate::crypto::{BitchatIdentity, BitchatKeypair};
     use crate::mesh::MeshService;
     use crate::transport::TransportCoordinator;
-    
+
     #[tokio::test]
     async fn test_gateway_node_creation() {
         let keypair = BitchatKeypair::generate();
@@ -811,31 +886,31 @@ mod tests {
         let transport = Arc::new(TransportCoordinator::new());
         let mesh = Arc::new(MeshService::new(identity.clone(), transport));
         let config = GatewayConfig::default();
-        
+
         let gateway = GatewayNode::new(identity, config, mesh);
-        
+
         let stats = gateway.get_stats().await;
         assert_eq!(stats.local_peers, 0);
         assert_eq!(stats.internet_peers, 0);
         assert_eq!(stats.known_gateways, 0);
     }
-    
+
     #[tokio::test]
     async fn test_bandwidth_monitor() {
         let config = GatewayConfig::default();
         let monitor = BandwidthMonitor::new(config);
-        
+
         // Test initial state
         assert!(!monitor.is_limit_reached(true).await);
         assert!(!monitor.is_limit_reached(false).await);
-        
+
         // Update usage
         monitor.update_usage(true, 1_000_000).await; // 1MB = 8Mbps instantaneous
-        
+
         // Should still be under limit due to moving average
         assert!(!monitor.is_limit_reached(true).await);
     }
-    
+
     #[test]
     fn test_gateway_info_serialization() {
         let gateway_info = GatewayInfo {
@@ -849,12 +924,16 @@ mod tests {
             protocol_version: ProtocolVersion::CURRENT,
             last_seen: SystemTime::now(),
         };
-        
+
         // Test serialization/deserialization
         let serialized = serde_json::to_string(&gateway_info).expect("Serialization should work");
-        let deserialized: GatewayInfo = serde_json::from_str(&serialized).expect("Deserialization should work");
-        
+        let deserialized: GatewayInfo =
+            serde_json::from_str(&serialized).expect("Deserialization should work");
+
         assert_eq!(gateway_info.peer_id, deserialized.peer_id);
-        assert_eq!(gateway_info.max_bandwidth_mbps, deserialized.max_bandwidth_mbps);
+        assert_eq!(
+            gateway_info.max_bandwidth_mbps,
+            deserialized.max_bandwidth_mbps
+        );
     }
 }

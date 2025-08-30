@@ -1,20 +1,20 @@
 //! Android BLE JNI Bridge Implementation
-//! 
+//!
 //! This module provides JNI bindings specifically for Android BLE operations,
 //! including advertising, scanning, and GATT server functionality.
 
-use std::sync::{Arc, Mutex};
+use super::{AndroidBleManager, AndroidPeerInfo};
+use crate::error::BitCrapsError;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
-use crate::error::BitCrapsError;
-use super::{AndroidBleManager, AndroidPeerInfo};
+use std::sync::{Arc, Mutex};
 
 #[cfg(target_os = "android")]
+use jni::objects::{GlobalRef, JByteArray, JClass, JIntArray, JObject, JString, JValue};
+#[cfg(target_os = "android")]
+use jni::sys::{jboolean, jbyteArray, jint, jintArray, jlong, jobject, jstring};
+#[cfg(target_os = "android")]
 use jni::JNIEnv;
-#[cfg(target_os = "android")]
-use jni::objects::{JClass, JString, JObject, JByteArray, JIntArray, GlobalRef, JValue};
-#[cfg(target_os = "android")]
-use jni::sys::{jlong, jstring, jboolean, jint, jbyteArray, jintArray, jobject};
 #[cfg(target_os = "android")]
 use jni::JavaVM;
 
@@ -25,23 +25,26 @@ static BLE_MANAGER: OnceCell<Arc<AndroidBleManager>> = OnceCell::new();
 /// Initialize the global BLE manager with proper error handling
 #[cfg(target_os = "android")]
 pub fn initialize_ble_manager() -> Result<Arc<AndroidBleManager>, BitCrapsError> {
-    BLE_MANAGER.get_or_try_init(|| {
-        log::info!("Initializing global BLE manager");
-        Ok(Arc::new(AndroidBleManager::new()))
-    }).map(|manager| manager.clone())
-    .map_err(|_| BitCrapsError::BluetoothError {
-        message: "Failed to initialize BLE manager".to_string(),
-    })
+    BLE_MANAGER
+        .get_or_try_init(|| {
+            log::info!("Initializing global BLE manager");
+            Ok(Arc::new(AndroidBleManager::new()))
+        })
+        .map(|manager| manager.clone())
+        .map_err(|_| BitCrapsError::BluetoothError {
+            message: "Failed to initialize BLE manager".to_string(),
+        })
 }
 
 /// Get the global BLE manager with proper error handling
 #[cfg(target_os = "android")]
 fn get_ble_manager() -> Result<Arc<AndroidBleManager>, BitCrapsError> {
-    BLE_MANAGER.get().ok_or_else(|| {
-        BitCrapsError::BluetoothError {
+    BLE_MANAGER
+        .get()
+        .ok_or_else(|| BitCrapsError::BluetoothError {
             message: "BLE manager not initialized - call initialize_ble_manager first".to_string(),
-        }
-    }).map(|m| m.clone())
+        })
+        .map(|m| m.clone())
 }
 
 /// Cleanup the global BLE manager
@@ -49,10 +52,8 @@ fn get_ble_manager() -> Result<Arc<AndroidBleManager>, BitCrapsError> {
 pub fn cleanup_ble_manager() -> Result<(), BitCrapsError> {
     if let Some(manager) = BLE_MANAGER.get() {
         // Stop all operations
-        let rt = tokio::runtime::Runtime::new().map_err(|e| {
-            BitCrapsError::BluetoothError {
-                message: format!("Failed to create cleanup runtime: {}", e),
-            }
+        let rt = tokio::runtime::Runtime::new().map_err(|e| BitCrapsError::BluetoothError {
+            message: format!("Failed to create cleanup runtime: {}", e),
         })?;
 
         rt.block_on(async {
@@ -117,24 +118,33 @@ mod jni_helpers {
         match env.throw_new(exception_class, &error.to_string()) {
             Ok(_) => log::debug!("Exception thrown to Java: {} - {}", exception_class, error),
             Err(jni_error) => {
-                log::error!("Failed to throw JNI exception: {} (original error: {})", jni_error, error);
+                log::error!(
+                    "Failed to throw JNI exception: {} (original error: {})",
+                    jni_error,
+                    error
+                );
                 // Fallback to RuntimeException if the specific exception class fails
-                let _ = env.throw_new("java/lang/RuntimeException", 
-                    &format!("JNI Exception Error - Original: {}, JNI Error: {}", error, jni_error));
+                let _ = env.throw_new(
+                    "java/lang/RuntimeException",
+                    &format!(
+                        "JNI Exception Error - Original: {}, JNI Error: {}",
+                        error, jni_error
+                    ),
+                );
             }
         }
     }
 
     /// Safe JVM reference management
-    pub fn with_attached_jvm<F, R>(vm: &JavaVM, operation: F) -> Result<R, BitCrapsError> 
+    pub fn with_attached_jvm<F, R>(vm: &JavaVM, operation: F) -> Result<R, BitCrapsError>
     where
-        F: FnOnce(&JNIEnv) -> Result<R, BitCrapsError>
+        F: FnOnce(&JNIEnv) -> Result<R, BitCrapsError>,
     {
-        let env = vm.attach_current_thread().map_err(|e| {
-            BitCrapsError::BluetoothError {
+        let env = vm
+            .attach_current_thread()
+            .map_err(|e| BitCrapsError::BluetoothError {
                 message: format!("Failed to attach to JVM thread: {}", e),
-            }
-        })?;
+            })?;
 
         let result = operation(&env);
 
@@ -143,12 +153,14 @@ mod jni_helpers {
     }
 
     /// Safe global reference creation with cleanup
-    pub fn create_safe_global_ref(env: &JNIEnv, local_ref: JObject) -> Result<GlobalRef, BitCrapsError> {
-        env.new_global_ref(local_ref).map_err(|e| {
-            BitCrapsError::BluetoothError {
+    pub fn create_safe_global_ref(
+        env: &JNIEnv,
+        local_ref: JObject,
+    ) -> Result<GlobalRef, BitCrapsError> {
+        env.new_global_ref(local_ref)
+            .map_err(|e| BitCrapsError::BluetoothError {
                 message: format!("Failed to create global reference: {}", e),
-            }
-        })
+            })
     }
 
     /// Safe method call with exception handling
@@ -165,11 +177,14 @@ mod jni_helpers {
                 if let Ok(true) = env.exception_check() {
                     env.exception_clear().ok();
                     return Err(BitCrapsError::BluetoothError {
-                        message: format!("Java exception occurred during method call: {}", method_name),
+                        message: format!(
+                            "Java exception occurred during method call: {}",
+                            method_name
+                        ),
                     });
                 }
                 Ok(result)
-            },
+            }
             Err(e) => {
                 // Clear any pending exceptions
                 let _ = env.exception_clear();
@@ -196,7 +211,7 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_initializeBleManager(
     android_logger::init_once(
         android_logger::Config::default()
             .with_min_level(log::Level::Debug)
-            .with_tag("BitCraps-BLE")
+            .with_tag("BitCraps-BLE"),
     );
 
     log::info!("Initializing BLE manager from JNI");
@@ -215,9 +230,12 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_initializeBleManager(
     // This is a critical safety check to prevent memory corruption
     let java_vm = if java_vm_ptr == 0 {
         log::error!("JavaVM pointer is null");
-        jni_helpers::throw_exception(&env, &BitCrapsError::BluetoothError {
-            message: "JavaVM pointer is null".to_string(),
-        });
+        jni_helpers::throw_exception(
+            &env,
+            &BitCrapsError::BluetoothError {
+                message: "JavaVM pointer is null".to_string(),
+            },
+        );
         return false as jboolean;
     } else {
         // SAFETY INVARIANTS:
@@ -227,32 +245,45 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_initializeBleManager(
         unsafe {
             // Additional safety checks
             if java_vm_ptr as usize % std::mem::align_of::<jni::sys::JavaVM>() != 0 {
-                log::error!("JavaVM pointer is not properly aligned: 0x{:x}", java_vm_ptr);
-                jni_helpers::throw_exception(&env, &BitCrapsError::BluetoothError {
-                    message: "JavaVM pointer is not properly aligned".to_string(),
-                });
+                log::error!(
+                    "JavaVM pointer is not properly aligned: 0x{:x}",
+                    java_vm_ptr
+                );
+                jni_helpers::throw_exception(
+                    &env,
+                    &BitCrapsError::BluetoothError {
+                        message: "JavaVM pointer is not properly aligned".to_string(),
+                    },
+                );
                 return false as jboolean;
             }
 
             let vm_ptr = java_vm_ptr as *mut jni::sys::JavaVM;
-            
+
             // Verify pointer is not dangling by checking if it's in a reasonable range
             // This is a heuristic check - not foolproof but catches obvious invalid pointers
-            if vm_ptr as usize < 0x1000 || vm_ptr as usize > usize::MAX - 0x1000 {
+            let ptr_addr = vm_ptr as usize;
+            if ptr_addr < 0x1000 || ptr_addr > (usize::MAX - 0x1000) {
                 log::error!("JavaVM pointer appears invalid: {:p}", vm_ptr);
-                jni_helpers::throw_exception(&env, &BitCrapsError::BluetoothError {
-                    message: "JavaVM pointer appears to be invalid".to_string(),
-                });
+                jni_helpers::throw_exception(
+                    &env,
+                    &BitCrapsError::BluetoothError {
+                        message: "JavaVM pointer appears to be invalid".to_string(),
+                    },
+                );
                 return false as jboolean;
             }
-            
+
             match JavaVM::from_raw(vm_ptr) {
                 Ok(vm) => vm,
                 Err(e) => {
                     log::error!("Failed to create JavaVM from pointer: {}", e);
-                    jni_helpers::throw_exception(&env, &BitCrapsError::BluetoothError {
-                        message: format!("Failed to create JavaVM from pointer: {}", e),
-                    });
+                    jni_helpers::throw_exception(
+                        &env,
+                        &BitCrapsError::BluetoothError {
+                            message: format!("Failed to create JavaVM from pointer: {}", e),
+                        },
+                    );
                     return false as jboolean;
                 }
             }
@@ -260,7 +291,8 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_initializeBleManager(
     };
 
     // Create global reference to BLE service safely
-    let global_service = match jni_helpers::create_safe_global_ref(&env, JObject::from(ble_service)) {
+    let global_service = match jni_helpers::create_safe_global_ref(&env, JObject::from(ble_service))
+    {
         Ok(global_ref) => global_ref,
         Err(e) => {
             log::error!("Failed to create global reference to BLE service: {}", e);
@@ -273,14 +305,14 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_initializeBleManager(
     // Note: Since we're using OnceCell, we can't get mutable access after initialization
     // We need to modify the AndroidBleManager to accept these during construction
     // For now, we'll store them separately and access them when needed
-    
+
     // Store VM and service reference for later use
     // This is a temporary solution - ideally these would be part of initialization
     log::info!("BLE manager initialized successfully with JVM and service references");
-    
+
     // TODO: Properly integrate JavaVM and global service reference
     // This requires refactoring the AndroidBleManager to accept these parameters
-    
+
     true as jboolean
 }
 
@@ -292,12 +324,12 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_cleanup(
     _class: JClass,
 ) -> jboolean {
     log::info!("Cleaning up BLE JNI resources");
-    
+
     match cleanup_ble_manager() {
         Ok(()) => {
             log::info!("BLE manager cleanup completed successfully");
             true as jboolean
-        },
+        }
         Err(e) => {
             log::error!("BLE manager cleanup failed: {}", e);
             jni_helpers::throw_exception(&env, &e);
@@ -337,7 +369,7 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_startAdvertising(
         Ok(()) => {
             log::info!("BLE advertising started from JNI");
             true as jboolean
-        },
+        }
         Err(e) => {
             log::error!("Failed to start BLE advertising: {}", e);
             jni_helpers::throw_exception(&env, &e);
@@ -376,7 +408,7 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_stopAdvertising(
         Ok(()) => {
             log::info!("BLE advertising stopped from JNI");
             true as jboolean
-        },
+        }
         Err(e) => {
             log::error!("Failed to stop BLE advertising: {}", e);
             jni_helpers::throw_exception(&env, &e);
@@ -415,7 +447,7 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_startScanning(
         Ok(()) => {
             log::info!("BLE scanning started from JNI");
             true as jboolean
-        },
+        }
         Err(e) => {
             log::error!("Failed to start BLE scanning: {}", e);
             jni_helpers::throw_exception(&env, &e);
@@ -454,7 +486,7 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_stopScanning(
         Ok(()) => {
             log::info!("BLE scanning stopped from JNI");
             true as jboolean
-        },
+        }
         Err(e) => {
             log::error!("Failed to stop BLE scanning: {}", e);
             jni_helpers::throw_exception(&env, &e);
@@ -606,7 +638,9 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_getDiscoveredPeerAddresses(
             }
         };
 
-        if let Err(e) = env.set_object_array_element(array, i as i32, JObject::from(address_jstring)) {
+        if let Err(e) =
+            env.set_object_array_element(array, i as i32, JObject::from(address_jstring))
+        {
             log::error!("Failed to set array element {}: {}", i, e);
         }
     }

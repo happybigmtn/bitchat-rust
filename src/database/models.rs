@@ -1,12 +1,12 @@
 //! Database models and data transfer objects
-//! 
+//!
 //! This module provides comprehensive database models for the BitCraps system,
 //! including enhanced validation, business logic, and serialization support.
 
-use serde::{Serialize, Deserialize};
-use chrono::Utc;
-use std::collections::HashMap;
 use crate::error::{Error, Result};
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Enhanced user model with validation and business logic
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,9 +25,11 @@ impl User {
     /// Create a new user with validation
     pub fn new(id: String, username: String, public_key: Vec<u8>) -> Result<Self> {
         if username.is_empty() || username.len() > 50 {
-            return Err(Error::ValidationError("Username must be 1-50 characters".into()));
+            return Err(Error::ValidationError(
+                "Username must be 1-50 characters".into(),
+            ));
         }
-        
+
         if public_key.is_empty() || public_key.len() != 32 {
             return Err(Error::ValidationError("Public key must be 32 bytes".into()));
         }
@@ -49,7 +51,9 @@ impl User {
     pub fn update_reputation(&mut self, delta: f64) -> Result<()> {
         let new_reputation = self.reputation + delta;
         if new_reputation < -100.0 || new_reputation > 100.0 {
-            return Err(Error::ValidationError("Reputation must be between -100 and 100".into()));
+            return Err(Error::ValidationError(
+                "Reputation must be between -100 and 100".into(),
+            ));
         }
         self.reputation = new_reputation;
         self.updated_at = Utc::now().timestamp();
@@ -123,9 +127,11 @@ impl Game {
     /// Add a player to the game
     pub fn add_player(&mut self, player_id: String) -> Result<()> {
         if self.state != GameState::Waiting {
-            return Err(Error::ValidationError("Cannot join game in progress".into()));
+            return Err(Error::ValidationError(
+                "Cannot join game in progress".into(),
+            ));
         }
-        
+
         if self.players.len() >= self.max_players as usize {
             return Err(Error::ValidationError("Game is full".into()));
         }
@@ -141,7 +147,9 @@ impl Game {
     /// Start the game
     pub fn start(&mut self) -> Result<()> {
         if self.players.len() < 2 {
-            return Err(Error::ValidationError("Need at least 2 players to start".into()));
+            return Err(Error::ValidationError(
+                "Need at least 2 players to start".into(),
+            ));
         }
 
         self.state = GameState::Playing;
@@ -164,7 +172,8 @@ impl Game {
 
     /// Get game duration in seconds
     pub fn duration_seconds(&self) -> Option<i64> {
-        self.completed_at.map(|completed| completed - self.created_at)
+        self.completed_at
+            .map(|completed| completed - self.created_at)
     }
 }
 
@@ -217,7 +226,7 @@ impl Bet {
         }
 
         let odds_multiplier = Self::get_odds_multiplier(&bet_type);
-        
+
         Ok(Self {
             id,
             game_id,
@@ -240,8 +249,8 @@ impl Bet {
             BetType::Come => 1.0,
             BetType::DontCome => 1.0,
             BetType::Field => 1.0,
-            BetType::Place6 => 7.0/6.0,
-            BetType::Place8 => 7.0/6.0,
+            BetType::Place6 => 7.0 / 6.0,
+            BetType::Place8 => 7.0 / 6.0,
             BetType::Any7 => 4.0,
             BetType::AnyCraps => 7.0,
         }
@@ -255,7 +264,7 @@ impl Bet {
 
         self.outcome = Some(outcome.clone());
         self.resolved_at = Some(Utc::now().timestamp());
-        
+
         self.payout = match outcome {
             BetOutcome::Win => (self.amount as f64 * self.odds_multiplier) as i64,
             BetOutcome::Lose => 0,
@@ -311,7 +320,9 @@ impl Transaction {
         transaction_type: TransactionType,
     ) -> Result<Self> {
         if amount <= 0 {
-            return Err(Error::ValidationError("Transaction amount must be positive".into()));
+            return Err(Error::ValidationError(
+                "Transaction amount must be positive".into(),
+            ));
         }
 
         Ok(Self {
@@ -345,7 +356,9 @@ impl Transaction {
     /// Fail the transaction
     pub fn fail(&mut self) -> Result<()> {
         if self.status == TransactionStatus::Confirmed {
-            return Err(Error::ValidationError("Cannot fail confirmed transaction".into()));
+            return Err(Error::ValidationError(
+                "Cannot fail confirmed transaction".into(),
+            ));
         }
 
         self.status = TransactionStatus::Failed;
@@ -523,7 +536,7 @@ impl PlayerStats {
                 self.current_streak_type = Some(StreakType::Win);
             }
             self.longest_winning_streak = self.longest_winning_streak.max(self.current_streak);
-            
+
             if amount_won > self.biggest_win {
                 self.biggest_win = amount_won;
             }
@@ -536,7 +549,7 @@ impl PlayerStats {
                 self.current_streak_type = Some(StreakType::Loss);
             }
             self.longest_losing_streak = self.longest_losing_streak.max(self.current_streak);
-            
+
             let loss = amount_wagered - amount_won;
             if loss > self.biggest_loss {
                 self.biggest_loss = loss;

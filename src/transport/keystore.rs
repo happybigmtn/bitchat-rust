@@ -7,20 +7,20 @@
 //! - Secure memory management with zeroization
 //! - Cross-platform keystore integration
 
+use argon2::password_hash::SaltString;
+use argon2::{Argon2, PasswordHasher};
+use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, KeyInit, Nonce};
+use rand::{rngs::OsRng, RngCore};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tokio::fs;
+use tokio::sync::RwLock;
 use zeroize::ZeroizeOnDrop;
-use serde::{Serialize, Deserialize};
-use rand::{RngCore, rngs::OsRng};
-use chacha20poly1305::{ChaCha20Poly1305, KeyInit, aead::Aead, Nonce};
-use argon2::{Argon2, PasswordHasher};
-use argon2::password_hash::SaltString;
 
-use crate::error::{Error, Result};
 use crate::crypto::{BitchatIdentity, BitchatKeypair, GameCrypto, KeyDerivation};
+use crate::error::{Error, Result};
 use crate::protocol::PeerId;
 
 /// Keystore entry containing encrypted key data
@@ -58,10 +58,10 @@ pub struct KeyDerivationParams {
 impl Default for KeyDerivationParams {
     fn default() -> Self {
         Self {
-            memory_cost: 65536,  // 64 MB
-            time_cost: 3,        // 3 iterations
-            parallelism: 4,      // 4 threads
-            output_length: 32,   // 256 bits
+            memory_cost: 65536, // 64 MB
+            time_cost: 3,       // 3 iterations
+            parallelism: 4,     // 4 threads
+            output_length: 32,  // 256 bits
         }
     }
 }
@@ -139,7 +139,7 @@ impl Default for KeystoreConfig {
         Self {
             enable_cache: true,
             max_cache_size: 1000,
-            auto_save_interval: 300, // 5 minutes
+            auto_save_interval: 300,             // 5 minutes
             key_rotation_interval: 24 * 60 * 60, // 24 hours
             enable_hsm: false,
             enable_backup_encryption: true,
@@ -184,15 +184,16 @@ impl SecureTransportKeystore {
 
     /// Create new secure keystore with configuration
     pub async fn new_with_config<P: AsRef<Path>>(
-        storage_path: P, 
-        config: KeystoreConfig
+        storage_path: P,
+        config: KeystoreConfig,
     ) -> Result<Self> {
         let storage_path = storage_path.as_ref().to_path_buf();
-        
+
         // Create storage directory if it doesn't exist
         if !storage_path.exists() {
-            fs::create_dir_all(&storage_path).await
-                .map_err(|e| Error::IoError(format!("Failed to create keystore directory: {}", e)))?;
+            fs::create_dir_all(&storage_path).await.map_err(|e| {
+                Error::IoError(format!("Failed to create keystore directory: {}", e))
+            })?;
         }
 
         let keystore = Self {
@@ -214,7 +215,7 @@ impl SecureTransportKeystore {
         // Derive master key from password
         let salt = SaltString::generate(&mut OsRng);
         let argon2 = Argon2::default();
-        
+
         // Use Argon2 for password-based key derivation
         let password_hash = argon2
             .hash_password(password.as_bytes(), &salt)
@@ -236,7 +237,10 @@ impl SecureTransportKeystore {
         // Load existing keys from storage
         self.load_keys_from_storage().await?;
 
-        log::info!("Keystore initialized with {} keys", self.key_cache.read().await.len());
+        log::info!(
+            "Keystore initialized with {} keys",
+            self.key_cache.read().await.len()
+        );
         Ok(())
     }
 
@@ -259,7 +263,7 @@ impl SecureTransportKeystore {
         }
 
         let master_key = self.master_key.read().await.unwrap();
-        
+
         // Generate salt for this key
         let mut salt = [0u8; 32];
         OsRng.fill_bytes(&mut salt);
@@ -289,7 +293,10 @@ impl SecureTransportKeystore {
         };
 
         // Store in cache
-        self.key_cache.write().await.insert(key_id.to_string(), entry.clone());
+        self.key_cache
+            .write()
+            .await
+            .insert(key_id.to_string(), entry.clone());
 
         // Persist to storage
         self.save_key_to_storage(&entry).await?;
@@ -320,22 +327,27 @@ impl SecureTransportKeystore {
                     .as_secs();
                 entry.metadata.usage_count += 1;
 
-                let decrypted_data = self.decrypt_key_data(&master_key, &entry.encrypted_data, &entry.salt)?;
-                
+                let decrypted_data =
+                    self.decrypt_key_data(&master_key, &entry.encrypted_data, &entry.salt)?;
+
                 self.stats.write().await.cache_hits += 1;
                 self.stats.write().await.keys_retrieved += 1;
-                
+
                 return Ok(SecureBytes::new(decrypted_data));
             }
         }
 
         // Load from storage
         let entry = self.load_key_from_storage(key_id).await?;
-        let decrypted_data = self.decrypt_key_data(&master_key, &entry.encrypted_data, &entry.salt)?;
+        let decrypted_data =
+            self.decrypt_key_data(&master_key, &entry.encrypted_data, &entry.salt)?;
 
         // Update cache if enabled
         if self.config.enable_cache {
-            self.key_cache.write().await.insert(key_id.to_string(), entry);
+            self.key_cache
+                .write()
+                .await
+                .insert(key_id.to_string(), entry);
         }
 
         self.stats.write().await.cache_misses += 1;
@@ -345,11 +357,7 @@ impl SecureTransportKeystore {
     }
 
     /// Store an identity keypair securely
-    pub async fn store_identity(
-        &self,
-        identity: &BitchatIdentity,
-        key_id: &str,
-    ) -> Result<()> {
+    pub async fn store_identity(&self, identity: &BitchatIdentity, key_id: &str) -> Result<()> {
         // Store private key
         let private_key_bytes = identity.keypair.secret_key_bytes();
         self.store_key(
@@ -358,7 +366,8 @@ impl SecureTransportKeystore {
             KeyType::IdentityKey,
             "Identity private key",
             Some(identity.peer_id),
-        ).await?;
+        )
+        .await?;
 
         // Store public key and metadata
         let mut identity_data = Vec::new();
@@ -372,7 +381,8 @@ impl SecureTransportKeystore {
             KeyType::IdentityKey,
             "Identity metadata",
             Some(identity.peer_id),
-        ).await?;
+        )
+        .await?;
 
         Ok(())
     }
@@ -398,12 +408,21 @@ impl SecureTransportKeystore {
         peer_id.copy_from_slice(&metadata.as_slice()[..32]);
 
         let pow_nonce = u64::from_be_bytes([
-            metadata.as_slice()[32], metadata.as_slice()[33], metadata.as_slice()[34], metadata.as_slice()[35],
-            metadata.as_slice()[36], metadata.as_slice()[37], metadata.as_slice()[38], metadata.as_slice()[39],
+            metadata.as_slice()[32],
+            metadata.as_slice()[33],
+            metadata.as_slice()[34],
+            metadata.as_slice()[35],
+            metadata.as_slice()[36],
+            metadata.as_slice()[37],
+            metadata.as_slice()[38],
+            metadata.as_slice()[39],
         ]);
 
         let pow_difficulty = u32::from_be_bytes([
-            metadata.as_slice()[40], metadata.as_slice()[41], metadata.as_slice()[42], metadata.as_slice()[43],
+            metadata.as_slice()[40],
+            metadata.as_slice()[41],
+            metadata.as_slice()[42],
+            metadata.as_slice()[43],
         ]);
 
         // Reconstruct keypair
@@ -419,7 +438,9 @@ impl SecureTransportKeystore {
 
         // Verify integrity
         if !identity.verify_pow() {
-            return Err(Error::Crypto("Identity PoW verification failed".to_string()));
+            return Err(Error::Crypto(
+                "Identity PoW verification failed".to_string(),
+            ));
         }
 
         Ok(identity)
@@ -431,14 +452,15 @@ impl SecureTransportKeystore {
         OsRng.fill_bytes(&mut session_key);
 
         let key_id = format!("session_{}", hex::encode(peer_id));
-        
+
         self.store_key(
             &key_id,
             &session_key,
             KeyType::SessionKey,
             "BLE session key",
             Some(peer_id),
-        ).await?;
+        )
+        .await?;
 
         Ok(session_key)
     }
@@ -452,7 +474,7 @@ impl SecureTransportKeystore {
             .map(|(key_id, _)| key_id.clone())
             .collect();
         drop(cache);
-        
+
         let keys_count = keys_to_rotate.len();
 
         for key_id in keys_to_rotate {
@@ -467,7 +489,8 @@ impl SecureTransportKeystore {
                         new_key.to_vec()
                     }
                     KeyType::EcdhKeypair => {
-                        let ephemeral_secret = x25519_dalek::EphemeralSecret::random_from_rng(OsRng);
+                        let ephemeral_secret =
+                            x25519_dalek::EphemeralSecret::random_from_rng(OsRng);
                         let public_key = x25519_dalek::PublicKey::from(&ephemeral_secret);
                         public_key.as_bytes().to_vec()
                     }
@@ -482,8 +505,9 @@ impl SecureTransportKeystore {
                 let master_key = self.master_key.read().await.unwrap();
                 let mut new_salt = [0u8; 32];
                 OsRng.fill_bytes(&mut new_salt);
-                
-                entry.encrypted_data = self.encrypt_key_data(&master_key, &new_key_data, &new_salt)?;
+
+                entry.encrypted_data =
+                    self.encrypt_key_data(&master_key, &new_key_data, &new_salt)?;
                 entry.salt = new_salt;
                 entry.metadata.version += 1;
 
@@ -515,7 +539,8 @@ impl SecureTransportKeystore {
         // Remove from storage
         let file_path = self.storage_path.join(format!("{}.key", key_id));
         if file_path.exists() {
-            fs::remove_file(file_path).await
+            fs::remove_file(file_path)
+                .await
                 .map_err(|e| Error::IoError(format!("Failed to remove key file: {}", e)))?;
         }
 
@@ -547,14 +572,16 @@ impl SecureTransportKeystore {
         OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
-        let encrypted_backup = cipher.encrypt(nonce, backup_data.as_slice())
+        let encrypted_backup = cipher
+            .encrypt(nonce, backup_data.as_slice())
             .map_err(|_| Error::Crypto("Backup encryption failed".to_string()))?;
 
         // Write backup file
         let mut final_backup = nonce_bytes.to_vec();
         final_backup.extend_from_slice(&encrypted_backup);
 
-        fs::write(backup_path, final_backup).await
+        fs::write(backup_path, final_backup)
+            .await
             .map_err(|e| Error::IoError(format!("Failed to write backup file: {}", e)))?;
 
         // Update stats
@@ -562,7 +589,7 @@ impl SecureTransportKeystore {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_secs()
+                .as_secs(),
         );
 
         log::info!("Created encrypted backup at: {}", backup_path.display());
@@ -571,7 +598,8 @@ impl SecureTransportKeystore {
 
     /// Restore keystore from encrypted backup
     pub async fn restore_backup(&self, backup_path: &Path, backup_password: &str) -> Result<()> {
-        let backup_data = fs::read(backup_path).await
+        let backup_data = fs::read(backup_path)
+            .await
             .map_err(|e| Error::IoError(format!("Failed to read backup file: {}", e)))?;
 
         if backup_data.len() < 12 {
@@ -591,12 +619,15 @@ impl SecureTransportKeystore {
         )?;
 
         let cipher = ChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(&backup_key[..32]));
-        let decrypted_data = cipher.decrypt(nonce, ciphertext)
+        let decrypted_data = cipher
+            .decrypt(nonce, ciphertext)
             .map_err(|_| Error::Crypto("Backup decryption failed".to_string()))?;
 
         // Deserialize keystore data
-        let restored_cache: HashMap<String, KeystoreEntry> = serde_json::from_slice(&decrypted_data)
-            .map_err(|e| Error::Serialization(format!("Backup deserialization failed: {}", e)))?;
+        let restored_cache: HashMap<String, KeystoreEntry> =
+            serde_json::from_slice(&decrypted_data).map_err(|e| {
+                Error::Serialization(format!("Backup deserialization failed: {}", e))
+            })?;
 
         // Replace current cache
         *self.key_cache.write().await = restored_cache;
@@ -626,16 +657,23 @@ impl SecureTransportKeystore {
     // Private helper methods
 
     /// Encrypt key data using master key
-    fn encrypt_key_data(&self, master_key: &[u8; 32], data: &[u8], salt: &[u8; 32]) -> Result<Vec<u8>> {
+    fn encrypt_key_data(
+        &self,
+        master_key: &[u8; 32],
+        data: &[u8],
+        salt: &[u8; 32],
+    ) -> Result<Vec<u8>> {
         // Derive encryption key from master key + salt
         let encryption_key = KeyDerivation::derive_key_simple(master_key, salt, 32);
 
-        let cipher = ChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(&encryption_key[..32]));
+        let cipher =
+            ChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(&encryption_key[..32]));
         let mut nonce_bytes = [0u8; 12];
         OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
-        let ciphertext = cipher.encrypt(nonce, data)
+        let ciphertext = cipher
+            .encrypt(nonce, data)
             .map_err(|_| Error::Crypto("Key encryption failed".to_string()))?;
 
         let mut encrypted_data = nonce_bytes.to_vec();
@@ -647,7 +685,12 @@ impl SecureTransportKeystore {
     }
 
     /// Decrypt key data using master key
-    fn decrypt_key_data(&self, master_key: &[u8; 32], encrypted_data: &[u8], salt: &[u8; 32]) -> Result<Vec<u8>> {
+    fn decrypt_key_data(
+        &self,
+        master_key: &[u8; 32],
+        encrypted_data: &[u8],
+        salt: &[u8; 32],
+    ) -> Result<Vec<u8>> {
         if encrypted_data.len() < 12 {
             return Err(Error::Crypto("Invalid encrypted data format".to_string()));
         }
@@ -655,26 +698,31 @@ impl SecureTransportKeystore {
         // Derive decryption key
         let decryption_key = KeyDerivation::derive_key_simple(master_key, salt, 32);
 
-        let cipher = ChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(&decryption_key[..32]));
+        let cipher =
+            ChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(&decryption_key[..32]));
         let nonce = Nonce::from_slice(&encrypted_data[..12]);
         let ciphertext = &encrypted_data[12..];
 
-        let plaintext = cipher.decrypt(nonce, ciphertext)
+        let plaintext = cipher
+            .decrypt(nonce, ciphertext)
             .map_err(|_| Error::Crypto("Key decryption failed".to_string()))?;
 
         // Note: Can't update stats here due to borrowing issues in real implementation
-        
+
         Ok(plaintext)
     }
 
     /// Load all keys from storage into cache
     async fn load_keys_from_storage(&self) -> Result<()> {
-        let mut entries = fs::read_dir(&self.storage_path).await
+        let mut entries = fs::read_dir(&self.storage_path)
+            .await
             .map_err(|e| Error::IoError(format!("Failed to read keystore directory: {}", e)))?;
 
         let mut loaded_count = 0;
 
-        while let Some(entry) = entries.next_entry().await
+        while let Some(entry) = entries
+            .next_entry()
+            .await
             .map_err(|e| Error::IoError(format!("Failed to iterate keystore directory: {}", e)))?
         {
             let path = entry.path();
@@ -682,7 +730,10 @@ impl SecureTransportKeystore {
                 if let Some(key_id) = path.file_stem().and_then(|s| s.to_str()) {
                     match self.load_key_from_storage(key_id).await {
                         Ok(entry) => {
-                            self.key_cache.write().await.insert(key_id.to_string(), entry);
+                            self.key_cache
+                                .write()
+                                .await
+                                .insert(key_id.to_string(), entry);
                             loaded_count += 1;
                         }
                         Err(e) => {
@@ -700,7 +751,8 @@ impl SecureTransportKeystore {
     /// Load a single key from storage
     async fn load_key_from_storage(&self, key_id: &str) -> Result<KeystoreEntry> {
         let file_path = self.storage_path.join(format!("{}.key", key_id));
-        let data = fs::read(file_path).await
+        let data = fs::read(file_path)
+            .await
             .map_err(|e| Error::IoError(format!("Failed to read key file: {}", e)))?;
 
         let entry: KeystoreEntry = serde_json::from_slice(&data)
@@ -715,7 +767,8 @@ impl SecureTransportKeystore {
         let data = serde_json::to_vec(entry)
             .map_err(|e| Error::Serialization(format!("Key serialization failed: {}", e)))?;
 
-        fs::write(file_path, data).await
+        fs::write(file_path, data)
+            .await
             .map_err(|e| Error::IoError(format!("Failed to write key file: {}", e)))?;
 
         Ok(())
@@ -738,7 +791,7 @@ impl SecureTransportKeystore {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval));
             loop {
                 interval.tick().await;
-                
+
                 let cache = key_cache.read().await;
                 for entry in cache.values() {
                     let file_path = storage_path.join(format!("{}.key", entry.key_id));
@@ -746,7 +799,7 @@ impl SecureTransportKeystore {
                         let _ = fs::write(file_path, data).await;
                     }
                 }
-                
+
                 log::trace!("Auto-saved {} keys to storage", cache.len());
             }
         });
@@ -757,16 +810,16 @@ impl SecureTransportKeystore {
 pub trait HsmInterface: Send + Sync {
     /// Generate key pair in HSM
     fn generate_keypair(&self, key_type: KeyType) -> Result<String>;
-    
+
     /// Sign data using HSM key
     fn sign(&self, key_id: &str, data: &[u8]) -> Result<Vec<u8>>;
-    
+
     /// Encrypt data using HSM key
     fn encrypt(&self, key_id: &str, plaintext: &[u8]) -> Result<Vec<u8>>;
-    
+
     /// Decrypt data using HSM key
     fn decrypt(&self, key_id: &str, ciphertext: &[u8]) -> Result<Vec<u8>>;
-    
+
     /// List available keys in HSM
     fn list_keys(&self) -> Result<Vec<String>>;
 }
@@ -778,22 +831,22 @@ impl HsmInterface for MockHsm {
     fn generate_keypair(&self, _key_type: KeyType) -> Result<String> {
         Ok(format!("hsm_key_{}", uuid::Uuid::new_v4()))
     }
-    
+
     fn sign(&self, _key_id: &str, data: &[u8]) -> Result<Vec<u8>> {
         // Mock signature - just hash the data
         Ok(GameCrypto::hash(data).to_vec())
     }
-    
+
     fn encrypt(&self, _key_id: &str, plaintext: &[u8]) -> Result<Vec<u8>> {
         // Mock encryption - just return plaintext for now
         Ok(plaintext.to_vec())
     }
-    
+
     fn decrypt(&self, _key_id: &str, ciphertext: &[u8]) -> Result<Vec<u8>> {
         // Mock decryption - just return ciphertext for now
         Ok(ciphertext.to_vec())
     }
-    
+
     fn list_keys(&self) -> Result<Vec<String>> {
         Ok(vec!["mock_key_1".to_string(), "mock_key_2".to_string()])
     }
@@ -803,104 +856,119 @@ impl HsmInterface for MockHsm {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    
+
     async fn create_test_keystore() -> (SecureTransportKeystore, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let keystore = SecureTransportKeystore::new(temp_dir.path()).await.unwrap();
         keystore.initialize("test_password_123").await.unwrap();
         (keystore, temp_dir)
     }
-    
+
     #[tokio::test]
     async fn test_keystore_basic_operations() {
         let (keystore, _temp) = create_test_keystore().await;
-        
+
         // Store a key
         let test_key = b"test_symmetric_key_32_bytes_long";
-        keystore.store_key(
-            "test_key",
-            test_key,
-            KeyType::SymmetricKey,
-            "Test symmetric key",
-            None,
-        ).await.unwrap();
-        
+        keystore
+            .store_key(
+                "test_key",
+                test_key,
+                KeyType::SymmetricKey,
+                "Test symmetric key",
+                None,
+            )
+            .await
+            .unwrap();
+
         // Retrieve the key
         let retrieved = keystore.retrieve_key("test_key").await.unwrap();
         assert_eq!(retrieved.as_slice(), test_key);
     }
-    
+
     #[tokio::test]
     async fn test_identity_storage() {
         let (keystore, _temp) = create_test_keystore().await;
-        
+
         // Create test identity
         let identity = BitchatIdentity::generate_with_pow(8);
-        
+
         // Store identity
-        keystore.store_identity(&identity, "test_identity").await.unwrap();
-        
+        keystore
+            .store_identity(&identity, "test_identity")
+            .await
+            .unwrap();
+
         // Retrieve identity
         let retrieved = keystore.retrieve_identity("test_identity").await.unwrap();
-        
+
         // Verify they match
         assert_eq!(identity.peer_id, retrieved.peer_id);
         assert_eq!(identity.pow_nonce, retrieved.pow_nonce);
         assert_eq!(identity.pow_difficulty, retrieved.pow_difficulty);
     }
-    
+
     #[tokio::test]
     async fn test_keystore_backup_restore() {
         let (keystore, temp) = create_test_keystore().await;
-        
+
         // Store some keys
         let test_key = b"test_backup_key_32_bytes_long!!";
-        keystore.store_key(
-            "backup_test",
-            test_key,
-            KeyType::SymmetricKey,
-            "Backup test key",
-            None,
-        ).await.unwrap();
-        
+        keystore
+            .store_key(
+                "backup_test",
+                test_key,
+                KeyType::SymmetricKey,
+                "Backup test key",
+                None,
+            )
+            .await
+            .unwrap();
+
         // Create backup
         let backup_path = temp.path().join("keystore_backup.enc");
-        keystore.create_backup(&backup_path, "backup_password").await.unwrap();
-        
+        keystore
+            .create_backup(&backup_path, "backup_password")
+            .await
+            .unwrap();
+
         // Clear keystore
         keystore.lock().await;
         keystore.initialize("test_password_123").await.unwrap();
         keystore.remove_key("backup_test").await.unwrap();
-        
+
         // Verify key is gone
         assert!(keystore.retrieve_key("backup_test").await.is_err());
-        
+
         // Restore from backup
-        keystore.restore_backup(&backup_path, "backup_password").await.unwrap();
-        
+        keystore
+            .restore_backup(&backup_path, "backup_password")
+            .await
+            .unwrap();
+
         // Verify key is back
         let retrieved = keystore.retrieve_key("backup_test").await.unwrap();
         assert_eq!(retrieved.as_slice(), test_key);
     }
-    
+
     #[tokio::test]
     async fn test_key_rotation() {
         let (keystore, _temp) = create_test_keystore().await;
         let peer_id = [42u8; 32];
-        
+
         // Store a session key
         let session_key = keystore.generate_session_key(peer_id).await.unwrap();
-        
+
         // Retrieve original key
         let key_id = format!("session_{}", hex::encode(peer_id));
         let original = keystore.retrieve_key(&key_id).await.unwrap();
-        
+
         // Rotate keys
         keystore.rotate_peer_keys(peer_id).await.unwrap();
-        
+
         // Retrieve rotated key
         let rotated = keystore.retrieve_key(&key_id).await.unwrap();
-        
+
         // Keys should be different
         assert_ne!(original.as_slice(), rotated.as_slice());
     }

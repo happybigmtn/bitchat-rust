@@ -3,11 +3,11 @@
 //! This module provides performance optimization strategies and monitoring
 //! to ensure the system runs efficiently across all platforms.
 
-use std::time::Duration;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
-use serde::{Serialize, Deserialize};
 
 /// Performance optimizer for the BitCraps system
 pub struct PerformanceOptimizer {
@@ -83,10 +83,10 @@ pub struct MeshMetrics {
 pub trait OptimizationStrategy: Send + Sync {
     /// Apply the optimization based on current metrics
     fn apply(&self, metrics: &PerformanceMetrics) -> OptimizationResult;
-    
+
     /// Get the name of this strategy
     fn name(&self) -> &str;
-    
+
     /// Check if this optimization should be applied
     fn should_apply(&self, metrics: &PerformanceMetrics) -> bool;
 }
@@ -123,35 +123,35 @@ impl NetworkOptimization {
 impl OptimizationStrategy for NetworkOptimization {
     fn apply(&self, metrics: &PerformanceMetrics) -> OptimizationResult {
         let mut actions = Vec::new();
-        
+
         // Optimize based on latency
         if metrics.network_latency.p95_ms > self.target_latency_ms {
             // Enable message batching
             actions.push("Enabled message batching to reduce network overhead".to_string());
-            
+
             // Increase connection pool size
             actions.push("Increased connection pool size for better parallelism".to_string());
-            
+
             // Enable compression for large messages
             actions.push("Enabled compression for messages over 1KB".to_string());
         }
-        
+
         // Optimize mesh topology
         if metrics.mesh_performance.average_hop_count > 3.0 {
             actions.push("Optimized mesh topology to reduce hop count".to_string());
         }
-        
+
         OptimizationResult {
             success: !actions.is_empty(),
             improvement_percent: Some(15.0), // Estimated improvement
             actions_taken: actions,
         }
     }
-    
+
     fn name(&self) -> &str {
         "Network Optimization"
     }
-    
+
     fn should_apply(&self, metrics: &PerformanceMetrics) -> bool {
         metrics.network_latency.p95_ms > self.target_latency_ms
             || metrics.mesh_performance.average_hop_count > 3.0
@@ -182,36 +182,36 @@ impl MemoryOptimization {
 impl OptimizationStrategy for MemoryOptimization {
     fn apply(&self, metrics: &PerformanceMetrics) -> OptimizationResult {
         let mut actions = Vec::new();
-        
+
         // Check for memory pressure
         if metrics.memory_usage.heap_used_mb > self.max_heap_mb * 0.8 {
             // Trigger garbage collection
             actions.push("Triggered aggressive garbage collection".to_string());
-            
+
             // Reduce cache sizes
             actions.push("Reduced cache sizes by 20%".to_string());
-            
+
             // Enable memory pooling
             actions.push("Enabled object pooling for frequently allocated types".to_string());
         }
-        
+
         // Optimize cache usage
         let cache_ratio = metrics.memory_usage.cache_size_mb / metrics.memory_usage.heap_used_mb;
         if cache_ratio < self.cache_efficiency_threshold {
             actions.push("Adjusted cache eviction policies for better hit rates".to_string());
         }
-        
+
         OptimizationResult {
             success: !actions.is_empty(),
             improvement_percent: Some(20.0),
             actions_taken: actions,
         }
     }
-    
+
     fn name(&self) -> &str {
         "Memory Optimization"
     }
-    
+
     fn should_apply(&self, metrics: &PerformanceMetrics) -> bool {
         metrics.memory_usage.heap_used_mb > self.max_heap_mb * 0.8
     }
@@ -241,39 +241,39 @@ impl ConsensusOptimization {
 impl OptimizationStrategy for ConsensusOptimization {
     fn apply(&self, metrics: &PerformanceMetrics) -> OptimizationResult {
         let mut actions = Vec::new();
-        
+
         // Optimize throughput
         if metrics.consensus_performance.throughput_ops_per_sec < self.target_throughput {
             // Enable parallel validation
             actions.push("Enabled parallel signature validation".to_string());
-            
+
             // Increase batch sizes
             actions.push("Increased consensus batch size to 50 operations".to_string());
-            
+
             // Enable vote caching
             actions.push("Enabled vote caching to reduce redundant validations".to_string());
         }
-        
+
         // Optimize finalization time
         if metrics.consensus_performance.finalization_time_ms > self.max_finalization_time_ms {
             // Reduce quorum timeout
             actions.push("Reduced quorum timeout to 200ms".to_string());
-            
+
             // Enable fast path for unanimous votes
             actions.push("Enabled fast-path consensus for unanimous decisions".to_string());
         }
-        
+
         OptimizationResult {
             success: !actions.is_empty(),
             improvement_percent: Some(30.0),
             actions_taken: actions,
         }
     }
-    
+
     fn name(&self) -> &str {
         "Consensus Optimization"
     }
-    
+
     fn should_apply(&self, metrics: &PerformanceMetrics) -> bool {
         metrics.consensus_performance.throughput_ops_per_sec < self.target_throughput
             || metrics.consensus_performance.finalization_time_ms > self.max_finalization_time_ms
@@ -305,32 +305,36 @@ impl CpuOptimization {
 impl OptimizationStrategy for CpuOptimization {
     fn apply(&self, metrics: &PerformanceMetrics) -> OptimizationResult {
         let mut actions = Vec::new();
-        
+
         // Check CPU utilization
         if metrics.cpu_usage.utilization_percent > self.max_utilization_percent {
             // Adjust thread pool sizes
             if metrics.cpu_usage.thread_count > self.optimal_thread_count {
-                actions.push(format!("Reduced thread pool size to {}", self.optimal_thread_count));
+                actions.push(format!(
+                    "Reduced thread pool size to {}",
+                    self.optimal_thread_count
+                ));
             }
-            
+
             // Enable work stealing
-            actions.push("Enabled work-stealing scheduler for better load distribution".to_string());
-            
+            actions
+                .push("Enabled work-stealing scheduler for better load distribution".to_string());
+
             // Optimize hot paths
             actions.push("Applied loop unrolling and SIMD optimizations to hot paths".to_string());
         }
-        
+
         OptimizationResult {
             success: !actions.is_empty(),
             improvement_percent: Some(25.0),
             actions_taken: actions,
         }
     }
-    
+
     fn name(&self) -> &str {
         "CPU Optimization"
     }
-    
+
     fn should_apply(&self, metrics: &PerformanceMetrics) -> bool {
         metrics.cpu_usage.utilization_percent > self.max_utilization_percent
     }
@@ -351,44 +355,44 @@ impl PerformanceOptimizer {
             Box::new(ConsensusOptimization::new()),
             Box::new(CpuOptimization::new()),
         ];
-        
+
         Self {
             metrics: Arc::new(RwLock::new(PerformanceMetrics::default())),
             optimization_strategies: Arc::new(strategies),
             monitoring_interval: Duration::from_secs(10),
         }
     }
-    
+
     /// Start performance monitoring and optimization
     pub async fn start(&self) {
         let metrics = Arc::clone(&self.metrics);
         let strategies = Arc::clone(&self.optimization_strategies);
         let interval = self.monitoring_interval;
-        
+
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
-            
+
             loop {
                 ticker.tick().await;
-                
+
                 // Collect current metrics
                 let current_metrics = Self::collect_metrics().await;
-                
+
                 // Update stored metrics
                 *metrics.write().await = current_metrics.clone();
-                
+
                 // Apply optimizations if needed
                 for strategy in strategies.iter() {
                     if strategy.should_apply(&current_metrics) {
                         let result = strategy.apply(&current_metrics);
-                        
+
                         if result.success {
                             tracing::info!(
                                 "Applied {} optimization: {:?}",
                                 strategy.name(),
                                 result.actions_taken
                             );
-                            
+
                             if let Some(improvement) = result.improvement_percent {
                                 tracing::info!(
                                     "Expected performance improvement: {:.1}%",
@@ -401,7 +405,7 @@ impl PerformanceOptimizer {
             }
         });
     }
-    
+
     /// Collect current performance metrics
     async fn collect_metrics() -> PerformanceMetrics {
         // In production, these would be collected from actual system metrics
@@ -441,23 +445,23 @@ impl PerformanceOptimizer {
             },
         }
     }
-    
+
     /// Get current performance metrics
     pub async fn get_metrics(&self) -> PerformanceMetrics {
         self.metrics.read().await.clone()
     }
-    
+
     /// Force optimization run
     pub async fn optimize_now(&self) -> Vec<OptimizationResult> {
         let metrics = self.metrics.read().await.clone();
         let mut results = Vec::new();
-        
+
         for strategy in self.optimization_strategies.iter() {
             if strategy.should_apply(&metrics) {
                 results.push(strategy.apply(&metrics));
             }
         }
-        
+
         results
     }
 }
@@ -506,24 +510,24 @@ impl LatencyMetrics {
     /// Add a new latency sample
     pub fn add_sample(&mut self, latency_ms: f64) {
         self.samples.push_back(latency_ms);
-        
+
         // Keep only last 1000 samples
         if self.samples.len() > 1000 {
             self.samples.pop_front();
         }
-        
+
         // Recalculate percentiles
         self.recalculate_percentiles();
     }
-    
+
     fn recalculate_percentiles(&mut self) {
         if self.samples.is_empty() {
             return;
         }
-        
+
         let mut sorted: Vec<f64> = self.samples.iter().copied().collect();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        
+
         let len = sorted.len();
         self.p50_ms = sorted[len * 50 / 100];
         self.p95_ms = sorted[len * 95 / 100];
@@ -535,20 +539,20 @@ impl LatencyMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_performance_optimizer() {
         let optimizer = PerformanceOptimizer::new();
-        
+
         // Get initial metrics
         let metrics = optimizer.get_metrics().await;
         assert_eq!(metrics.network_latency.p50_ms, 0.0);
-        
+
         // Force optimization
         let results = optimizer.optimize_now().await;
         assert!(!results.is_empty());
     }
-    
+
     #[test]
     fn test_latency_metrics() {
         let mut latency = LatencyMetrics {
@@ -558,30 +562,30 @@ mod tests {
             max_ms: 0.0,
             samples: VecDeque::new(),
         };
-        
+
         // Add samples
         for i in 1..=100 {
             latency.add_sample(i as f64);
         }
-        
+
         // Check percentiles
         assert_eq!(latency.p50_ms, 50.0);
         assert_eq!(latency.p95_ms, 95.0);
         assert_eq!(latency.p99_ms, 99.0);
         assert_eq!(latency.max_ms, 100.0);
     }
-    
+
     #[test]
     fn test_network_optimization() {
         let strategy = NetworkOptimization::new();
         let mut metrics = PerformanceMetrics::default();
-        
+
         // Set high latency
         metrics.network_latency.p95_ms = 200.0;
-        
+
         // Should apply optimization
         assert!(strategy.should_apply(&metrics));
-        
+
         let result = strategy.apply(&metrics);
         assert!(result.success);
         assert!(!result.actions_taken.is_empty());

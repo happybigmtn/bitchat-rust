@@ -1,5 +1,5 @@
 //! Advanced Token Economics Module
-//! 
+//!
 //! This module implements sophisticated token economics mechanisms for the
 //! decentralized BitCraps casino platform, including:
 //! - Token supply management with inflation/deflation controls
@@ -9,49 +9,49 @@
 //! - Liquidity incentives and yield farming
 //! - Economic governance and parameter adjustment
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
 
-use crate::protocol::{PeerId, CrapTokens};
 use crate::error::{Error, Result};
+use crate::protocol::{CrapTokens, PeerId};
 use crate::token::TokenLedger;
 
-pub mod staking;
-pub mod supply;
 pub mod fees;
 pub mod governance;
 pub mod liquidity;
+pub mod staking;
+pub mod supply;
 
 /// Token economics configuration parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EconomicsConfig {
     /// Base annual percentage yield for staking
     pub base_staking_apy: f64,
-    
+
     /// Maximum staking APY with bonuses
     pub max_staking_apy: f64,
-    
+
     /// Minimum staking duration in seconds
     pub min_stake_duration: u64,
-    
+
     /// Token burn rate as percentage of fees
     pub burn_rate: f64,
-    
+
     /// Treasury fee percentage
     pub treasury_fee: f64,
-    
+
     /// Validator fee percentage
     pub validator_fee: f64,
-    
+
     /// Minimum tokens required for governance voting
     pub governance_threshold: u64,
-    
+
     /// Inflation target percentage per year
     pub inflation_target: f64,
-    
+
     /// Deflation trigger threshold (tokens burned vs minted ratio)
     pub deflation_trigger: f64,
 }
@@ -59,15 +59,15 @@ pub struct EconomicsConfig {
 impl Default for EconomicsConfig {
     fn default() -> Self {
         Self {
-            base_staking_apy: 5.0,           // 5% base APY
-            max_staking_apy: 15.0,           // 15% max APY with bonuses
-            min_stake_duration: 86400 * 7,   // 7 days minimum
-            burn_rate: 0.5,                  // 50% of fees burned
-            treasury_fee: 0.003,             // 0.3% treasury fee
-            validator_fee: 0.002,            // 0.2% validator fee
+            base_staking_apy: 5.0,                // 5% base APY
+            max_staking_apy: 15.0,                // 15% max APY with bonuses
+            min_stake_duration: 86400 * 7,        // 7 days minimum
+            burn_rate: 0.5,                       // 50% of fees burned
+            treasury_fee: 0.003,                  // 0.3% treasury fee
+            validator_fee: 0.002,                 // 0.2% validator fee
             governance_threshold: 10_000_000_000, // 10k CRAP minimum
-            inflation_target: 2.0,           // 2% annual inflation
-            deflation_trigger: 1.5,          // Deflation if burn > 1.5x mint
+            inflation_target: 2.0,                // 2% annual inflation
+            deflation_trigger: 1.5,               // Deflation if burn > 1.5x mint
         }
     }
 }
@@ -208,7 +208,7 @@ impl TokenEconomics {
             velocity: 0.0,
             last_adjustment: Self::current_timestamp(),
         };
-        
+
         let fee_structure = DynamicFeeStructure {
             base_fee: CrapTokens::from(1000), // 0.001 CRAP base fee
             congestion_multiplier: 1.0,
@@ -216,7 +216,7 @@ impl TokenEconomics {
             gas_price: 1.0,
             fee_categories: HashMap::new(),
         };
-        
+
         Self {
             config: Arc::new(RwLock::new(config)),
             ledger,
@@ -228,7 +228,7 @@ impl TokenEconomics {
             burn_queue: Arc::new(RwLock::new(Vec::new())),
         }
     }
-    
+
     /// Create advanced staking position with enhanced features
     pub async fn stake_tokens(
         &self,
@@ -238,26 +238,27 @@ impl TokenEconomics {
         compound_frequency: CompoundingFrequency,
     ) -> Result<()> {
         let config = self.config.read().await;
-        
+
         // Validate minimum duration
         if lock_duration.as_secs() < config.min_stake_duration {
-            return Err(Error::InvalidData(
-                format!("Staking duration must be at least {} seconds", config.min_stake_duration)
-            ));
+            return Err(Error::InvalidData(format!(
+                "Staking duration must be at least {} seconds",
+                config.min_stake_duration
+            )));
         }
-        
+
         // Calculate reward rate based on duration and amount
         let base_rate = config.base_staking_apy;
         let duration_bonus = self.calculate_duration_bonus(lock_duration).await;
         let amount_bonus = self.calculate_amount_bonus(amount).await;
         let loyalty_bonus = self.calculate_loyalty_bonus(staker).await;
-        
-        let total_rate = (base_rate + duration_bonus + amount_bonus + loyalty_bonus)
-            .min(config.max_staking_apy);
-        
+
+        let total_rate =
+            (base_rate + duration_bonus + amount_bonus + loyalty_bonus).min(config.max_staking_apy);
+
         let now = Self::current_timestamp();
         let unlock_time = now + lock_duration.as_secs();
-        
+
         let position = AdvancedStakingPosition {
             staker,
             amount,
@@ -272,121 +273,143 @@ impl TokenEconomics {
             loyalty_bonus,
             governance_power: self.calculate_governance_power(amount, lock_duration).await,
         };
-        
+
         // Lock tokens in staking
         {
             let mut positions = self.staking_positions.write().await;
-            positions.entry(staker).or_insert_with(Vec::new).push(position);
+            positions
+                .entry(staker)
+                .or_insert_with(Vec::new)
+                .push(position);
         }
-        
+
         // Update supply metrics
         {
             let mut metrics = self.supply_metrics.write().await;
-            metrics.staked_supply = metrics.staked_supply.checked_add(amount)
+            metrics.staked_supply = metrics
+                .staked_supply
+                .checked_add(amount)
                 .ok_or_else(|| Error::InvalidData("Staking overflow".to_string()))?;
         }
-        
-        log::info!("Staked {} CRAP for {:?} with {}% APY", 
-                  amount.to_crap(), staker, total_rate);
-        
+
+        log::info!(
+            "Staked {} CRAP for {:?} with {}% APY",
+            amount.to_crap(),
+            staker,
+            total_rate
+        );
+
         Ok(())
     }
-    
+
     /// Calculate staking rewards for all positions
     pub async fn calculate_staking_rewards(&self) -> Result<()> {
         let now = Self::current_timestamp();
         let mut total_rewards = CrapTokens::from(0);
-        
+
         {
             let mut positions = self.staking_positions.write().await;
-            
+
             for (staker, staker_positions) in positions.iter_mut() {
                 for position in staker_positions.iter_mut() {
                     let time_elapsed = now - position.staked_at;
                     let annual_seconds = 365 * 24 * 3600;
-                    
+
                     // Calculate rewards based on time elapsed
                     let reward_rate = position.reward_rate / 100.0; // Convert percentage
                     let time_factor = time_elapsed as f64 / annual_seconds as f64;
                     let rewards = (position.amount.0 as f64 * reward_rate * time_factor) as u64;
-                    
+
                     let new_rewards = CrapTokens::from(rewards);
-                    position.accumulated_rewards = position.accumulated_rewards
+                    position.accumulated_rewards = position
+                        .accumulated_rewards
                         .checked_add(new_rewards)
                         .unwrap_or(position.accumulated_rewards);
-                    
-                    total_rewards = total_rewards.checked_add(new_rewards)
+
+                    total_rewards = total_rewards
+                        .checked_add(new_rewards)
                         .unwrap_or(total_rewards);
-                    
+
                     // Handle compounding based on frequency
                     match position.compound_frequency {
                         CompoundingFrequency::Daily if time_elapsed % (24 * 3600) == 0 => {
                             self.compound_rewards(staker, position).await?;
-                        },
+                        }
                         CompoundingFrequency::Weekly if time_elapsed % (7 * 24 * 3600) == 0 => {
                             self.compound_rewards(staker, position).await?;
-                        },
+                        }
                         CompoundingFrequency::Monthly if time_elapsed % (30 * 24 * 3600) == 0 => {
                             self.compound_rewards(staker, position).await?;
-                        },
+                        }
                         _ => {}
                     }
                 }
             }
         }
-        
+
         // Update supply metrics with minted rewards
         {
             let mut metrics = self.supply_metrics.write().await;
-            metrics.total_supply = metrics.total_supply.checked_add(total_rewards)
+            metrics.total_supply = metrics
+                .total_supply
+                .checked_add(total_rewards)
                 .unwrap_or(metrics.total_supply);
         }
-        
-        log::info!("Calculated {} CRAP total staking rewards", total_rewards.to_crap());
+
+        log::info!(
+            "Calculated {} CRAP total staking rewards",
+            total_rewards.to_crap()
+        );
         Ok(())
     }
-    
+
     /// Implement token burning mechanism
     pub async fn burn_tokens(&self, amount: CrapTokens, reason: String) -> Result<()> {
         {
             let mut metrics = self.supply_metrics.write().await;
-            metrics.total_supply = metrics.total_supply.checked_sub(amount)
-                .ok_or_else(|| Error::InvalidData("Cannot burn more than total supply".to_string()))?;
-            metrics.burned_supply = metrics.burned_supply.checked_add(amount)
+            metrics.total_supply = metrics.total_supply.checked_sub(amount).ok_or_else(|| {
+                Error::InvalidData("Cannot burn more than total supply".to_string())
+            })?;
+            metrics.burned_supply = metrics
+                .burned_supply
+                .checked_add(amount)
                 .unwrap_or(metrics.burned_supply);
         }
-        
+
         // Add to burn queue for transparency
         self.burn_queue.write().await.push((amount, reason.clone()));
-        
+
         log::info!("Burned {} CRAP - Reason: {}", amount.to_crap(), reason);
         Ok(())
     }
-    
+
     /// Calculate dynamic fees based on network conditions
     pub async fn calculate_dynamic_fee(&self, category: FeeCategory, priority: bool) -> CrapTokens {
         let fee_structure = self.fee_structure.read().await;
-        let base_fee = fee_structure.fee_categories.get(&category)
+        let base_fee = fee_structure
+            .fee_categories
+            .get(&category)
             .copied()
             .unwrap_or(fee_structure.base_fee);
-        
-        let congestion_fee = CrapTokens::from(
-            (base_fee.0 as f64 * fee_structure.congestion_multiplier) as u64
-        );
-        
+
+        let congestion_fee =
+            CrapTokens::from((base_fee.0 as f64 * fee_structure.congestion_multiplier) as u64);
+
         let priority_fee = if priority {
             fee_structure.priority_fee
         } else {
             CrapTokens::from(0)
         };
-        
-        congestion_fee.checked_add(priority_fee).unwrap_or(congestion_fee)
+
+        congestion_fee
+            .checked_add(priority_fee)
+            .unwrap_or(congestion_fee)
     }
-    
+
     /// Update fee structure based on network congestion
     pub async fn update_fee_structure(&self, transaction_volume: u64) -> Result<()> {
         let mut fee_structure = self.fee_structure.write().await;
-        
+
         // Adjust congestion multiplier based on volume
         fee_structure.congestion_multiplier = match transaction_volume {
             0..=100 => 1.0,
@@ -395,20 +418,34 @@ impl TokenEconomics {
             1001..=5000 => 3.0,
             _ => 5.0,
         };
-        
+
         // Update category-specific fees
-        fee_structure.fee_categories.insert(FeeCategory::Transfer, CrapTokens::from(500));
-        fee_structure.fee_categories.insert(FeeCategory::GameBet, CrapTokens::from(100));
-        fee_structure.fee_categories.insert(FeeCategory::Staking, CrapTokens::from(1000));
-        fee_structure.fee_categories.insert(FeeCategory::Governance, CrapTokens::from(10000));
-        fee_structure.fee_categories.insert(FeeCategory::LiquidityProvision, CrapTokens::from(2000));
-        fee_structure.fee_categories.insert(FeeCategory::CrossChain, CrapTokens::from(5000));
-        
-        log::info!("Updated fee structure - congestion multiplier: {}x", 
-                  fee_structure.congestion_multiplier);
+        fee_structure
+            .fee_categories
+            .insert(FeeCategory::Transfer, CrapTokens::from(500));
+        fee_structure
+            .fee_categories
+            .insert(FeeCategory::GameBet, CrapTokens::from(100));
+        fee_structure
+            .fee_categories
+            .insert(FeeCategory::Staking, CrapTokens::from(1000));
+        fee_structure
+            .fee_categories
+            .insert(FeeCategory::Governance, CrapTokens::from(10000));
+        fee_structure
+            .fee_categories
+            .insert(FeeCategory::LiquidityProvision, CrapTokens::from(2000));
+        fee_structure
+            .fee_categories
+            .insert(FeeCategory::CrossChain, CrapTokens::from(5000));
+
+        log::info!(
+            "Updated fee structure - congestion multiplier: {}x",
+            fee_structure.congestion_multiplier
+        );
         Ok(())
     }
-    
+
     /// Get comprehensive economics statistics
     pub async fn get_economics_stats(&self) -> EconomicsStats {
         let config = self.config.read().await;
@@ -416,22 +453,26 @@ impl TokenEconomics {
         let positions = self.staking_positions.read().await;
         let pools = self.liquidity_pools.read().await;
         let proposals = self.governance_proposals.read().await;
-        
+
         let total_stakers = positions.len();
         let total_staking_positions = positions.values().map(|p| p.len()).sum::<usize>();
-        let average_apy = positions.values()
+        let average_apy = positions
+            .values()
             .flatten()
             .map(|p| p.reward_rate)
-            .sum::<f64>() / total_staking_positions.max(1) as f64;
-        
-        let total_liquidity = pools.values()
+            .sum::<f64>()
+            / total_staking_positions.max(1) as f64;
+
+        let total_liquidity = pools
+            .values()
             .map(|p| p.token_a_reserve.0 + p.token_b_reserve.0)
             .sum::<u64>();
-        
-        let active_proposals = proposals.values()
+
+        let active_proposals = proposals
+            .values()
             .filter(|p| matches!(p.status, ProposalStatus::Active))
             .count();
-        
+
         EconomicsStats {
             total_supply: metrics.total_supply,
             circulating_supply: metrics.circulating_supply,
@@ -452,9 +493,9 @@ impl TokenEconomics {
             burn_rate: config.burn_rate,
         }
     }
-    
+
     // Helper functions
-    
+
     async fn calculate_duration_bonus(&self, duration: Duration) -> f64 {
         let days = duration.as_secs() / (24 * 3600);
         match days {
@@ -465,40 +506,49 @@ impl TokenEconomics {
             _ => 7.5,        // +7.5% for over 1 year
         }
     }
-    
+
     async fn calculate_amount_bonus(&self, amount: CrapTokens) -> f64 {
         let crap_amount = amount.to_crap();
         match crap_amount as u64 {
             0..=999 => 0.0,
-            1000..=9999 => 0.5,    // +0.5% for 1k-10k CRAP
-            10000..=99999 => 1.0,  // +1% for 10k-100k CRAP
+            1000..=9999 => 0.5,     // +0.5% for 1k-10k CRAP
+            10000..=99999 => 1.0,   // +1% for 10k-100k CRAP
             100000..=999999 => 2.0, // +2% for 100k-1M CRAP
-            _ => 3.0,              // +3% for over 1M CRAP
+            _ => 3.0,               // +3% for over 1M CRAP
         }
     }
-    
+
     async fn calculate_loyalty_bonus(&self, staker: PeerId) -> f64 {
         // This would check historical staking behavior
         // For now, return a default value
         0.0
     }
-    
+
     async fn calculate_governance_power(&self, amount: CrapTokens, duration: Duration) -> u64 {
         let base_power = amount.0;
         let duration_multiplier = (duration.as_secs() / (30 * 24 * 3600)).max(1); // Monthly multiplier
         base_power * duration_multiplier
     }
-    
-    async fn compound_rewards(&self, _staker: &PeerId, position: &mut AdvancedStakingPosition) -> Result<()> {
+
+    async fn compound_rewards(
+        &self,
+        _staker: &PeerId,
+        position: &mut AdvancedStakingPosition,
+    ) -> Result<()> {
         let rewards = position.accumulated_rewards;
-        position.amount = position.amount.checked_add(rewards)
+        position.amount = position
+            .amount
+            .checked_add(rewards)
             .ok_or_else(|| Error::InvalidData("Compound overflow".to_string()))?;
         position.accumulated_rewards = CrapTokens::from(0);
-        
-        log::debug!("Compounded {} CRAP rewards for staking position", rewards.to_crap());
+
+        log::debug!(
+            "Compounded {} CRAP rewards for staking position",
+            rewards.to_crap()
+        );
         Ok(())
     }
-    
+
     fn current_timestamp() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -533,30 +583,34 @@ pub struct EconomicsStats {
 mod tests {
     use super::*;
     use crate::token::TokenLedger;
-    
+
     #[tokio::test]
     async fn test_token_economics_creation() {
         let ledger = Arc::new(TokenLedger::new());
         let economics = TokenEconomics::new(ledger);
-        
+
         let stats = economics.get_economics_stats().await;
         assert_eq!(stats.total_stakers, 0);
         assert_eq!(stats.total_staking_positions, 0);
     }
-    
+
     #[tokio::test]
     async fn test_dynamic_fees() {
         let ledger = Arc::new(TokenLedger::new());
         let economics = TokenEconomics::new(ledger);
-        
+
         // Update for low volume
         economics.update_fee_structure(50).await.unwrap();
-        let low_fee = economics.calculate_dynamic_fee(FeeCategory::Transfer, false).await;
-        
+        let low_fee = economics
+            .calculate_dynamic_fee(FeeCategory::Transfer, false)
+            .await;
+
         // Update for high volume
         economics.update_fee_structure(2000).await.unwrap();
-        let high_fee = economics.calculate_dynamic_fee(FeeCategory::Transfer, false).await;
-        
+        let high_fee = economics
+            .calculate_dynamic_fee(FeeCategory::Transfer, false)
+            .await;
+
         assert!(high_fee.0 > low_fee.0);
     }
 }

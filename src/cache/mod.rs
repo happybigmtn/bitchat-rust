@@ -2,4 +2,4 @@
 
 pub mod multi_tier;
 
-pub use multi_tier::{MultiTierCache, CacheStats, CacheEntry};
+pub use multi_tier::{CacheEntry, CacheStats, MultiTierCache};
