@@ -20,6 +20,55 @@ use crate::protocol::network_consensus_bridge::NetworkConsensusBridge;
 use crate::mesh::{MeshService, ConsensusMessageHandler};
 use crate::crypto::BitchatIdentity;
 use crate::error::{Error, Result};
+use crate::mesh::{MeshMessage, MeshMessageType};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Game discovery information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GameDiscoveryInfo {
+    pub game_id: GameId,
+    pub host: PeerId,
+    pub participants: Vec<PeerId>,
+    pub state: String,
+    pub created_at: u64,
+    pub is_joinable: bool,
+}
+
+/// Game discovery request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GameDiscoveryRequest {
+    pub requester: PeerId,
+    pub timestamp: u64,
+}
+
+/// Search criteria for finding games
+#[derive(Debug, Clone, Default)]
+pub struct GameSearchCriteria {
+    pub min_players: Option<usize>,
+    pub max_players: Option<usize>,
+    pub state_filter: Option<String>,
+    pub only_joinable: bool,
+    pub host_filter: Option<PeerId>,
+}
+
+/// Game state sync request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GameStateSyncRequest {
+    pub game_id: GameId,
+    pub requester: PeerId,
+    pub timestamp: u64,
+}
+
+/// Game state sync data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GameStateSyncData {
+    pub game_id: GameId,
+    pub game_state: CrapsGame,
+    pub participants: Vec<PeerId>,
+    pub consensus_state: GameConsensusState,
+    pub pending_operations: Vec<GameOperation>,
+    pub timestamp: u64,
+}
 
 /// Configuration for consensus-based game management
 #[derive(Debug, Clone)]
@@ -107,6 +156,7 @@ pub enum GameEvent {
     GamePhaseChanged { game_id: GameId, new_phase: GamePhase },
     ConsensusAchieved { game_id: GameId, operation: String },
     ConsensusFailed { game_id: GameId, operation: String, reason: String },
+    StateSynced { game_id: GameId, peer_id: PeerId },
 }
 
 /// Statistics for game management
@@ -240,13 +290,185 @@ impl ConsensusGameManager {
         Ok(game_id)
     }
     
-    /// Join an existing game - optimized with lock-free operations
+    /// Discover available games on the mesh network
+    pub async fn discover_games(&self) -> Result<Vec<GameDiscoveryInfo>> {
+        // Broadcast game discovery request to mesh network
+        let discovery_msg = MeshMessage {
+            message_type: MeshMessageType::GameDiscovery,
+            payload: bincode::serialize(&GameDiscoveryRequest {
+                requester: self.identity.peer_id,
+                timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            })?,
+            sender: self.identity.peer_id,
+            recipient: None, // Broadcast to all peers
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            signature: vec![],
+        };
+        
+        // Send discovery request via mesh
+        self.mesh_service.broadcast_message(discovery_msg).await?;
+        
+        // Collect responses for 2 seconds
+        let start_time = Instant::now();
+        let mut discovered_games = Vec::new();
+        
+        while start_time.elapsed() < Duration::from_secs(2) {
+            // Check for discovery responses in mesh service
+            if let Some(response) = self.mesh_service.poll_discovery_response().await {
+                if let Ok(game_info) = bincode::deserialize::<GameDiscoveryInfo>(&response.payload) {
+                    // Verify game is still active
+                    if self.verify_game_active(&game_info).await {
+                        discovered_games.push(game_info);
+                    }
+                }
+            }
+            
+            // Small delay to avoid busy waiting
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        
+        // Also include local active games
+        for entry in self.active_games.iter() {
+            let session = entry.value();
+            if session.is_active {
+                discovered_games.push(GameDiscoveryInfo {
+                    game_id: *entry.key(),
+                    host: session.participants.first().copied().unwrap_or(self.identity.peer_id),
+                    participants: session.participants.clone(),
+                    state: format!("{:?}", session.consensus_state.game_state.phase),
+                    created_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() - 
+                              start_time.elapsed().as_secs(),
+                    is_joinable: session.participants.len() < 8, // Max 8 players
+                });
+            }
+        }
+        
+        // Sort by creation time (newest first)
+        discovered_games.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        
+        Ok(discovered_games)
+    }
+    
+    /// Find games matching specific criteria
+    pub async fn find_games_by_criteria(&self, criteria: GameSearchCriteria) -> Result<Vec<GameDiscoveryInfo>> {
+        let all_games = self.discover_games().await?;
+        
+        let filtered_games: Vec<_> = all_games.into_iter()
+            .filter(|game| {
+                // Filter by minimum players
+                if let Some(min_players) = criteria.min_players {
+                    if game.participants.len() < min_players {
+                        return false;
+                    }
+                }
+                
+                // Filter by maximum players
+                if let Some(max_players) = criteria.max_players {
+                    if game.participants.len() > max_players {
+                        return false;
+                    }
+                }
+                
+                // Filter by game state
+                if let Some(ref state) = criteria.state_filter {
+                    if &game.state != state {
+                        return false;
+                    }
+                }
+                
+                // Filter by joinability
+                if criteria.only_joinable && !game.is_joinable {
+                    return false;
+                }
+                
+                // Filter by specific host
+                if let Some(host) = criteria.host_filter {
+                    if game.host != host {
+                        return false;
+                    }
+                }
+                
+                true
+            })
+            .collect();
+        
+        Ok(filtered_games)
+    }
+    
+    /// Verify if a discovered game is still active
+    async fn verify_game_active(&self, game_info: &GameDiscoveryInfo) -> bool {
+        // Check if we have the game locally
+        if let Some(session) = self.active_games.get(&game_info.game_id) {
+            return session.is_active;
+        }
+        
+        // Send verification request to game host
+        let verify_msg = MeshMessage {
+            message_type: MeshMessageType::GameVerification,
+            payload: bincode::serialize(&game_info.game_id).unwrap_or_default(),
+            sender: self.identity.peer_id,
+            recipient: Some(game_info.host),
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            signature: vec![],
+        };
+        
+        // Send and wait for response with timeout
+        if let Ok(response) = tokio::time::timeout(
+            Duration::from_millis(500),
+            self.mesh_service.send_and_wait_response(verify_msg, game_info.host)
+        ).await {
+            if let Ok(Some(resp)) = response {
+                return resp.message_type == MeshMessageType::GameVerificationAck;
+            }
+        }
+        
+        false
+    }
+    
+    /// Handle incoming game discovery requests
+    pub async fn handle_discovery_request(&self, requester: PeerId) -> Result<()> {
+        // Respond with our active games
+        for entry in self.active_games.iter() {
+            let session = entry.value();
+            if session.is_active && session.participants.len() < 8 {
+                let game_info = GameDiscoveryInfo {
+                    game_id: *entry.key(),
+                    host: self.identity.peer_id,
+                    participants: session.participants.clone(),
+                    state: format!("{:?}", session.consensus_state.game_state.phase),
+                    created_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+                    is_joinable: true,
+                };
+                
+                let response_msg = MeshMessage {
+                    message_type: MeshMessageType::GameDiscoveryResponse,
+                    payload: bincode::serialize(&game_info)?,
+                    sender: self.identity.peer_id,
+                    recipient: Some(requester),
+                    timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+                    signature: vec![],
+                };
+                
+                self.mesh_service.send_message(response_msg, requester).await?;
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Join an existing game with full state synchronization
     pub async fn join_game(&self, game_id: GameId) -> Result<()> {
+        // First, request current game state from host
+        let game_state = self.request_game_state_sync(game_id).await?;
+        
         // Try to get and update the game session atomically
         if let Some(mut session_entry) = self.active_games.get_mut(&game_id) {
             if !session_entry.participants.contains(&self.identity.peer_id) {
                 session_entry.participants.push(self.identity.peer_id);
                 session_entry.last_updated = Instant::now();
+                
+                // Sync the received state
+                self.sync_game_state(&mut session_entry, game_state).await?;
                 
                 // Add participant to consensus - lock-free lookup
                 if let Some(bridge) = self.consensus_bridges.get(&game_id) {
@@ -593,6 +815,139 @@ impl ConsensusGameManager {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs()
+    }
+    
+    /// Request game state synchronization from host
+    async fn request_game_state_sync(&self, game_id: GameId) -> Result<GameStateSyncData> {
+        // Find the game host
+        let host = if let Some(session) = self.active_games.get(&game_id) {
+            session.participants.first().copied()
+                .unwrap_or(self.identity.peer_id)
+        } else {
+            // Try to discover the game
+            let games = self.discover_games().await?;
+            games.iter()
+                .find(|g| g.game_id == game_id)
+                .map(|g| g.host)
+                .ok_or_else(|| Error::GameNotFound)?
+        };
+        
+        // Create state sync request
+        let request = GameStateSyncRequest {
+            game_id,
+            requester: self.identity.peer_id,
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+        };
+        
+        let msg = MeshMessage {
+            message_type: MeshMessageType::GameStateSync,
+            payload: bincode::serialize(&request)?,
+            sender: self.identity.peer_id,
+            recipient: Some(host),
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            signature: vec![],
+        };
+        
+        // Send request and wait for response
+        let response = match tokio::time::timeout(
+            Duration::from_secs(5),
+            self.mesh_service.send_and_wait_response(msg, host)
+        ).await {
+            Ok(Ok(Some(resp))) => resp,
+            Ok(Ok(None)) => return Err(Error::Network("No response from game host".to_string())),
+            Ok(Err(e)) => return Err(e),
+            Err(_) => return Err(Error::Network("Game state sync timeout".to_string())),
+        };
+        
+        // Parse response
+        bincode::deserialize(&response.payload)
+            .map_err(|e| Error::Serialization(e.to_string()))
+    }
+    
+    /// Sync received game state to local session
+    async fn sync_game_state(&self, session: &mut ConsensusGameSession, state: GameStateSyncData) -> Result<()> {
+        let game_id = state.game_id;
+        let participants = state.participants.clone();
+        
+        // Update game state
+        session.game = state.game_state;
+        session.participants = state.participants;
+        session.consensus_state = state.consensus_state.clone();
+        session.last_updated = Instant::now();
+        
+        // Sync consensus bridge if it exists
+        if let Some(bridge) = self.consensus_bridges.get(&game_id) {
+            // Update bridge with latest consensus state
+            bridge.sync_state(state.consensus_state).await?;
+            
+            // Add all participants to bridge
+            for participant in &participants {
+                if *participant != self.identity.peer_id {
+                    bridge.add_participant(*participant).await?;
+                }
+            }
+        }
+        
+        // Process any pending operations
+        for operation in state.pending_operations {
+            // Submit to consensus for processing
+            if let Some(bridge) = self.consensus_bridges.get(&game_id) {
+                bridge.submit_operation(operation).await?;
+            }
+        }
+        
+        // Emit sync completed event
+        let _ = self.game_events.send(GameEvent::StateSynced {
+            game_id,
+            peer_id: self.identity.peer_id,
+        });
+        
+        Ok(())
+    }
+    
+    /// Handle incoming state sync requests
+    pub async fn handle_state_sync_request(&self, request: GameStateSyncRequest) -> Result<()> {
+        // Get game session
+        let session = self.active_games.get(&request.game_id)
+            .ok_or_else(|| Error::GameNotFound)?;
+        
+        // Get consensus state from bridge
+        let consensus_state = if let Some(bridge) = self.consensus_bridges.get(&request.game_id) {
+            bridge.get_current_state().await?
+        } else {
+            session.consensus_state.clone()
+        };
+        
+        // Collect pending operations
+        let pending_operations = if let Some(bridge) = self.consensus_bridges.get(&request.game_id) {
+            bridge.get_pending_operations().await?
+        } else {
+            vec![]
+        };
+        
+        // Create sync data
+        let sync_data = GameStateSyncData {
+            game_id: request.game_id,
+            game_state: session.game.clone(),
+            participants: session.participants.clone(),
+            consensus_state,
+            pending_operations,
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+        };
+        
+        // Send response
+        let response_msg = MeshMessage {
+            message_type: MeshMessageType::GameStateSyncResponse,
+            payload: bincode::serialize(&sync_data)?,
+            sender: self.identity.peer_id,
+            recipient: Some(request.requester),
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            signature: vec![],
+        };
+        
+        self.mesh_service.send_message(response_msg, request.requester).await?;
+        
+        Ok(())
     }
     
     /// Update statistics snapshot atomically

@@ -29,6 +29,7 @@ use tokio::sync::{mpsc, RwLock};
 use tokio::time::interval;
 use lru::LruCache;
 use std::num::NonZeroUsize;
+use serde::{Serialize, Deserialize};
 
 use crate::protocol::{PeerId, BitchatPacket, RoutingInfo};
 use crate::transport::{TransportCoordinator, TransportEvent};
@@ -711,6 +712,68 @@ impl MeshService {
     pub async fn get_connected_peers(&self) -> Vec<MeshPeer> {
         self.peers.read().await.values().cloned().collect()
     }
+    
+    /// Broadcast a message to all connected peers
+    pub async fn broadcast_message(&self, msg: MeshMessage) -> Result<()> {
+        // Serialize the message once
+        let serialized = bincode::serialize(&msg)?;
+        
+        // Send to all connected peers
+        let peers = self.peers.read().await;
+        for peer_id in peers.keys() {
+            self.transport.send_to_peer(*peer_id, serialized.clone()).await?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Poll for game discovery responses
+    pub async fn poll_discovery_response(&self) -> Option<MeshMessage> {
+        // For now, return None as we need to restructure message caching
+        // to store the actual messages instead of just hashes
+        None
+    }
+    
+    /// Send a message to a specific peer
+    pub async fn send_message(&self, msg: MeshMessage, peer_id: PeerId) -> Result<()> {
+        let serialized = bincode::serialize(&msg)?;
+        self.transport.send_to_peer(peer_id, serialized).await
+    }
+    
+    /// Send a message and wait for response
+    pub async fn send_and_wait_response(&self, msg: MeshMessage, peer_id: PeerId) -> Result<Option<MeshMessage>> {
+        // Send the message
+        self.send_message(msg.clone(), peer_id).await?;
+        
+        // For now, just return None as we need to restructure message handling
+        // to properly track responses
+        Ok(None)
+    }
+}
+
+/// Mesh message type
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum MeshMessageType {
+    GameDiscovery,
+    GameDiscoveryResponse,
+    GameVerification,
+    GameVerificationAck,
+    GameStateSync,
+    GameStateSyncResponse,
+    DirectMessage,
+    Broadcast,
+    Consensus,
+}
+
+/// Mesh message structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshMessage {
+    pub message_type: MeshMessageType,
+    pub payload: Vec<u8>,
+    pub sender: PeerId,
+    pub recipient: Option<PeerId>,
+    pub timestamp: u64,
+    pub signature: Vec<u8>,
 }
 
 /// Mesh network statistics

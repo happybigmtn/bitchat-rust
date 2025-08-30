@@ -11,7 +11,7 @@ use std::sync::Arc;
 use crate::protocol::{PeerId, GameId, Hash256, Signature};
 use crate::protocol::craps::{CrapsGame, GamePhase, BetResolution, Bet, DiceRoll, CrapTokens};
 use crate::crypto::safe_arithmetic::{SafeArithmetic, token_arithmetic};
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 use super::{ConsensusConfig, ConsensusMetrics, CompactSignature};
 use super::voting::{VoteTracker, ConfirmationTracker, Fork};
@@ -421,6 +421,28 @@ impl ConsensusEngine {
     /// Get current consensus state
     pub fn get_current_state(&self) -> &GameConsensusState {
         &self.current_state
+    }
+    
+    /// Sync state from external source (for joining mid-game)
+    pub fn sync_state(&mut self, state: GameConsensusState) -> Result<()> {
+        // Validate the new state
+        if state.game_id != self.current_state.game_id {
+            return Err(Error::InvalidState("Game ID mismatch".to_string()));
+        }
+        
+        // Update current state
+        self.current_state = Arc::new(state.clone());
+        
+        // Clear pending proposals as they may be outdated
+        self.pending_proposals.clear();
+        
+        // Update metrics
+        self.consensus_metrics.rounds_completed += 1;
+        
+        // Log the sync
+        log::info!("Synced consensus state to sequence {}", state.sequence_number);
+        
+        Ok(())
     }
     
     /// Get consensus metrics

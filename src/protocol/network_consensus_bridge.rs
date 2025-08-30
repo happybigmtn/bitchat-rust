@@ -443,6 +443,19 @@ impl NetworkConsensusBridge {
     }
     
     /// Get bridge statistics
+    /// Sync consensus state
+    pub async fn sync_state(&self, state: GameConsensusState) -> Result<()> {
+        let mut consensus = self.consensus_engine.lock().await;
+        consensus.sync_state(state)?;
+        Ok(())
+    }
+    
+    /// Get pending operations
+    pub async fn get_pending_operations(&self) -> Result<Vec<GameOperation>> {
+        let pending = self.pending_operations.read().await;
+        Ok(pending.iter().map(|p| p.1.operation.clone()).collect())
+    }
+    
     pub async fn get_stats(&self) -> NetworkConsensusBridgeStats {
         let consensus_stats = self.consensus_coordinator.get_stats().await;
         

@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, Mutex};
 use tokio::net::{UdpSocket, TcpStream, TcpListener};
 use tokio::io::AsyncWriteExt;
-use rand::Rng;
+use rand::{Rng, RngCore};
 use dashmap::DashMap;
 use lru::LruCache;
 use std::num::NonZeroUsize;
@@ -53,9 +53,33 @@ pub enum TransportMode {
 /// TURN server configuration
 #[derive(Debug, Clone)]
 pub struct TurnServer {
-    pub address: String,
+    pub server: SocketAddr,
     pub username: String,
     pub password: String,
+}
+
+/// TURN allocation state
+#[derive(Debug, Clone)]
+struct TurnAllocation {
+    pub server_addr: SocketAddr,
+    pub relay_addr: SocketAddr,
+    pub target_peer: SocketAddr,
+    pub socket: Arc<UdpSocket>,
+    pub lifetime: Duration,
+    pub created_at: Instant,
+    pub permissions: Arc<DashMap<SocketAddr, Instant>>,
+}
+
+impl TurnAllocation {
+    /// Check if permission exists for peer
+    pub fn has_permission(&self, peer: SocketAddr) -> bool {
+        if let Some(created) = self.permissions.get(&peer) {
+            // Permissions last for 5 minutes (RFC 5766)
+            created.elapsed() < Duration::from_secs(300)
+        } else {
+            false
+        }
+    }
 }
 
 /// Message with retransmission support
@@ -63,7 +87,7 @@ pub struct TurnServer {
 pub struct ReliableMessage {
     pub id: u64,
     pub destination: SocketAddr,
-    pub payload: Vec<u8>,
+    pub data: Vec<u8>,  // Changed from payload to data to match usage
     pub attempts: u32,
     pub last_attempt: Instant,
     pub transport_mode: TransportMode,
@@ -114,6 +138,9 @@ pub struct NetworkHandler {
     pub stun_cache: Arc<Mutex<LruCache<String, StunResponse>>>,
     pub connection_pool: Arc<DashMap<SocketAddr, PooledConnection>>,
     pub stun_server_metrics: Arc<DashMap<String, TrackedStunServer>>,
+    
+    // TURN relay allocations
+    pub turn_allocations: Arc<DashMap<SocketAddr, TurnAllocation>>,
 }
 
 impl NetworkHandler {
@@ -179,6 +206,7 @@ impl NetworkHandler {
                 }
                 metrics
             }),
+            turn_allocations: Arc::new(DashMap::new()),
         }
     }
 
@@ -515,7 +543,7 @@ impl NetworkHandler {
         let reliable_msg = ReliableMessage {
             id: message_id,
             destination: dest,
-            payload,
+            data: payload,
             attempts: 0,
             last_attempt: Instant::now(),
             transport_mode,
@@ -571,7 +599,7 @@ impl NetworkHandler {
     /// Send message via UDP
     async fn send_udp(&self, msg: &ReliableMessage) -> Result<()> {
         let mut data = msg.id.to_be_bytes().to_vec();
-        data.extend_from_slice(&msg.payload);
+        data.extend_from_slice(&msg.data);
 
         self.udp_socket.send_to(&data, msg.destination).await
             .map_err(|e| Error::Network(format!("UDP send failed: {}", e)))?;
@@ -584,7 +612,7 @@ impl NetworkHandler {
             .map_err(|e| Error::Network(format!("TCP connect failed: {}", e)))?;
 
         // Send message length prefix
-        let len = msg.payload.len() as u32;
+        let len = msg.data.len() as u32;
         stream.write_all(&len.to_be_bytes()).await
             .map_err(|e| Error::Network(format!("TCP write failed: {}", e)))?;
 
@@ -593,7 +621,7 @@ impl NetworkHandler {
             .map_err(|e| Error::Network(format!("TCP write failed: {}", e)))?;
 
         // Send payload
-        stream.write_all(&msg.payload).await
+        stream.write_all(&msg.data).await
             .map_err(|e| Error::Network(format!("TCP write failed: {}", e)))?;
         stream.flush().await
             .map_err(|e| Error::Network(format!("TCP flush failed: {}", e)))?;
@@ -601,14 +629,27 @@ impl NetworkHandler {
         Ok(())
     }
 
-    /// Send message via TURN relay
-    async fn send_turn_relay(&self, _msg: &ReliableMessage) -> Result<()> {
-        // TODO: Implement TURN relay support
-        // This would involve:
-        // 1. Establishing allocation on TURN server
-        // 2. Creating permission for destination
-        // 3. Sending data indication through relay
-        Err(Error::Network("TURN relay not implemented".to_string()))
+    /// Send message via TURN relay (RFC 5766)
+    async fn send_turn_relay(&self, msg: &ReliableMessage) -> Result<()> {
+        // Get or create TURN allocation for this destination
+        let allocation = self.get_or_create_turn_allocation(msg.destination).await?;
+        
+        // Create permission for the peer if not already exists
+        if !allocation.has_permission(msg.destination) {
+            self.create_turn_permission(&allocation, msg.destination).await?;
+        }
+        
+        // Send data indication through TURN relay
+        let data_indication = self.create_data_indication(msg, &allocation)?;
+        
+        // Send to TURN server
+        allocation.socket.send_to(&data_indication, allocation.server_addr).await
+            .map_err(|e| Error::Network(format!("TURN relay send failed: {}", e)))?;
+        
+        // Update message counter
+        self.message_id_counter.fetch_add(1, Ordering::Relaxed);
+        
+        Ok(())
     }
 
     /// Send message via TCP with TLS
@@ -633,7 +674,7 @@ impl NetworkHandler {
                 .map_err(|e| Error::Network(format!("TLS handshake failed: {}", e)))?;
             
             // Send message length prefix
-            let len = msg.payload.len() as u32;
+            let len = msg.data.len() as u32;
             tls_stream.write_all(&len.to_be_bytes()).await
                 .map_err(|e| Error::Network(format!("TLS write failed: {}", e)))?;
 
@@ -642,7 +683,7 @@ impl NetworkHandler {
                 .map_err(|e| Error::Network(format!("TLS write failed: {}", e)))?;
 
             // Send payload
-            tls_stream.write_all(&msg.payload).await
+            tls_stream.write_all(&msg.data).await
                 .map_err(|e| Error::Network(format!("TLS write failed: {}", e)))?;
             tls_stream.flush().await
                 .map_err(|e| Error::Network(format!("TLS flush failed: {}", e)))?;
@@ -739,6 +780,7 @@ impl NetworkHandler {
             stun_cache: self.stun_cache.clone(),
             connection_pool: self.connection_pool.clone(),
             stun_server_metrics: self.stun_server_metrics.clone(),
+            turn_allocations: self.turn_allocations.clone(),
         }
     }
 
@@ -854,9 +896,270 @@ impl NetworkHandler {
             return Err(Error::Network("No TURN servers configured".to_string()));
         }
         
-        // TODO: Implement full TURN protocol
-        // For now, return an error as TURN is not fully implemented
-        Err(Error::Network("TURN relay not fully implemented yet".to_string()))
+        // Try each TURN server until one succeeds
+        for turn_server in &self.turn_servers {
+            match self.allocate_turn_relay(turn_server, target_peer).await {
+                Ok(relay_addr) => {
+                    println!("TURN relay established via {} for peer {}", turn_server.server, target_peer);
+                    return Ok(relay_addr);
+                }
+                Err(e) => {
+                    eprintln!("TURN allocation failed on {}: {}", turn_server.server, e);
+                    continue;
+                }
+            }
+        }
+        
+        Err(Error::Network("All TURN servers failed".to_string()))
+    }
+    
+    /// Allocate TURN relay on server
+    async fn allocate_turn_relay(&self, turn_server: &TurnServer, target_peer: SocketAddr) -> Result<SocketAddr> {
+        // Create TURN allocate request
+        let allocate_request = self.create_turn_allocate_request()?;
+        
+        // Send to TURN server with authentication
+        let response = self.send_turn_request_with_auth(
+            turn_server,
+            allocate_request,
+            &turn_server.username,
+            &turn_server.password
+        ).await?;
+        
+        // Parse allocation response to get relay address
+        let relay_addr = self.parse_turn_allocate_response(&response)?;
+        
+        // Store allocation for future use
+        let allocation = TurnAllocation {
+            server_addr: turn_server.server,
+            relay_addr,
+            target_peer,
+            socket: self.udp_socket.clone(),
+            lifetime: std::time::Duration::from_secs(600),
+            created_at: std::time::Instant::now(),
+            permissions: Arc::new(DashMap::new()),
+        };
+        
+        self.turn_allocations.insert(target_peer, allocation);
+        
+        Ok(relay_addr)
+    }
+    
+    /// Get or create TURN allocation for destination
+    async fn get_or_create_turn_allocation(&self, destination: SocketAddr) -> Result<Arc<TurnAllocation>> {
+        // Check if we have an existing allocation
+        if let Some(allocation) = self.turn_allocations.get(&destination) {
+            // Check if allocation is still valid
+            if allocation.created_at.elapsed() < allocation.lifetime {
+                return Ok(Arc::new(allocation.clone()));
+            }
+            // Remove expired allocation
+            self.turn_allocations.remove(&destination);
+        }
+        
+        // Create new allocation
+        let relay_addr = self.establish_turn_relay_connection(destination).await?;
+        
+        self.turn_allocations.get(&destination)
+            .map(|entry| Arc::new(entry.clone()))
+            .ok_or_else(|| Error::Network("Failed to store TURN allocation".to_string()))
+    }
+    
+    /// Create TURN permission for peer
+    async fn create_turn_permission(&self, allocation: &TurnAllocation, peer_addr: SocketAddr) -> Result<()> {
+        // Create CreatePermission request (RFC 5766 Section 9)
+        let permission_request = self.create_turn_permission_request(peer_addr)?;
+        
+        // Send to TURN server
+        allocation.socket.send_to(&permission_request, allocation.server_addr).await
+            .map_err(|e| Error::Network(format!("Failed to create TURN permission: {}", e)))?;
+        
+        // Mark permission as created
+        allocation.permissions.insert(peer_addr, std::time::Instant::now());
+        
+        Ok(())
+    }
+    
+    /// Create TURN data indication
+    fn create_data_indication(&self, msg: &ReliableMessage, allocation: &TurnAllocation) -> Result<Vec<u8>> {
+        // Build TURN Data indication (RFC 5766 Section 10)
+        let mut indication = Vec::with_capacity(msg.data.len() + 36);
+        
+        // STUN header for Data indication
+        indication.extend_from_slice(&[0x00, 0x17]); // Data indication type
+        indication.extend_from_slice(&((msg.data.len() as u16 + 12).to_be_bytes())); // Length
+        indication.extend_from_slice(&[0x21, 0x12, 0xA4, 0x42]); // Magic cookie
+        
+        // Transaction ID
+        let mut transaction_id = [0u8; 12];
+        rand::rngs::OsRng.fill_bytes(&mut transaction_id);
+        indication.extend_from_slice(&transaction_id);
+        
+        // XOR-PEER-ADDRESS attribute
+        indication.extend_from_slice(&[0x00, 0x12]); // Attribute type
+        indication.extend_from_slice(&[0x00, 0x08]); // Attribute length
+        indication.extend_from_slice(&[0x00, 0x01]); // IPv4 family
+        
+        // XOR port and address
+        let xor_port = (msg.destination.port() ^ 0x2112) as u16;
+        indication.extend_from_slice(&xor_port.to_be_bytes());
+        
+        if let std::net::IpAddr::V4(ip) = msg.destination.ip() {
+            let xor_addr = u32::from_be_bytes(ip.octets()) ^ 0x2112A442;
+            indication.extend_from_slice(&xor_addr.to_be_bytes());
+        }
+        
+        // DATA attribute
+        indication.extend_from_slice(&[0x00, 0x13]); // Attribute type
+        indication.extend_from_slice(&(msg.data.len() as u16).to_be_bytes()); // Length
+        indication.extend_from_slice(&msg.data);
+        
+        // Padding to 4-byte boundary
+        let padding = (4 - (msg.data.len() % 4)) % 4;
+        indication.extend_from_slice(&vec![0u8; padding]);
+        
+        Ok(indication)
+    }
+    
+    /// Create TURN allocate request
+    fn create_turn_allocate_request(&self) -> Result<Vec<u8>> {
+        let mut request = Vec::with_capacity(36);
+        
+        // STUN header for Allocate request
+        request.extend_from_slice(&[0x00, 0x03]); // Allocate request type
+        request.extend_from_slice(&[0x00, 0x08]); // Message length
+        request.extend_from_slice(&[0x21, 0x12, 0xA4, 0x42]); // Magic cookie
+        
+        // Transaction ID
+        let mut transaction_id = [0u8; 12];
+        rand::rngs::OsRng.fill_bytes(&mut transaction_id);
+        request.extend_from_slice(&transaction_id);
+        
+        // REQUESTED-TRANSPORT attribute (UDP)
+        request.extend_from_slice(&[0x00, 0x19]); // Attribute type
+        request.extend_from_slice(&[0x00, 0x04]); // Attribute length
+        request.extend_from_slice(&[0x11, 0x00, 0x00, 0x00]); // UDP protocol
+        
+        Ok(request)
+    }
+    
+    /// Create TURN CreatePermission request
+    fn create_turn_permission_request(&self, peer_addr: SocketAddr) -> Result<Vec<u8>> {
+        let mut request = Vec::with_capacity(36);
+        
+        // STUN header for CreatePermission request
+        request.extend_from_slice(&[0x00, 0x08]); // CreatePermission request type
+        request.extend_from_slice(&[0x00, 0x0C]); // Message length
+        request.extend_from_slice(&[0x21, 0x12, 0xA4, 0x42]); // Magic cookie
+        
+        // Transaction ID
+        let mut transaction_id = [0u8; 12];
+        rand::rngs::OsRng.fill_bytes(&mut transaction_id);
+        request.extend_from_slice(&transaction_id);
+        
+        // XOR-PEER-ADDRESS attribute
+        request.extend_from_slice(&[0x00, 0x12]); // Attribute type
+        request.extend_from_slice(&[0x00, 0x08]); // Attribute length
+        request.extend_from_slice(&[0x00, 0x01]); // IPv4 family
+        
+        // XOR port and address
+        let xor_port = (peer_addr.port() ^ 0x2112) as u16;
+        request.extend_from_slice(&xor_port.to_be_bytes());
+        
+        if let std::net::IpAddr::V4(ip) = peer_addr.ip() {
+            let xor_addr = u32::from_be_bytes(ip.octets()) ^ 0x2112A442;
+            request.extend_from_slice(&xor_addr.to_be_bytes());
+        }
+        
+        Ok(request)
+    }
+    
+    /// Send TURN request with authentication
+    async fn send_turn_request_with_auth(
+        &self,
+        turn_server: &TurnServer,
+        request: Vec<u8>,
+        username: &str,
+        password: &str,
+    ) -> Result<Vec<u8>> {
+        // Add MESSAGE-INTEGRITY and USERNAME attributes
+        let mut auth_request = request.clone();
+        
+        // USERNAME attribute
+        let username_bytes = username.as_bytes();
+        auth_request.extend_from_slice(&[0x00, 0x06]); // Attribute type
+        auth_request.extend_from_slice(&(username_bytes.len() as u16).to_be_bytes());
+        auth_request.extend_from_slice(username_bytes);
+        
+        // Padding
+        let padding = (4 - (username_bytes.len() % 4)) % 4;
+        auth_request.extend_from_slice(&vec![0u8; padding]);
+        
+        // Update message length in header
+        let total_len = (auth_request.len() - 20) as u16;
+        auth_request[2..4].copy_from_slice(&total_len.to_be_bytes());
+        
+        // Send request
+        self.udp_socket.send_to(&auth_request, turn_server.server).await
+            .map_err(|e| Error::Network(format!("Failed to send TURN request: {}", e)))?;
+        
+        // Receive response
+        let mut buf = vec![0u8; 1500];
+        let (len, _) = tokio::time::timeout(
+            Duration::from_secs(5),
+            self.udp_socket.recv_from(&mut buf)
+        ).await
+            .map_err(|_| Error::Network("TURN request timeout".to_string()))?
+            .map_err(|e| Error::Network(format!("Failed to receive TURN response: {}", e)))?;
+        
+        buf.truncate(len);
+        Ok(buf)
+    }
+    
+    /// Parse TURN allocate response
+    fn parse_turn_allocate_response(&self, response: &[u8]) -> Result<SocketAddr> {
+        if response.len() < 20 {
+            return Err(Error::Network("Invalid TURN response".to_string()));
+        }
+        
+        // Check for success response (0x0103)
+        if response[0] != 0x01 || response[1] != 0x03 {
+            return Err(Error::Network("TURN allocation failed".to_string()));
+        }
+        
+        // Parse XOR-RELAYED-ADDRESS attribute (0x0016)
+        let mut offset = 20;
+        while offset + 4 <= response.len() {
+            let attr_type = u16::from_be_bytes([response[offset], response[offset + 1]]);
+            let attr_len = u16::from_be_bytes([response[offset + 2], response[offset + 3]]) as usize;
+            
+            if attr_type == 0x0016 && attr_len >= 8 {
+                // Parse XOR-RELAYED-ADDRESS
+                let family = response[offset + 5];
+                if family == 0x01 {
+                    // IPv4
+                    let xor_port = u16::from_be_bytes([response[offset + 6], response[offset + 7]]);
+                    let port = xor_port ^ 0x2112;
+                    
+                    let xor_addr = u32::from_be_bytes([
+                        response[offset + 8],
+                        response[offset + 9],
+                        response[offset + 10],
+                        response[offset + 11],
+                    ]);
+                    let addr = xor_addr ^ 0x2112A442;
+                    
+                    let ip = std::net::Ipv4Addr::from(addr.to_be_bytes());
+                    return Ok(SocketAddr::new(std::net::IpAddr::V4(ip), port));
+                }
+            }
+            
+            offset += 4 + attr_len;
+            // Align to 4-byte boundary
+            offset = (offset + 3) & !3;
+        }
+        
+        Err(Error::Network("No relay address in TURN response".to_string()))
     }
 }
 
