@@ -676,19 +676,41 @@ impl BitchatPacket {
     
     /// Serialize packet to bytes
     pub fn serialize(&mut self) -> Result<Vec<u8>> {
-        // Simplified implementation - would serialize entire packet
         let mut buffer = Vec::new();
+        
+        // Header fields
         buffer.push(self.version);
         buffer.push(self.packet_type);
         buffer.push(self.flags);
         buffer.push(self.ttl);
         buffer.extend_from_slice(&self.total_length.to_be_bytes());
         buffer.extend_from_slice(&self.sequence.to_be_bytes());
+        buffer.extend_from_slice(&self.checksum.to_be_bytes());
         
-        // Add payload if present
-        if let Some(payload) = &self.payload {
-            buffer.extend_from_slice(payload);
+        // Source and target addresses
+        buffer.extend_from_slice(&self.source);
+        buffer.extend_from_slice(&self.target);
+        
+        // TLV fields
+        buffer.extend_from_slice(&(self.tlv_data.len() as u16).to_be_bytes());
+        for tlv in &self.tlv_data {
+            buffer.push(tlv.field_type);
+            buffer.extend_from_slice(&tlv.length.to_be_bytes());
+            buffer.extend_from_slice(&tlv.value);
         }
+        
+        // Payload
+        if let Some(payload) = &self.payload {
+            buffer.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+            buffer.extend_from_slice(payload);
+        } else {
+            buffer.extend_from_slice(&0u32.to_be_bytes());
+        }
+        
+        // Update total length
+        self.total_length = buffer.len() as u32;
+        // Update the total_length field in the buffer
+        buffer[4..8].copy_from_slice(&self.total_length.to_be_bytes());
         
         Ok(buffer)
     }
@@ -711,6 +733,27 @@ impl BitchatPacket {
         let mut target = [0u8; 32];
         reader.read_exact(&mut target).map_err(|e| Error::Serialization(e.to_string()))?;
         
+        // TLV fields
+        let tlv_count = reader.read_u16::<BigEndian>().map_err(|e| Error::Serialization(e.to_string()))?;
+        let mut tlv_data = Vec::with_capacity(tlv_count as usize);
+        for _ in 0..tlv_count {
+            let field_type = reader.read_u8().map_err(|e| Error::Serialization(e.to_string()))?;
+            let length = reader.read_u16::<BigEndian>().map_err(|e| Error::Serialization(e.to_string()))?;
+            let mut value = vec![0u8; length as usize];
+            reader.read_exact(&mut value).map_err(|e| Error::Serialization(e.to_string()))?;
+            tlv_data.push(TlvField { field_type, length, value });
+        }
+        
+        // Payload
+        let payload_len = reader.read_u32::<BigEndian>().map_err(|e| Error::Serialization(e.to_string()))?;
+        let payload = if payload_len > 0 {
+            let mut payload_data = vec![0u8; payload_len as usize];
+            reader.read_exact(&mut payload_data).map_err(|e| Error::Serialization(e.to_string()))?;
+            Some(payload_data)
+        } else {
+            None
+        };
+        
         Ok(Self {
             version,
             packet_type,
@@ -721,8 +764,8 @@ impl BitchatPacket {
             checksum,
             source,
             target,
-            tlv_data: Vec::new(),
-            payload: None,
+            tlv_data,
+            payload,
         })
     }
 }

@@ -169,7 +169,9 @@ impl LockFreeConsensusEngine {
                     if balance.0 >= bet.amount.0 {
                         *balance = CrapTokens::new_unchecked(balance.0 - bet.amount.0);
                     } else {
-                        return Err(crate::error::Error::InsufficientBalance);
+                        return Err(crate::error::Error::InsufficientBalance(
+                            format!("Insufficient balance for bet")
+                        ));
                     }
                 }
             }

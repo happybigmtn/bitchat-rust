@@ -53,11 +53,14 @@ pub enum Error {
     #[error("Invalid bet: {0}")]
     InvalidBet(String),
     
-    #[error("Insufficient balance")]
-    InsufficientBalance,
+    #[error("Insufficient balance: {0}")]
+    InsufficientBalance(String),
     
     #[error("Insufficient funds: {0}")]
     InsufficientFunds(String),
+    
+    #[error("Not initialized: {0}")]
+    NotInitialized(String),
     
     #[error("Invalid signature: {0}")]
     InvalidSignature(String),

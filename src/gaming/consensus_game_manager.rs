@@ -905,6 +905,18 @@ impl ConsensusGameManager {
         Ok(())
     }
     
+    /// Get list of active games
+    pub async fn get_active_games(&self) -> Result<Vec<GameId>> {
+        // Return all active game IDs
+        let game_ids: Vec<GameId> = self.active_games
+            .iter()
+            .filter(|entry| entry.is_active)
+            .map(|entry| entry.key().clone())
+            .collect();
+        
+        Ok(game_ids)
+    }
+    
     /// Handle incoming state sync requests
     pub async fn handle_state_sync_request(&self, request: GameStateSyncRequest) -> Result<()> {
         // Get game session

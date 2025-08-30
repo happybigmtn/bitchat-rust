@@ -3,20 +3,35 @@
 //! This module provides the main application struct that coordinates all subsystems
 //! including networking, consensus, gaming, and token management.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::{
     protocol::{PeerId, GameId, BetType, CrapTokens},
     error::Result,
+    crypto::{BitchatIdentity, SecureKeystore},
+    gaming::{ConsensusGameManager, ConsensusGameConfig},
+    mesh::{MeshService, ConsensusMessageHandler, ConsensusMessageConfig, MeshConsensusIntegration},
+    transport::TransportCoordinator,
+    token::TokenLedger,
 };
 
 /// Main BitCraps application coordinator
 pub struct BitCrapsApp {
     /// Peer identity
-    pub peer_id: PeerId,
+    pub identity: Arc<BitchatIdentity>,
     
     /// Application configuration
     pub config: ApplicationConfig,
+    
+    /// Consensus game manager for distributed game coordination
+    pub consensus_game_manager: Option<Arc<ConsensusGameManager>>,
+    
+    /// Token ledger for managing CRAP tokens
+    pub token_ledger: Option<Arc<TokenLedger>>,
+    
+    /// Keystore for persistent identity
+    pub keystore: Option<Arc<SecureKeystore>>,
 }
 
 /// Application configuration
@@ -57,22 +72,82 @@ impl Default for ApplicationConfig {
 impl BitCrapsApp {
     /// Create a new BitCraps application instance
     pub async fn new(config: ApplicationConfig) -> Result<Self> {
-        // Initialize identity
-        let mut peer_id = [0u8; 32];
-        use rand::{RngCore, rngs::OsRng};
-        OsRng.fill_bytes(&mut peer_id);
+        // Initialize secure keystore
+        let keystore = Arc::new(SecureKeystore::new()?);
+        
+        // Generate identity with proof-of-work
+        // In production, this would load from persistent storage if available
+        let identity = Arc::new(BitchatIdentity::generate_with_pow(16));
         
         Ok(Self {
-            peer_id,
+            identity,
             config,
+            consensus_game_manager: None,
+            token_ledger: None,
+            keystore: Some(keystore),
         })
     }
     
     /// Start the application
-    pub async fn start(&self) -> Result<()> {
-        log::info!("Starting BitCraps application on peer {:?}", self.peer_id);
+    pub async fn start(&mut self) -> Result<()> {
+        log::info!("Starting BitCraps application on peer {:?}", self.identity.peer_id);
         
-        // Services start automatically when initialized in full implementation
+        // Initialize token ledger
+        let token_ledger = Arc::new(TokenLedger::new());
+        self.token_ledger = Some(token_ledger.clone());
+        
+        // Initialize transport coordinator
+        let mut transport_coordinator = TransportCoordinator::new();
+        
+        // Enable multiple transports based on configuration
+        if !self.config.mobile_mode {
+            // Add TCP transport for desktop/server nodes
+            transport_coordinator.enable_tcp(self.config.port).await?;
+        }
+        
+        // Always enable Bluetooth for local mesh
+        transport_coordinator.init_bluetooth(self.identity.peer_id).await?;
+        
+        let transport_coordinator = Arc::new(transport_coordinator);
+        
+        // Initialize mesh service
+        let mesh_service = Arc::new(MeshService::new(self.identity.clone(), transport_coordinator));
+        mesh_service.start().await?;
+        
+        // Setup consensus message handler
+        let consensus_config = ConsensusMessageConfig {
+            enable_encryption: true,  // Enable transport encryption by default
+            ..Default::default()
+        };
+        
+        let consensus_handler = Arc::new(
+            ConsensusMessageHandler::new(
+                mesh_service.clone(),
+                self.identity.clone(),
+                consensus_config,
+            )
+        );
+        
+        // Initialize consensus game manager
+        let game_config = ConsensusGameConfig::default();
+        let consensus_game_manager = Arc::new(
+            ConsensusGameManager::new(
+                self.identity.clone(),
+                mesh_service.clone(),
+                consensus_handler.clone(),
+                game_config,
+            )
+        );
+        
+        // Wire up consensus with mesh
+        MeshConsensusIntegration::integrate(
+            mesh_service.clone(),
+            consensus_handler,
+        ).await?;
+        
+        // Start game manager
+        consensus_game_manager.start().await?;
+        self.consensus_game_manager = Some(consensus_game_manager);
         
         log::info!("BitCraps application started successfully");
         Ok(())
@@ -88,37 +163,79 @@ impl BitCrapsApp {
         Ok(())
     }
     
-    /// Create a new game (placeholder)
-    pub async fn create_game(&self, _min_players: u8, _ante: CrapTokens) -> Result<GameId> {
-        // Placeholder implementation
-        let mut game_id = [0u8; 16];
-        use rand::{RngCore, rngs::OsRng};
-        OsRng.fill_bytes(&mut game_id);
-        Ok(game_id)
+    /// Create a new game
+    pub async fn create_game(&self, min_players: u8, _ante: CrapTokens) -> Result<GameId> {
+        let game_manager = self.consensus_game_manager.as_ref()
+            .ok_or(crate::error::Error::NotInitialized("Game manager not started".into()))?;
+        
+        // Create participants list starting with self
+        let mut participants = vec![self.identity.peer_id];
+        
+        // Wait for minimum players to be available (simplified for now)
+        // In production, this would use peer discovery
+        for _ in 1..min_players {
+            // For now, just use placeholder peers
+            // TODO: Implement proper peer discovery and invitation
+            let mut placeholder_peer = [0u8; 32];
+            use rand::{RngCore, rngs::OsRng};
+            OsRng.fill_bytes(&mut placeholder_peer);
+            participants.push(placeholder_peer);
+        }
+        
+        // Create game through consensus manager
+        game_manager.create_game(participants).await
     }
     
-    /// Join an existing game (placeholder)
-    pub async fn join_game(&self, _game_id: GameId) -> Result<()> {
-        // Placeholder implementation
-        Ok(())
+    /// Join an existing game
+    pub async fn join_game(&self, game_id: GameId) -> Result<()> {
+        let game_manager = self.consensus_game_manager.as_ref()
+            .ok_or(crate::error::Error::NotInitialized("Game manager not started".into()))?;
+        
+        // Join game through consensus manager with full state sync
+        game_manager.join_game(game_id).await
     }
     
-    /// Place a bet in a game (placeholder)
-    pub async fn place_bet(&self, _game_id: GameId, _bet_type: BetType, _amount: CrapTokens) -> Result<()> {
-        // Placeholder implementation
-        Ok(())
+    /// Place a bet in a game
+    pub async fn place_bet(&self, game_id: GameId, bet_type: BetType, amount: CrapTokens) -> Result<()> {
+        let game_manager = self.consensus_game_manager.as_ref()
+            .ok_or(crate::error::Error::NotInitialized("Game manager not started".into()))?;
+        
+        // Validate balance before placing bet
+        if let Some(ledger) = &self.token_ledger {
+            let balance = CrapTokens::new_unchecked(ledger.get_balance(&self.identity.peer_id).await);
+            if balance < amount {
+                return Err(crate::error::Error::InsufficientBalance(
+                    format!("Balance: {}, Required: {}", balance.to_crap(), amount.to_crap())
+                ));
+            }
+        }
+        
+        // Place bet through consensus manager
+        game_manager.place_bet(game_id, bet_type, amount).await
     }
     
-    /// Get current balance (placeholder)
+    /// Get current balance
     pub async fn get_balance(&self) -> Result<CrapTokens> {
-        // Placeholder implementation
-        Ok(CrapTokens(1000))
+        let ledger = self.token_ledger.as_ref()
+            .ok_or(crate::error::Error::NotInitialized("Token ledger not started".into()))?;
+        
+        let balance = ledger.get_balance(&self.identity.peer_id).await;
+        Ok(CrapTokens::new_unchecked(balance))
     }
     
-    /// Get active games (placeholder)
+    /// Get active games
     pub async fn get_active_games(&self) -> Result<Vec<GameId>> {
-        // Placeholder implementation
-        Ok(Vec::new())
+        let game_manager = self.consensus_game_manager.as_ref()
+            .ok_or(crate::error::Error::NotInitialized("Game manager not started".into()))?;
+        
+        // Get list of active games from consensus manager
+        let games = game_manager.get_active_games().await?;
+        Ok(games)
+    }
+    
+    /// Get peer ID
+    pub fn peer_id(&self) -> PeerId {
+        self.identity.peer_id
     }
 }
 

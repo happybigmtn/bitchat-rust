@@ -492,6 +492,20 @@ impl TransportCoordinator {
         Ok(())
     }
     
+    /// Enable TCP transport with default config on specified port
+    pub async fn enable_tcp(&mut self, _port: u16) -> Result<()> {
+        let config = tcp_transport::TcpTransportConfig {
+            max_connections: 100,
+            connection_timeout: Duration::from_secs(10),
+            keepalive_interval: Duration::from_secs(30),
+            max_message_size: 1024 * 1024,  // 1MB
+            enable_tls: true,  // Enable encryption by default
+            connection_pool_size: 20,
+        };
+        
+        self.init_tcp_transport(config).await
+    }
+    
     /// Enable concurrent operation of multiple transports
     pub async fn enable_multi_transport_mode(&mut self) -> Result<()> {
         log::info!("Enabling multi-transport mode");

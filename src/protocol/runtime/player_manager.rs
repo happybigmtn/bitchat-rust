@@ -87,7 +87,7 @@ impl PlayerManager {
             .ok_or(Error::PlayerNotFound)?;
         
         if *balance < amount {
-            return Err(Error::InsufficientBalance);
+            return Err(Error::InsufficientBalance(format!("Balance: {}, Required: {}", balance, amount)));
         }
         
         *balance = balance.saturating_sub(amount);
@@ -123,7 +123,7 @@ impl PlayerManager {
         // Check available balance
         let available = self.get_available_balance(peer_id).await;
         if available < amount {
-            return Err(Error::InsufficientBalance);
+            return Err(Error::InsufficientBalance(format!("Balance: {}, Required: {}", available, amount)));
         }
         
         // Lock the funds
@@ -146,7 +146,7 @@ impl PlayerManager {
     pub async fn validate_bet(&self, peer_id: PeerId, amount: u64) -> Result<()> {
         let available = self.get_available_balance(peer_id).await;
         if available < amount {
-            return Err(Error::InsufficientBalance);
+            return Err(Error::InsufficientBalance(format!("Balance: {}, Required: {}", available, amount)));
         }
         Ok(())
     }

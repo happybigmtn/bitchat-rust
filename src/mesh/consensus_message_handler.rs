@@ -29,6 +29,8 @@ pub struct ConsensusMessageConfig {
     pub high_queue_size: usize,
     pub normal_queue_size: usize,
     pub low_queue_size: usize,
+    /// Enable encryption for consensus messages
+    pub enable_encryption: bool,
 }
 
 impl Default for ConsensusMessageConfig {
@@ -40,6 +42,7 @@ impl Default for ConsensusMessageConfig {
             high_queue_size: 500,
             normal_queue_size: 200,
             low_queue_size: 100,
+            enable_encryption: true,  // Enable encryption by default
         }
     }
 }
