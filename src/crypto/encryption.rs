@@ -26,15 +26,7 @@ impl Encryption {
     pub fn generate_keypair() -> EncryptionKeypair {
         let mut secure_rng = OsRng;
         
-        // Generate ephemeral secret and convert to static format
-        let ephemeral_secret = EphemeralSecret::random_from_rng(&mut secure_rng);
-        let public_key_point = PublicKey::from(&ephemeral_secret);
-        
-        // Extract bytes for storage
-        let public_key = public_key_point.to_bytes();
-        
-        // We need to store the private key bytes properly
-        // Generate a new random 32-byte array and use it directly with x25519 function
+        // Generate a random 32-byte private key
         let mut private_key = [0u8; 32];
         secure_rng.fill_bytes(&mut private_key);
         
@@ -43,7 +35,7 @@ impl Encryption {
         private_key[31] &= 127;
         private_key[31] |= 64;
         
-        // Derive the corresponding public key
+        // Derive the corresponding public key using the standard base point
         let public_key = x25519(private_key, [9; 32]);
         
         EncryptionKeypair {

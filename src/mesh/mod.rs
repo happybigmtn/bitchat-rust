@@ -773,6 +773,7 @@ impl MeshService {
 pub enum MeshMessageType {
     GameDiscovery,
     GameDiscoveryResponse,
+    GameAnnouncement,
     GameVerification,
     GameVerificationAck,
     GameStateSync,

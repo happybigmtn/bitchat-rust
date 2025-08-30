@@ -286,7 +286,29 @@ impl ConsensusGameManager {
             creator: self.identity.peer_id,
         });
         
-        log::info!("Created new game {:?} with {} participants", game_id, participants.len());
+        // Broadcast game creation to the mesh network for discovery
+        let game_info = GameDiscoveryInfo {
+            game_id,
+            host: self.identity.peer_id,
+            participants: participants.clone(),
+            state: "WaitingForPlayers".to_string(),
+            created_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            is_joinable: true,
+        };
+        
+        let broadcast_msg = MeshMessage {
+            message_type: MeshMessageType::GameAnnouncement,
+            payload: bincode::serialize(&game_info)?,
+            sender: self.identity.peer_id,
+            recipient: None, // Broadcast to all
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            signature: vec![],
+        };
+        
+        // Broadcast game announcement
+        self.mesh_service.broadcast_message(broadcast_msg).await?;
+        
+        log::info!("Created and broadcast new game {:?} with {} participants", game_id, participants.len());
         Ok(game_id)
     }
     
