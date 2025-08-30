@@ -35,8 +35,11 @@ impl Encryption {
         private_key[31] &= 127;
         private_key[31] |= 64;
         
-        // Derive the corresponding public key using the standard base point
-        let public_key = x25519(private_key, [9; 32]);
+        // Derive the corresponding public key using the base point
+        let public_key = x25519(private_key, [
+            9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        ]);
         
         EncryptionKeypair {
             public_key,
@@ -104,12 +107,12 @@ impl Encryption {
             .map_err(|_| "Invalid nonce")?;
         let ciphertext = &encrypted[44..];
         
-        // Perform ECDH to get shared secret (using scalar multiplication)
-        // For decryption, we need to multiply our private scalar with their ephemeral public point
-        let shared_secret_bytes = x25519(*private_key, ephemeral_public_bytes);
+        // Perform ECDH using x25519 scalar multiplication
+        // shared_secret = private_key * ephemeral_public_point
+        let shared_secret = x25519(*private_key, ephemeral_public_bytes);
         
         // Derive decryption key using HKDF
-        let hk = Hkdf::<Sha256>::new(None, &shared_secret_bytes);
+        let hk = Hkdf::<Sha256>::new(None, &shared_secret);
         let mut symmetric_key = [0u8; 32];
         hk.expand(b"BITCRAPS_ENCRYPTION_V1", &mut symmetric_key)
             .map_err(|_| "Key derivation failed")?;
@@ -134,8 +137,11 @@ impl Encryption {
         private_key[31] &= 127;
         private_key[31] |= 64;
         
-        // Derive the corresponding public key using the standard base point
-        let public_key = x25519(private_key, [9; 32]);
+        // Derive the corresponding public key using the base point
+        let public_key = x25519(private_key, [
+            9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        ]);
         
         EncryptionKeypair {
             public_key,
