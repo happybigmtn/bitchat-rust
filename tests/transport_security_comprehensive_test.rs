@@ -476,7 +476,7 @@ async fn test_keystore_backup_restore() {
 
 /// Test encrypted identity storage
 #[tokio::test]
-fn test_encrypted_identity_storage() {
+async fn test_encrypted_identity_storage() {
     let storage = EncryptedIdentityStorage::new();
     let identity = BitchatIdentity::generate_with_pow(8);
     let password = b"identity_encryption_password_123";

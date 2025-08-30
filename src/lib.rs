@@ -23,6 +23,7 @@ pub mod validation;
 pub mod logging;      // Production logging and observability
 pub mod resilience;   // Network resilience and fault tolerance
 pub mod keystore;     // Secure key management
+pub mod memory_pool;  // Memory pooling for performance optimization
 pub mod protocol;     // Core protocol and binary serialization
 pub mod crypto;       // Cryptographic foundations
 pub mod transport;    // Network transport layer (Bluetooth mesh)
@@ -45,6 +46,7 @@ pub mod economics;    // Advanced token economics and supply management
 pub mod treasury;     // Treasury management and automated market making
 pub mod contracts;    // Smart contract integration and cross-chain bridges
 pub mod app;          // Main application coordinator
+pub mod security;     // Security hardening and input validation
 
 // UniFFI type tag (required by generated code)
 #[cfg(feature = "uniffi")]
@@ -105,6 +107,10 @@ pub use treasury::{
 };
 pub use contracts::{
     ContractManager, BlockchainNetwork, TokenContract, StakingContract, BridgeContract,
+};
+pub use security::{
+    SecurityManager, SecurityConfig, SecurityLimits, InputValidator, RateLimiter, 
+    DosProtection, SecurityEventLogger, SecurityEvent, SecurityLevel,
 };
 
 /// Application configuration

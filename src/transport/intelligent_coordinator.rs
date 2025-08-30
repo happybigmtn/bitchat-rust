@@ -412,30 +412,27 @@ impl IntelligentTransportCoordinator {
         let transport_id = self.select_optimal_transport(peer_id, priority).await?;
         
         // Attempt to send
-        let result = {
+        let send_success = {
             let mut transports = self.transports.write().await;
             if let Some(transport) = transports.get_mut(&transport_id) {
-                transport.transport.send(peer_id, data.clone()).await
+                transport.transport.send(peer_id, data.clone()).await.is_ok()
             } else {
                 return Err(Error::Network(format!("Transport not found: {}", transport_id)));
             }
         };
         
-        match result {
-            Ok(_) => {
-                // Update metrics
-                self.update_transport_success(&transport_id, peer_id).await;
-                Ok(())
-            }
-            Err(e) => {
-                // Update metrics and attempt failover
-                self.update_transport_failure(&transport_id, peer_id).await;
-                
-                if self.config.enable_adaptive_routing {
-                    self.attempt_failover_send(peer_id, data, priority).await
-                } else {
-                    Err(Error::Network(format!("Send failed: {}", e)))
-                }
+        if send_success {
+            // Update metrics
+            self.update_transport_success(&transport_id, peer_id).await;
+            Ok(())
+        } else {
+            // Update metrics and attempt failover
+            self.update_transport_failure(&transport_id, peer_id).await;
+            
+            if self.config.enable_adaptive_routing {
+                self.attempt_failover_send(peer_id, data, priority).await
+            } else {
+                Err(Error::Network("Send failed".to_string()))
             }
         }
     }
@@ -447,11 +444,11 @@ impl IntelligentTransportCoordinator {
         let transport_ids = peer_connections.get(&peer_id).cloned().unwrap_or_default();
         
         for transport_id in transport_ids {
-            let result = {
+            let send_success = {
                 let mut transports = self.transports.write().await;
                 if let Some(transport) = transports.get_mut(&transport_id) {
                     if transport.health_status != TransportHealth::Failed {
-                        transport.transport.send(peer_id, data.clone()).await
+                        transport.transport.send(peer_id, data.clone()).await.is_ok()
                     } else {
                         continue;
                     }
@@ -460,7 +457,7 @@ impl IntelligentTransportCoordinator {
                 }
             };
             
-            if result.is_ok() {
+            if send_success {
                 // Update routing table to prefer this transport
                 {
                     let mut routing_table = self.routing_table.write().await;

@@ -13,6 +13,7 @@ pub mod optimized_binary;
 pub mod craps;
 pub mod runtime;
 pub mod compact_state;
+pub mod zero_copy;
 
 // New refactored modules
 pub mod bet_types;
@@ -140,6 +141,12 @@ pub enum BetType {
     Hard8,
     Hard10,
     
+    // Place bets (parameterized by number)
+    Place(u8),
+    
+    // Hard way bets (parameterized by number)
+    HardWay(u8),
+    
     // Next roll (hop) bets
     Next2,
     Next3,
@@ -152,6 +159,11 @@ pub enum BetType {
     Next10,
     Next11,
     Next12,
+    
+    // Single roll proposition bets
+    Ace,       // 2 (snake eyes)
+    Eleven,    // 11 (yo)
+    Twelve,    // 12 (boxcars)
     
     // Yes bets (rolling number before 7)
     Yes2,
@@ -200,6 +212,113 @@ pub enum BetType {
     Muggsy,
     Replay,
     DifferentDoubles,
+}
+
+impl BetType {
+    /// Convert BetType to a unique numeric identifier for serialization
+    /// Parameterized variants encode the parameter in the upper bits
+    pub fn to_u8(&self) -> u8 {
+        match self {
+            // Basic line bets (0-3)
+            BetType::Pass => 0,
+            BetType::DontPass => 1,
+            BetType::Come => 2,
+            BetType::DontCome => 3,
+            
+            // Odds bets (4-7)
+            BetType::OddsPass => 4,
+            BetType::OddsDontPass => 5,
+            BetType::OddsCome => 6,
+            BetType::OddsDontCome => 7,
+            
+            // Field bet (8)
+            BetType::Field => 8,
+            
+            // Hard way bets (9-12)
+            BetType::Hard4 => 9,
+            BetType::Hard6 => 10,
+            BetType::Hard8 => 11,
+            BetType::Hard10 => 12,
+            
+            // Parameterized variants (13-14)
+            BetType::Place(num) => 13 | ((*num & 0x0F) << 4), // encode number in upper 4 bits
+            BetType::HardWay(num) => 14 | ((*num & 0x0F) << 4),
+            
+            // Next roll bets (15-26)
+            BetType::Next2 => 15,
+            BetType::Next3 => 16,
+            BetType::Next4 => 17,
+            BetType::Next5 => 18,
+            BetType::Next6 => 19,
+            BetType::Next7 => 20,
+            BetType::Next8 => 21,
+            BetType::Next9 => 22,
+            BetType::Next10 => 23,
+            BetType::Next11 => 24,
+            BetType::Next12 => 25,
+            
+            // Single roll proposition bets (26-28)
+            BetType::Ace => 26,
+            BetType::Eleven => 27,
+            BetType::Twelve => 28,
+            
+            // Yes bets (29-39)
+            BetType::Yes2 => 29,
+            BetType::Yes3 => 30,
+            BetType::Yes4 => 31,
+            BetType::Yes5 => 32,
+            BetType::Yes6 => 33,
+            BetType::Yes8 => 34,
+            BetType::Yes9 => 35,
+            BetType::Yes10 => 36,
+            BetType::Yes11 => 37,
+            BetType::Yes12 => 38,
+            
+            // No bets (39-49)
+            BetType::No2 => 39,
+            BetType::No3 => 40,
+            BetType::No4 => 41,
+            BetType::No5 => 42,
+            BetType::No6 => 43,
+            BetType::No8 => 44,
+            BetType::No9 => 45,
+            BetType::No10 => 46,
+            BetType::No11 => 47,
+            BetType::No12 => 48,
+            
+            // Repeater bets (49-60)
+            BetType::Repeater2 => 49,
+            BetType::Repeater3 => 50,
+            BetType::Repeater4 => 51,
+            BetType::Repeater5 => 52,
+            BetType::Repeater6 => 53,
+            BetType::Repeater8 => 54,
+            BetType::Repeater9 => 55,
+            BetType::Repeater10 => 56,
+            BetType::Repeater11 => 57,
+            BetType::Repeater12 => 58,
+            
+            // Special bets (61-73)
+            BetType::Fire => 61,
+            BetType::BonusSmall => 62,
+            BetType::BonusTall => 63,
+            BetType::BonusAll => 64,
+            BetType::HotRoller => 65,
+            BetType::TwiceHard => 66,
+            BetType::RideLine => 67,
+            BetType::Muggsy => 68,
+            BetType::Replay => 69,
+            BetType::DifferentDoubles => 70,
+        }
+    }
+    
+    pub fn to_u64(&self) -> u64 {
+        self.to_u8() as u64
+    }
+    
+    pub fn to_usize(&self) -> usize {
+        self.to_u8() as usize
+    }
 }
 
 /// A bet placed by a player
@@ -256,6 +375,22 @@ pub const MAX_BET_AMOUNT: u64 = 10_000_000;
 
 /// Peer identifier - 32 bytes for Ed25519 public key compatibility
 pub type PeerId = [u8; 32];
+
+/// Trait to add methods to PeerId type
+pub trait PeerIdExt {
+    fn random() -> Self;
+}
+
+impl PeerIdExt for PeerId {
+    /// Generate a random peer ID for testing
+    fn random() -> Self {
+        use rand::{RngCore, rngs::OsRng};
+        let mut rng = OsRng;
+        let mut peer_id = [0u8; 32];
+        rng.fill_bytes(&mut peer_id);
+        peer_id
+    }
+}
 
 /// Utility functions for PeerId
 pub mod peer_id {
@@ -687,6 +822,40 @@ impl std::ops::Sub for CrapTokens {
 impl std::ops::SubAssign for CrapTokens {
     fn sub_assign(&mut self, other: Self) {
         self.0 -= other.0;
+    }
+}
+
+// Multiplication with integers for payout calculations
+impl std::ops::Mul<u64> for CrapTokens {
+    type Output = Self;
+    
+    fn mul(self, rhs: u64) -> Self {
+        Self(self.0 * rhs)
+    }
+}
+
+impl std::ops::Mul<i32> for CrapTokens {
+    type Output = Self;
+    
+    fn mul(self, rhs: i32) -> Self {
+        Self(self.0 * rhs as u64)
+    }
+}
+
+// Division with integers for split calculations
+impl std::ops::Div<u64> for CrapTokens {
+    type Output = Self;
+    
+    fn div(self, rhs: u64) -> Self {
+        Self(self.0 / rhs)
+    }
+}
+
+impl std::ops::Div<i32> for CrapTokens {
+    type Output = Self;
+    
+    fn div(self, rhs: i32) -> Self {
+        Self(self.0 / rhs as u64)
     }
 }
 

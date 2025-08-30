@@ -85,6 +85,10 @@ impl ManagedBuffer {
             });
         }
         
+        // SAFETY INVARIANTS:
+        // 1. self.data must point to valid memory of at least self.length bytes
+        // 2. Memory must remain valid for the lifetime of the returned slice
+        // 3. No mutable aliasing - caller must not modify buffer while slice exists
         let slice = unsafe { slice::from_raw_parts(self.data, self.length) };
         Ok(slice)
     }
@@ -103,6 +107,10 @@ impl ManagedBuffer {
             });
         }
         
+        // SAFETY INVARIANTS:
+        // 1. self.data must point to valid, mutable memory of at least self.length bytes
+        // 2. Memory must remain valid and not be accessed by other threads during slice lifetime
+        // 3. owned_by_rust guarantees we have exclusive access to this memory
         let slice = unsafe { slice::from_raw_parts_mut(self.data, self.length) };
         Ok(slice)
     }
@@ -129,7 +137,11 @@ impl ManagedBuffer {
 impl Drop for ManagedBuffer {
     fn drop(&mut self) {
         if self.owned_by_rust && !self.data.is_null() {
-            // Reconstruct the Box to properly deallocate
+            // SAFETY INVARIANTS for Box reconstruction:
+            // 1. self.data must be the original pointer from Box::into_raw or similar
+            // 2. self.capacity must match the original allocation size
+            // 3. Memory must not have been freed elsewhere
+            // 4. No other references to this memory must exist
             let boxed_slice = unsafe {
                 Box::from_raw(slice::from_raw_parts_mut(self.data, self.capacity))
             };
@@ -432,6 +444,7 @@ pub extern "C" fn ios_free_event_data(event_ptr: *mut IosEventData) {
 }
 
 /// Validate a memory pointer and size (for debugging)
+/// SECURITY NOTE: This function has been made safe by removing arbitrary memory access
 #[no_mangle]
 pub extern "C" fn ios_validate_memory(ptr: *const c_void, size: usize) -> i32 {
     if ptr.is_null() || size == 0 {
@@ -439,14 +452,44 @@ pub extern "C" fn ios_validate_memory(ptr: *const c_void, size: usize) -> i32 {
         return 0;
     }
     
-    // Basic validation - check if we can read the first and last byte
-    unsafe {
-        let byte_ptr = ptr as *const u8;
-        let _first_byte = *byte_ptr;
-        let _last_byte = *byte_ptr.add(size - 1);
+    // SECURITY: Removed unsafe memory access that could crash or expose memory
+    // We can only perform basic pointer validation without dereferencing
+    
+    // Check for obviously invalid pointers (basic heuristics)
+    let ptr_addr = ptr as usize;
+    
+    // Check alignment for common pointer types (heuristic)
+    if ptr_addr % std::mem::align_of::<*const c_void>() != 0 {
+        warn!("Memory validation failed: unaligned pointer {:p}", ptr);
+        return 0;
     }
     
-    debug!("Memory validation passed: ptr={:?}, size={}", ptr, size);
+    // Check for obviously invalid address ranges (platform-specific heuristics)
+    #[cfg(target_pointer_width = "64")]
+    {
+        // On 64-bit systems, valid user space is typically limited
+        if ptr_addr < 0x1000 || ptr_addr > 0x7FFF_FFFF_FFFF {
+            warn!("Memory validation failed: suspicious address range {:p}", ptr);
+            return 0;
+        }
+    }
+    
+    #[cfg(target_pointer_width = "32")]
+    {
+        // On 32-bit systems, check basic range
+        if ptr_addr < 0x1000 || ptr_addr > 0xFFFF_0000 {
+            warn!("Memory validation failed: suspicious address range {:p}", ptr);
+            return 0;
+        }
+    }
+    
+    // Check for size overflow
+    if ptr_addr.saturating_add(size) < ptr_addr {
+        warn!("Memory validation failed: size causes address overflow");
+        return 0;
+    }
+    
+    debug!("Memory validation passed: ptr={:p}, size={}", ptr, size);
     1
 }
 

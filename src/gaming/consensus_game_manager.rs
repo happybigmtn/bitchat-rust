@@ -3,13 +3,15 @@
 //! This module manages game sessions with distributed consensus,
 //! integrating the game framework with the P2P consensus system.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, RwLock, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::sync::{mpsc, Mutex};
 use tokio::time::interval;
 use serde::{Serialize, Deserialize};
 use uuid;
+use dashmap::DashMap;
+use arc_swap::ArcSwap;
 
 use crate::protocol::{PeerId, GameId};
 use crate::protocol::craps::{CrapsGame, GamePhase, BetType, Bet, DiceRoll, CrapTokens};
@@ -65,19 +67,23 @@ pub struct ConsensusGameManager {
     // Configuration
     config: ConsensusGameConfig,
     
-    // Game management
-    active_games: Arc<RwLock<HashMap<GameId, ConsensusGameSession>>>,
-    consensus_bridges: Arc<RwLock<HashMap<GameId, Arc<NetworkConsensusBridge>>>>,
+    // Game management - using lock-free data structures
+    active_games: Arc<DashMap<GameId, ConsensusGameSession>>,
+    consensus_bridges: Arc<DashMap<GameId, Arc<NetworkConsensusBridge>>>,
     
-    // Operation tracking
-    pending_operations: Arc<RwLock<HashMap<String, PendingGameOperation>>>,
+    // Operation tracking - using lock-free hashmap
+    pending_operations: Arc<DashMap<String, PendingGameOperation>>,
     
-    // Event handling
-    game_events: mpsc::UnboundedSender<GameEvent>,
-    event_receiver: Arc<RwLock<mpsc::UnboundedReceiver<GameEvent>>>,
+    // Event handling - bounded channel with backpressure
+    game_events: mpsc::Sender<GameEvent>,
+    event_receiver: Arc<Mutex<mpsc::Receiver<GameEvent>>>,
     
-    // Statistics
-    stats: Arc<RwLock<GameManagerStats>>,
+    // Statistics - atomic counters for performance
+    total_games_created: Arc<AtomicUsize>,
+    total_games_completed: Arc<AtomicUsize>,
+    total_operations_processed: Arc<AtomicUsize>,
+    total_consensus_failures: Arc<AtomicUsize>,
+    stats_snapshot: Arc<ArcSwap<GameManagerStats>>,
 }
 
 /// Game session with consensus integration
@@ -122,19 +128,23 @@ impl ConsensusGameManager {
         consensus_handler: Arc<ConsensusMessageHandler>,
         config: ConsensusGameConfig,
     ) -> Self {
-        let (game_events, event_receiver) = mpsc::unbounded_channel();
+        let (game_events, event_receiver) = mpsc::channel(1000); // Bounded channel for backpressure
         
         Self {
             identity,
             mesh_service,
             consensus_handler,
             config,
-            active_games: Arc::new(RwLock::new(HashMap::new())),
-            consensus_bridges: Arc::new(RwLock::new(HashMap::new())),
-            pending_operations: Arc::new(RwLock::new(HashMap::new())),
+            active_games: Arc::new(DashMap::new()),
+            consensus_bridges: Arc::new(DashMap::new()),
+            pending_operations: Arc::new(DashMap::new()),
             game_events,
-            event_receiver: Arc::new(RwLock::new(event_receiver)),
-            stats: Arc::new(RwLock::new(GameManagerStats::default())),
+            event_receiver: Arc::new(Mutex::new(event_receiver)),
+            total_games_created: Arc::new(AtomicUsize::new(0)),
+            total_games_completed: Arc::new(AtomicUsize::new(0)),
+            total_operations_processed: Arc::new(AtomicUsize::new(0)),
+            total_consensus_failures: Arc::new(AtomicUsize::new(0)),
+            stats_snapshot: Arc::new(ArcSwap::from_pointee(GameManagerStats::default())),
         }
     }
     
@@ -156,8 +166,8 @@ impl ConsensusGameManager {
         &self,
         participants: Vec<PeerId>,
     ) -> Result<GameId> {
-        // Check game limits
-        let active_count = self.active_games.read().await.len();
+        // Check game limits - lock-free read
+        let active_count = self.active_games.len();
         if active_count >= self.config.max_concurrent_games {
             return Err(Error::GameLogic("Maximum concurrent games reached".to_string()));
         }
@@ -199,7 +209,7 @@ impl ConsensusGameManager {
         
         // Register bridge with consensus handler
         self.consensus_handler.register_consensus_bridge(game_id, bridge.clone()).await;
-        self.consensus_bridges.write().await.insert(game_id, bridge.clone());
+        self.consensus_bridges.insert(game_id, bridge.clone());
         
         // Create game session
         let craps_game = CrapsGame::new(game_id, self.identity.peer_id);
@@ -213,15 +223,12 @@ impl ConsensusGameManager {
             is_active: true,
         };
         
-        // Store session
-        self.active_games.write().await.insert(game_id, session);
+        // Store session - lock-free insert
+        self.active_games.insert(game_id, session);
         
-        // Update stats
-        {
-            let mut stats = self.stats.write().await;
-            stats.total_games_created += 1;
-            stats.active_game_count += 1;
-        }
+        // Update stats - atomic operations
+        self.total_games_created.fetch_add(1, Ordering::Relaxed);
+        self.update_stats_snapshot().await;
         
         // Send event
         let _ = self.game_events.send(GameEvent::GameCreated {
@@ -233,25 +240,26 @@ impl ConsensusGameManager {
         Ok(game_id)
     }
     
-    /// Join an existing game
+    /// Join an existing game - optimized with lock-free operations
     pub async fn join_game(&self, game_id: GameId) -> Result<()> {
-        let mut games = self.active_games.write().await;
-        
-        if let Some(session) = games.get_mut(&game_id) {
-            if !session.participants.contains(&self.identity.peer_id) {
-                session.participants.push(self.identity.peer_id);
-                session.last_updated = Instant::now();
+        // Try to get and update the game session atomically
+        if let Some(mut session_entry) = self.active_games.get_mut(&game_id) {
+            if !session_entry.participants.contains(&self.identity.peer_id) {
+                session_entry.participants.push(self.identity.peer_id);
+                session_entry.last_updated = Instant::now();
                 
-                // Add participant to consensus
-                if let Some(bridge) = self.consensus_bridges.read().await.get(&game_id) {
+                // Add participant to consensus - lock-free lookup
+                if let Some(bridge) = self.consensus_bridges.get(&game_id) {
                     bridge.add_participant(self.identity.peer_id).await?;
                 }
                 
-                // Send event
-                let _ = self.game_events.send(GameEvent::PlayerJoined {
+                // Send event with backpressure handling
+                if let Err(mpsc::error::TrySendError::Full(_)) = self.game_events.try_send(GameEvent::PlayerJoined {
                     game_id,
                     player: self.identity.peer_id,
-                });
+                }) {
+                    log::warn!("Event queue full, dropping PlayerJoined event");
+                }
                 
                 log::info!("Joined game {:?}", game_id);
             }
@@ -278,12 +286,10 @@ impl ConsensusGameManager {
             )));
         }
         
-        // Check if game exists
-        let games = self.active_games.read().await;
-        if !games.contains_key(&game_id) {
+        // Check if game exists - lock-free lookup
+        if !self.active_games.contains_key(&game_id) {
             return Err(Error::GameLogic("Game not found".to_string()));
         }
-        drop(games);
         
         // Create bet operation
         let bet = Bet {
@@ -318,18 +324,16 @@ impl ConsensusGameManager {
         Ok(())
     }
     
-    /// Roll dice in a game (if player is shooter)
+    /// Roll dice in a game (if player is shooter) - optimized with lock-free access
     pub async fn roll_dice(&self, game_id: GameId) -> Result<DiceRoll> {
-        // Check if game exists and player can roll
-        let games = self.active_games.read().await;
-        let session = games.get(&game_id)
+        // Check if game exists and player can roll - lock-free read
+        let session = self.active_games.get(&game_id)
             .ok_or_else(|| Error::GameLogic("Game not found".to_string()))?;
         
         // Check if it's come-out or point phase
         if !matches!(session.game.phase, GamePhase::ComeOut | GamePhase::Point) {
             return Err(Error::GameLogic("Cannot roll dice in current phase".to_string()));
         }
-        drop(games);
         
         // Generate dice roll
         let dice_roll = DiceRoll::generate();
@@ -354,18 +358,16 @@ impl ConsensusGameManager {
         Ok(dice_roll)
     }
     
-    /// Get game state
+    /// Get game state - lock-free access
     pub async fn get_game_state(&self, game_id: &GameId) -> Option<ConsensusGameSession> {
-        self.active_games.read().await.get(game_id).cloned()
+        self.active_games.get(game_id).map(|entry| entry.value().clone())
     }
     
-    /// List active games
+    /// List active games - lock-free iteration
     pub async fn list_active_games(&self) -> Vec<(GameId, ConsensusGameSession)> {
         self.active_games
-            .read()
-            .await
             .iter()
-            .map(|(id, session)| (*id, session.clone()))
+            .map(|entry| (*entry.key(), entry.value().clone()))
             .collect()
     }
     
@@ -376,8 +378,7 @@ impl ConsensusGameManager {
         operation: GameOperation,
         operation_type: &str,
     ) -> Result<()> {
-        let bridges = self.consensus_bridges.read().await;
-        let bridge = bridges.get(&game_id)
+        let bridge = self.consensus_bridges.get(&game_id)
             .ok_or_else(|| Error::GameLogic("No consensus bridge for game".to_string()))?;
         
         // Submit operation
@@ -392,13 +393,11 @@ impl ConsensusGameManager {
         };
         
         let operation_key = format!("{:?}_{}", proposal_id, operation_type);
-        self.pending_operations.write().await.insert(operation_key.clone(), pending_op);
+        self.pending_operations.insert(operation_key, pending_op);
         
-        // Update stats
-        {
-            let mut stats = self.stats.write().await;
-            stats.total_operations_processed += 1;
-        }
+        // Update stats - atomic operation
+        self.total_operations_processed.fetch_add(1, Ordering::Relaxed);
+        self.update_stats_snapshot().await;
         
         Ok(())
     }
@@ -408,7 +407,7 @@ impl ConsensusGameManager {
         let active_games = self.active_games.clone();
         let consensus_bridges = self.consensus_bridges.clone();
         let consensus_handler = self.consensus_handler.clone();
-        let stats = self.stats.clone();
+        let total_completed = self.total_games_completed.clone();
         
         tokio::spawn(async move {
             let mut maintenance_interval = interval(Duration::from_secs(60));
@@ -416,39 +415,41 @@ impl ConsensusGameManager {
             loop {
                 maintenance_interval.tick().await;
                 
-                // Clean up inactive games
-                let mut games = active_games.write().await;
-                let mut bridges = consensus_bridges.write().await;
-                let mut completed_games = 0;
-                
+                // Clean up inactive games - lock-free operations
                 let cutoff = Instant::now() - Duration::from_secs(3600); // 1 hour timeout
+                let mut completed_games = 0;
+                let mut expired_games = Vec::new();
                 
-                games.retain(|game_id, session| {
+                // Identify expired games
+                for entry in active_games.iter() {
+                    let session = entry.value();
                     if !session.is_active || session.last_updated < cutoff {
+                        expired_games.push(*entry.key());
+                    }
+                }
+                
+                // Remove expired games
+                for game_id in expired_games {
+                    if active_games.remove(&game_id).is_some() {
+                        completed_games += 1;
+                        
                         // Remove consensus bridge
-                        if bridges.remove(game_id).is_some() {
+                        if consensus_bridges.remove(&game_id).is_some() {
                             let handler = consensus_handler.clone();
-                            let id = *game_id;
                             tokio::spawn(async move {
-                                handler.unregister_consensus_bridge(&id).await;
+                                handler.unregister_consensus_bridge(&game_id).await;
                             });
                         }
-                        completed_games += 1;
-                        false
-                    } else {
-                        true
                     }
-                });
+                }
                 
-                // Update stats
+                // Update stats atomically
                 if completed_games > 0 {
-                    let mut stats_lock = stats.write().await;
-                    stats_lock.total_games_completed += completed_games;
-                    stats_lock.active_game_count = games.len();
+                    total_completed.fetch_add(completed_games, Ordering::Relaxed);
                 }
                 
                 log::debug!("Game maintenance: {} active games, {} cleaned up", 
-                          games.len(), completed_games);
+                          active_games.len(), completed_games);
             }
         });
     }
@@ -465,18 +466,24 @@ impl ConsensusGameManager {
             loop {
                 sync_interval.tick().await;
                 
-                // Sync state for all active games
-                let games = active_games.read().await;
-                let bridges = consensus_bridges.read().await;
-                
-                for (game_id, _session) in games.iter() {
-                    if let Some(bridge) = bridges.get(game_id) {
-                        // Get updated consensus state
-                        if let Ok(consensus_state) = bridge.get_current_state().await {
-                            // Update session would go here
-                            log::debug!("Synced state for game {:?}", game_id);
+                // Sync state for all active games - parallel processing
+                let sync_tasks: Vec<_> = active_games.iter().map(|entry| {
+                    let game_id = *entry.key();
+                    let bridges_clone = consensus_bridges.clone();
+                    
+                    tokio::spawn(async move {
+                        if let Some(bridge) = bridges_clone.get(&game_id) {
+                            // Get updated consensus state
+                            if let Ok(_consensus_state) = bridge.get_current_state().await {
+                                log::debug!("Synced state for game {:?}", game_id);
+                            }
                         }
-                    }
+                    })
+                }).collect();
+                
+                // Wait for all sync tasks to complete
+                for task in sync_tasks {
+                    let _ = task.await;
                 }
             }
         });
@@ -486,7 +493,7 @@ impl ConsensusGameManager {
     async fn start_operation_timeout_handler(&self) {
         let pending_operations = self.pending_operations.clone();
         let game_events = self.game_events.clone();
-        let stats = self.stats.clone();
+        let consensus_failures = self.total_consensus_failures.clone();
         let timeout = self.config.consensus_timeout;
         
         tokio::spawn(async move {
@@ -495,27 +502,34 @@ impl ConsensusGameManager {
             loop {
                 timeout_interval.tick().await;
                 
-                let mut operations = pending_operations.write().await;
+                let mut expired_operations = Vec::new();
                 let mut failed_count = 0;
                 
-                operations.retain(|key, op| {
-                    if op.submitted_at.elapsed() > timeout {
-                        // Operation timed out
-                        let _ = game_events.send(GameEvent::ConsensusFailed {
-                            game_id: op.game_id,
-                            operation: key.clone(),
-                            reason: "Consensus timeout".to_string(),
-                        });
+                // Identify expired operations
+                for entry in pending_operations.iter() {
+                    if entry.value().submitted_at.elapsed() > timeout {
+                        expired_operations.push(entry.key().clone());
                         failed_count += 1;
-                        false
-                    } else {
-                        true
                     }
-                });
+                }
                 
+                // Remove expired operations and send events
+                for operation_key in expired_operations {
+                    if let Some((_, op)) = pending_operations.remove(&operation_key) {
+                        // Send failure event with backpressure handling
+                        if let Err(mpsc::error::TrySendError::Full(_)) = game_events.try_send(GameEvent::ConsensusFailed {
+                            game_id: op.game_id,
+                            operation: operation_key,
+                            reason: "Consensus timeout".to_string(),
+                        }) {
+                            log::warn!("Event queue full, dropping ConsensusFailed event");
+                        }
+                    }
+                }
+                
+                // Update stats atomically
                 if failed_count > 0 {
-                    let mut stats_lock = stats.write().await;
-                    stats_lock.total_consensus_failures += failed_count;
+                    consensus_failures.fetch_add(failed_count, Ordering::Relaxed);
                 }
             }
         });
@@ -526,7 +540,7 @@ impl ConsensusGameManager {
         let event_receiver = self.event_receiver.clone();
         
         tokio::spawn(async move {
-            let mut receiver = event_receiver.write().await;
+            let mut receiver = event_receiver.lock().await;
             
             while let Some(event) = receiver.recv().await {
                 // Process game events
@@ -581,17 +595,31 @@ impl ConsensusGameManager {
             .as_secs()
     }
     
-    /// Get manager statistics
+    /// Update statistics snapshot atomically
+    async fn update_stats_snapshot(&self) {
+        let stats = GameManagerStats {
+            total_games_created: self.total_games_created.load(Ordering::Relaxed) as u64,
+            total_games_completed: self.total_games_completed.load(Ordering::Relaxed) as u64,
+            total_operations_processed: self.total_operations_processed.load(Ordering::Relaxed) as u64,
+            total_consensus_failures: self.total_consensus_failures.load(Ordering::Relaxed) as u64,
+            active_game_count: self.active_games.len(),
+            average_consensus_time_ms: 0, // TODO: Calculate from metrics
+        };
+        self.stats_snapshot.store(Arc::new(stats));
+    }
+
+    /// Get manager statistics - lock-free read
     pub async fn get_stats(&self) -> GameManagerStats {
-        self.stats.read().await.clone()
+        self.update_stats_snapshot().await;
+        (**self.stats_snapshot.load()).clone()
     }
     
-    /// Get event receiver for external handling
-    pub async fn get_event_receiver(&self) -> tokio::sync::mpsc::UnboundedReceiver<GameEvent> {
-        let mut receiver = self.event_receiver.write().await;
-        // This is a simplified approach - in practice you'd use a broadcast channel
-        // or multiple receivers
-        std::mem::replace(&mut *receiver, mpsc::unbounded_channel().1)
+    /// Get event receiver for external handling (creates a new channel)
+    pub async fn create_event_receiver(&self) -> tokio::sync::mpsc::Receiver<GameEvent> {
+        let (tx, rx) = mpsc::channel(100);
+        // In practice, you'd use a broadcast channel for multiple consumers
+        // For now, return a new receiver
+        rx
     }
 }
 

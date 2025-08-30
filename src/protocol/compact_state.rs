@@ -348,7 +348,7 @@ impl CompactBet {
     /// Create compact bet from full bet
     pub fn from_bet(bet: &super::Bet, game_start_time: u64) -> Self {
         let player_hash = Self::hash_peer_id(&bet.player);
-        let bet_type_flags = (bet.bet_type as u8) & 0x3F; // 6 bits for bet type
+        let bet_type_flags = bet.bet_type.to_u8() & 0x3F; // 6 bits for bet type
         let timestamp_delta = ((bet.timestamp.saturating_sub(game_start_time)) / 1000).min(65535) as u16;
         
         Self {

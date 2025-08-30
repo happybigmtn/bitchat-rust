@@ -12,7 +12,7 @@ use super::{AndroidBleManager, AndroidPeerInfo};
 #[cfg(target_os = "android")]
 use jni::JNIEnv;
 #[cfg(target_os = "android")]
-use jni::objects::{JClass, JString, JObject, JByteArray, JIntArray, GlobalRef};
+use jni::objects::{JClass, JString, JObject, JByteArray, JIntArray, GlobalRef, JValue};
 #[cfg(target_os = "android")]
 use jni::sys::{jlong, jstring, jboolean, jint, jbyteArray, jintArray, jobject};
 #[cfg(target_os = "android")]
@@ -211,7 +211,8 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_initializeBleManager(
         }
     };
 
-    // Convert raw pointer back to JavaVM safely
+    // SECURITY: Validate JavaVM pointer before dereferencing
+    // This is a critical safety check to prevent memory corruption
     let java_vm = if java_vm_ptr == 0 {
         log::error!("JavaVM pointer is null");
         jni_helpers::throw_exception(&env, &BitCrapsError::BluetoothError {
@@ -219,8 +220,32 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_initializeBleManager(
         });
         return false as jboolean;
     } else {
+        // SAFETY INVARIANTS:
+        // 1. java_vm_ptr must be a valid JavaVM pointer from JNI_GetJavaVM
+        // 2. The JavaVM must remain alive for the duration of this function
+        // 3. The pointer must be properly aligned for jni::sys::JavaVM
         unsafe {
+            // Additional safety checks
+            if java_vm_ptr as usize % std::mem::align_of::<jni::sys::JavaVM>() != 0 {
+                log::error!("JavaVM pointer is not properly aligned: 0x{:x}", java_vm_ptr);
+                jni_helpers::throw_exception(&env, &BitCrapsError::BluetoothError {
+                    message: "JavaVM pointer is not properly aligned".to_string(),
+                });
+                return false as jboolean;
+            }
+
             let vm_ptr = java_vm_ptr as *mut jni::sys::JavaVM;
+            
+            // Verify pointer is not dangling by checking if it's in a reasonable range
+            // This is a heuristic check - not foolproof but catches obvious invalid pointers
+            if vm_ptr as usize < 0x1000 || vm_ptr as usize > usize::MAX - 0x1000 {
+                log::error!("JavaVM pointer appears invalid: {:p}", vm_ptr);
+                jni_helpers::throw_exception(&env, &BitCrapsError::BluetoothError {
+                    message: "JavaVM pointer appears to be invalid".to_string(),
+                });
+                return false as jboolean;
+            }
+            
             match JavaVM::from_raw(vm_ptr) {
                 Ok(vm) => vm,
                 Err(e) => {

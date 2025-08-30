@@ -95,13 +95,14 @@ impl LockFreeConsensusEngine {
             // Load current state
             let current_shared = self.current_state.load(Ordering::Acquire, guard);
             
-            // Safety check
-            if current_shared.is_null() {
-                return Err(crate::error::Error::InvalidState("Null state pointer".to_string()));
-            }
-            
-            // Get safe reference to current state
-            let current = unsafe { current_shared.deref() };
+            // SAFETY: Use crossbeam epoch guard to safely dereference
+            // The epoch-based protection ensures the memory remains valid
+            let current = match unsafe { current_shared.as_ref() } {
+                Some(state) => state,
+                None => {
+                    return Err(crate::error::Error::InvalidState("Null state pointer".to_string()));
+                }
+            };
             
             // Create new state based on current
             let mut new_state = current.state.clone();
@@ -135,7 +136,9 @@ impl LockFreeConsensusEngine {
                     let latency = start_time.elapsed().as_nanos() as u64;
                     self.metrics.consensus_latency_ns.store(latency, Ordering::Relaxed);
                     
-                    // Defer cleanup of old state
+                    // SAFETY: Defer cleanup of old state using crossbeam epoch
+                    // current_shared was obtained from atomic load and is valid
+                    // Epoch-based deferred destruction ensures no use-after-free
                     unsafe {
                         guard.defer_destroy(current_shared);
                     }
@@ -200,12 +203,13 @@ impl LockFreeConsensusEngine {
         let guard = &epoch::pin();
         let current = self.current_state.load(Ordering::Acquire, guard);
         
-        if current.is_null() {
-            return Err(crate::error::Error::InvalidState("Null state pointer".to_string()));
-        }
-        
-        // Safe to deref as we hold the guard
-        let snapshot = unsafe { current.deref() };
+        // SAFETY: Use crossbeam epoch guard to safely dereference
+        let snapshot = match unsafe { current.as_ref() } {
+            Some(state) => state,
+            None => {
+                return Err(crate::error::Error::InvalidState("Null state pointer".to_string()));
+            }
+        };
         Ok(snapshot.clone())
     }
     
@@ -246,11 +250,11 @@ impl LockFreeConsensusEngine {
         let guard = &epoch::pin();
         let current = self.current_state.load(Ordering::Acquire, guard);
         
-        if current.is_null() {
-            return false;
-        }
-        
-        let snapshot = unsafe { current.deref() };
+        // SAFETY: Use crossbeam epoch guard to safely dereference
+        let snapshot = match unsafe { current.as_ref() } {
+            Some(state) => state,
+            None => return false,
+        };
         
         // Simple validation: current state must match from_state
         snapshot.state.state_hash == *from_state
@@ -268,11 +272,13 @@ impl LockFreeConsensusEngine {
             // Load current state
             let current_shared = self.current_state.load(Ordering::Acquire, guard);
             
-            if current_shared.is_null() {
-                return Err(crate::error::Error::InvalidState("Null state pointer".to_string()));
-            }
-            
-            let current = unsafe { current_shared.deref() };
+            // SAFETY: Use crossbeam epoch guard to safely dereference
+            let current = match unsafe { current_shared.as_ref() } {
+                Some(state) => state,
+                None => {
+                    return Err(crate::error::Error::InvalidState("Null state pointer".to_string()));
+                }
+            };
             
             // Apply update function
             let new_state = update_fn(&current.state)?;
@@ -298,6 +304,8 @@ impl LockFreeConsensusEngine {
                 // Success
                 self.metrics.successful_cas.fetch_add(1, Ordering::Relaxed);
                 
+                // SAFETY: Defer cleanup using crossbeam epoch
+                // current_shared was loaded atomically and is valid for cleanup
                 unsafe {
                     guard.defer_destroy(current_shared);
                 }

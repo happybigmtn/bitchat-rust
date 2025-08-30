@@ -146,8 +146,8 @@ impl BinarySerializable for [u8; 16] {
 // Gaming types
 impl BinarySerializable for BetType {
     fn serialize(&self, buf: &mut BytesMut) -> Result<(), Error> {
-        // Feynman: repr(u8) means we can cast directly to u8
-        buf.put_u8(*self as u8);
+        // Use the to_u8 method instead of direct casting
+        buf.put_u8(self.to_u8());
         Ok(())
     }
     
@@ -334,7 +334,7 @@ impl CompactGameMessage {
     /// Format: bet_type(6) + priority(2) bits, then amount as varint
     pub fn add_bet(&mut self, bet_type: BetType, amount: CrapTokens, priority: u8) {
         // Pack bet type (6 bits) and priority (2 bits) into single byte
-        let packed = ((bet_type as u8) & 0x3F) | ((priority & 0x03) << 6);
+        let packed = (bet_type.to_u8() & 0x3F) | ((priority & 0x03) << 6);
         self.payload.push(packed);
         
         // Add amount as variable-length integer

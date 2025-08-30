@@ -3,9 +3,9 @@
 //! Simple tests that validate core functionality without complex dependencies
 
 use bitcraps::{
-    protocol::{PeerId, BetType},
+    protocol::{PeerId, BetType, random_peer_id},
     crypto::{BitchatKeypair, BitchatIdentity, GameCrypto},
-    gaming::{GameSessionManager, random_peer_id, AntiCheatDetector, CrapsBet},
+    mesh::{GameSessionManager},
     token::TokenLedger,
 };
 use tokio::time::{sleep, Duration};

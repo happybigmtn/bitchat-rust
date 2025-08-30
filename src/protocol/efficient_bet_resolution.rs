@@ -133,8 +133,8 @@ impl PayoutLookupTable {
     
     /// Populate Pass/Don't Pass line bet lookup data
     fn populate_pass_line_bets(&mut self) {
-        let pass_idx = BetType::Pass as usize;
-        let dont_pass_idx = BetType::DontPass as usize;
+        let pass_idx = BetType::Pass.to_usize();
+        let dont_pass_idx = BetType::DontPass.to_usize();
         
         // Come out roll outcomes
         for total in 2..=12 {
@@ -167,7 +167,7 @@ impl PayoutLookupTable {
     
     /// Populate Field bet lookup data
     fn populate_field_bets(&mut self) {
-        let field_idx = BetType::Field as usize;
+        let field_idx = BetType::Field.to_usize();
         
         for total in 2..=12 {
             match total {
@@ -200,7 +200,7 @@ impl PayoutLookupTable {
         
         // YES bets win when their number comes up, lose on 7
         for (bet_type, target) in yes_bets {
-            let idx = bet_type as usize;
+            let idx = bet_type.to_usize();
             self.resolution_type[idx][target] = ResolutionType::Win;
             self.payout_multipliers[idx][target] = self.get_yes_bet_payout_multiplier(target);
             self.resolution_type[idx][7] = ResolutionType::Lose;
@@ -208,7 +208,7 @@ impl PayoutLookupTable {
         
         // NO bets win on 7, lose when their number comes up
         for (bet_type, target) in no_bets {
-            let idx = bet_type as usize;
+            let idx = bet_type.to_usize();
             self.resolution_type[idx][7] = ResolutionType::Win;
             self.payout_multipliers[idx][7] = self.get_no_bet_payout_multiplier(target);
             self.resolution_type[idx][target] = ResolutionType::Lose;
@@ -225,7 +225,7 @@ impl PayoutLookupTable {
         ];
         
         for (bet_type, target, payout) in hardway_bets {
-            let idx = bet_type as usize;
+            let idx = bet_type.to_usize();
             // Win only if rolled the hard way (checked elsewhere)
             self.payout_multipliers[idx][target] = payout;
             // Lose on 7 or easy way of same total
@@ -252,7 +252,7 @@ impl PayoutLookupTable {
         ];
         
         for (bet_type, target, payout) in next_bets {
-            let idx = bet_type as usize;
+            let idx = bet_type.to_usize();
             
             // Win only on the exact number
             self.resolution_type[idx][target] = ResolutionType::Win;
@@ -269,8 +269,8 @@ impl PayoutLookupTable {
     
     /// Populate Come/Don't Come bet lookup data
     fn populate_come_bets(&mut self) {
-        let come_idx = BetType::Come as usize;
-        let dont_come_idx = BetType::DontCome as usize;
+        let come_idx = BetType::Come.to_usize();
+        let dont_come_idx = BetType::DontCome.to_usize();
         
         // Similar to Pass/Don't Pass but only in point phase
         for total in 2..=12 {
@@ -326,7 +326,7 @@ impl PayoutLookupTable {
         ];
         
         for (bet_type, payout) in repeater_bets {
-            let idx = bet_type as usize;
+            let idx = bet_type.to_usize();
             // Repeater bets require counting occurrences
             for total in 2..=12 {
                 self.payout_multipliers[idx][total] = payout;
@@ -381,7 +381,7 @@ impl PayoutLookupTable {
     
     /// Fast lookup for bet resolution
     pub fn lookup_resolution(&self, bet_type: BetType, dice_total: u8) -> (ResolutionType, u32) {
-        let bet_idx = bet_type as usize;
+        let bet_idx = bet_type.to_usize();
         let total_idx = dice_total as usize;
         
         if bet_idx < 64 && total_idx < 13 {
@@ -687,7 +687,7 @@ impl EfficientBetResolver {
         // Create bet mask from active bets
         let mut bet_mask = 0u64;
         for &(bet_type, _, _) in active_bets {
-            let bit_index = bet_type as u8;
+            let bit_index = bet_type.to_u8();
             if bit_index < 64 {
                 bet_mask |= 1u64 << bit_index;
             }

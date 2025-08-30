@@ -5,12 +5,12 @@
 use bitcraps::{
     protocol::{PeerId, GameId, BetType, DiceRoll},
     crypto::{BitchatKeypair, BitchatIdentity, GameCrypto},
-    mesh::{MeshService, MeshPeer},
+    mesh::{MeshService, MeshPeer, GameSessionManager},
     transport::TransportCoordinator,
     session::{SessionManager, SessionLimits},
     protocol::craps::CrapsGame,
-    token::{TokenLedger, ProofOfRelay, Account, TransactionType},
-    gaming::{MultiGameFramework, GameSession, GameSessionConfig},
+    token::{TokenLedger, ProofOfRelay, Account},
+    gaming::{MultiGameFramework},
 };
 use uuid::Uuid;
 
@@ -232,7 +232,7 @@ async fn test_network_partition_recovery() {
 /// Test multi-player game coordination
 #[tokio::test]
 async fn test_multiplayer_game_coordination() {
-    let session_manager = GameSessionManager::new(Default::default());
+    let session_manager = GameSessionManager::new(random_peer_id(), false);
     
     // Create a game with multiple players
     let dealer = random_peer_id();
@@ -339,7 +339,7 @@ mod integration_scenarios {
         ledger.create_account(Account::new(player2, 3_000)).unwrap(); // Player2 deposit
         
         // 3. Game creation and joining
-        let session_manager = GameSessionManager::new(Default::default());
+        let session_manager = GameSessionManager::new(random_peer_id(), false);
         let game_session = session_manager.create_session(player1).await.unwrap();
         session_manager.join_session(&game_session, player2).await.unwrap();
         

@@ -10,7 +10,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::protocol::PeerId;
+    use crate::protocol::{PeerId, PeerIdExt};
     use crate::transport::{
         nat_traversal::{NetworkHandler, NatType, TransportMode},
         tcp_transport::{TcpTransport, TcpTransportConfig},
@@ -356,10 +356,10 @@ mod tests {
         let local_addr = socket.local_addr().unwrap();
         let nat_handler = NetworkHandler::new(socket, None, local_addr);
         
-        let coordinator = IntelligentTransportCoordinator::new(
+        let coordinator = std::sync::Arc::new(IntelligentTransportCoordinator::new(
             IntelligentCoordinatorConfig::default(),
             nat_handler,
-        );
+        ));
         
         // Add high-performance transport
         let tcp_config = TcpTransportConfig {
@@ -390,7 +390,7 @@ mod tests {
         let message_size_variants = vec![64, 512, 1024, 4096, 16384]; // Different message sizes
         
         for i in 0..50 { // 50 concurrent tasks
-            let coordinator_ref = &coordinator;
+            let coordinator_clone = coordinator.clone();
             let message_size = message_size_variants[i % message_size_variants.len()];
             
             let handle = tokio::spawn(async move {
@@ -406,7 +406,7 @@ mod tests {
                         _ => TransportPriority::Low,
                     };
                     
-                    if let Err(e) = coordinator_ref.send_intelligent(peer_id, test_message.clone(), priority).await {
+                    if let Err(e) = coordinator_clone.send_intelligent(peer_id, test_message.clone(), priority).await {
                         println!("Stress test task {} send {} failed: {}", i, j, e);
                     }
                     

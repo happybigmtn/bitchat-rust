@@ -292,7 +292,7 @@ impl UltraCompactBet {
     /// Create from regular bet with maximum compression
     pub fn from_bet(bet: &super::Bet, game_start_time: u64, _interner: &mut StringInterner) -> Self {
         // Pack bet type (6 bits) and flags (2 bits)
-        let bet_type_val = (bet.bet_type as u8) & 0x3F;
+        let bet_type_val = bet.bet_type.to_u8() & 0x3F;
         let flags = 0u8; // Could encode active/resolved flags
         let type_flags = bet_type_val | (flags << 6);
         
@@ -568,11 +568,11 @@ impl PatternEncoder {
                 // Use pattern encoding (1 bit flag + 8 bits pattern)
                 bit_field.write_bit(true); // Pattern flag
                 bit_field.write_bits(pattern_code as u64, 8);
-                bit_field.write_bits(bet.bet_type as u64, 6); // Bet type
+                bit_field.write_bits(bet.bet_type.to_u64(), 6); // Bet type
             } else {
                 // Use full encoding
                 bit_field.write_bit(false); // No pattern flag
-                bit_field.write_bits(bet.bet_type as u64, 6); // Bet type
+                bit_field.write_bits(bet.bet_type.to_u64(), 6); // Bet type
                 
                 // Full amount as varint (added separately)
                 let amount_varint = VarInt::encode_u64(bet.amount.amount());

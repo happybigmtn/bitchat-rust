@@ -576,7 +576,6 @@ pub struct BleDispatchStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::p2p_messages::ConsensusPayload;
     
     #[tokio::test]
     async fn test_message_fragmentation() {

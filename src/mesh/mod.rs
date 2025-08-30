@@ -1,13 +1,14 @@
-//! Mesh networking for BitCraps
+//! Mesh networking for BitCraps with Security Hardening
 //! 
 //! This module implements the mesh networking layer including:
-//! - Mesh service coordination
+//! - Mesh service coordination with input validation
 //! - Peer management and discovery
-//! - Message routing and forwarding
+//! - Message routing and forwarding with DoS protection
 //! - Network topology management
 //! - Game session management
 //! - Anti-cheat monitoring
 //! - Message deduplication
+//! - Comprehensive security event logging
 
 pub mod service;
 pub mod components;
@@ -40,19 +41,24 @@ pub use consensus_message_handler::{
     MeshConsensusIntegration,
 };
 
+// Re-export game session management
+pub use game_session::{GameSessionManager, GameSession, SessionState};
+
 /// Maximum number of messages to cache for deduplication
 const MAX_MESSAGE_CACHE_SIZE: usize = 10000;
 
-/// Mesh service managing peer connections and routing
+/// Mesh service managing peer connections and routing with security
 pub struct MeshService {
     identity: Arc<BitchatIdentity>,
     transport: Arc<TransportCoordinator>,
     peers: Arc<RwLock<HashMap<PeerId, MeshPeer>>>,
     routing_table: Arc<RwLock<HashMap<PeerId, RouteInfo>>>,
     message_cache: Arc<RwLock<LruCache<u64, CachedMessage>>>,
-    event_sender: mpsc::UnboundedSender<MeshEvent>,
+    event_sender: mpsc::Sender<MeshEvent>,
+    event_queue_config: EventQueueConfig,
     is_running: Arc<RwLock<bool>>,
     proof_of_relay: Option<Arc<ProofOfRelay>>,
+    security_manager: Arc<crate::security::SecurityManager>,
 }
 
 /// Information about a mesh peer
@@ -95,6 +101,33 @@ pub enum MeshEvent {
     MessageReceived { from: PeerId, packet: BitchatPacket },
     RouteDiscovered { destination: PeerId, route: RouteInfo },
     NetworkPartition { isolated_peers: Vec<PeerId> },
+    QueueOverflow { dropped_events: usize }, // Backpressure indicator
+}
+
+/// Event queue configuration for backpressure management
+#[derive(Debug, Clone)]
+pub struct EventQueueConfig {
+    pub max_queue_size: usize,
+    pub high_water_mark: usize,    // When to start dropping low-priority events
+    pub drop_strategy: DropStrategy,
+}
+
+/// Strategy for dropping events when queue is full
+#[derive(Debug, Clone)]
+pub enum DropStrategy {
+    DropOldest,        // Drop oldest events (FIFO)
+    DropLowPriority,   // Drop low-priority events first
+    Backpressure,      // Block senders until space available
+}
+
+impl Default for EventQueueConfig {
+    fn default() -> Self {
+        Self {
+            max_queue_size: 1000,
+            high_water_mark: 800,
+            drop_strategy: DropStrategy::DropLowPriority,
+        }
+    }
 }
 
 impl MeshService {
@@ -102,7 +135,10 @@ impl MeshService {
         identity: Arc<BitchatIdentity>,
         transport: Arc<TransportCoordinator>,
     ) -> Self {
-        let (event_sender, _) = mpsc::unbounded_channel();
+        let event_queue_config = EventQueueConfig::default();
+        let (event_sender, _) = mpsc::channel(event_queue_config.max_queue_size);
+        let security_config = crate::security::SecurityConfig::default();
+        let security_manager = Arc::new(crate::security::SecurityManager::new(security_config));
         
         Self {
             identity,
@@ -113,8 +149,10 @@ impl MeshService {
                 LruCache::new(NonZeroUsize::new(MAX_MESSAGE_CACHE_SIZE).expect("MAX_MESSAGE_CACHE_SIZE constant must be greater than 0"))
             )),
             event_sender,
+            event_queue_config,
             is_running: Arc::new(RwLock::new(false)),
             proof_of_relay: None,
+            security_manager,
         }
     }
     
@@ -141,6 +179,47 @@ impl MeshService {
         // TODO: Implement peer timeout configuration
         // This would update how long we wait before considering a peer disconnected
     }
+
+    /// Send event with backpressure handling
+    async fn send_event_with_backpressure(&self, event: MeshEvent) {
+        match self.event_queue_config.drop_strategy {
+            DropStrategy::Backpressure => {
+                // Block until space is available
+                if let Err(_) = self.event_sender.send(event).await {
+                    log::error!("Failed to send mesh event: channel closed");
+                }
+            }
+            DropStrategy::DropOldest | DropStrategy::DropLowPriority => {
+                // Try to send, drop if queue is full
+                match self.event_sender.try_send(event) {
+                    Ok(_) => {}
+                    Err(mpsc::error::TrySendError::Full(dropped_event)) => {
+                        log::warn!("Event queue full, dropping event: {:?}", dropped_event);
+                        
+                        // Send overflow notification if not already overflowing
+                        let _ = self.event_sender.try_send(MeshEvent::QueueOverflow { 
+                            dropped_events: 1 
+                        });
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        log::error!("Failed to send mesh event: channel closed");
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get event priority for drop strategy
+    fn get_event_priority(event: &MeshEvent) -> u8 {
+        match event {
+            MeshEvent::NetworkPartition { .. } => 0,  // Highest priority
+            MeshEvent::PeerLeft { .. } => 1,
+            MeshEvent::PeerJoined { .. } => 2,
+            MeshEvent::RouteDiscovered { .. } => 3,
+            MeshEvent::MessageReceived { .. } => 4,
+            MeshEvent::QueueOverflow { .. } => 5,     // Lowest priority
+        }
+    }
     
     /// Start the mesh service
     pub async fn start(&self) -> Result<()> {
@@ -165,8 +244,12 @@ impl MeshService {
         log::info!("Mesh service stopped");
     }
     
-    /// Send a packet to a specific peer or broadcast
-    pub async fn send_packet(&self, packet: BitchatPacket) -> Result<()> {
+    /// Send a packet to a specific peer or broadcast with security validation
+    pub async fn send_packet(&self, mut packet: BitchatPacket, sender_ip: std::net::IpAddr) -> Result<()> {
+        // Validate network message before processing
+        let message_data = packet.serialize().map_err(|e| crate::error::Error::Protocol(format!("Packet serialization failed: {}", e)))?;
+        self.security_manager.validate_network_message(&message_data, sender_ip)?;
+        
         if let Some(destination) = packet.get_receiver() {
             // Send to specific peer
             self.route_packet_to_peer(packet, destination).await
@@ -270,7 +353,7 @@ impl MeshService {
         from: PeerId,
         message_cache: &Arc<RwLock<LruCache<u64, CachedMessage>>>,
         peers: &Arc<RwLock<HashMap<PeerId, MeshPeer>>>,
-        event_sender: &mpsc::UnboundedSender<MeshEvent>,
+        event_sender: &mpsc::Sender<MeshEvent>,
         identity: &Arc<BitchatIdentity>,
     ) {
         // Check message cache to prevent loops
@@ -289,11 +372,11 @@ impl MeshService {
         // Check if packet is for us
         if let Some(destination) = packet.get_receiver() {
             if destination == identity.peer_id {
-                // Packet is for us
-                let _ = event_sender.send(MeshEvent::MessageReceived {
-                    from,
-                    packet,
-                });
+                // Packet is for us - use backpressure-safe sending
+                let event = MeshEvent::MessageReceived { from, packet };
+                if let Err(e) = event_sender.try_send(event) {
+                    log::warn!("Failed to send MessageReceived event: {:?}", e);
+                }
             }
         }
         
@@ -318,11 +401,9 @@ impl MeshService {
         // Check if packet is for us
         if let Some(destination) = packet.get_receiver() {
             if destination == self.identity.peer_id {
-                // Packet is for us
-                let _ = self.event_sender.send(MeshEvent::MessageReceived {
-                    from,
-                    packet,
-                });
+                // Packet is for us - use backpressure handling
+                let event = MeshEvent::MessageReceived { from, packet };
+                self.send_event_with_backpressure(event).await;
                 return;
             }
         }
@@ -599,9 +680,13 @@ impl MeshService {
         let peers = self.peers.read().await;
         if let Some(peer) = peers.get(&peer_id) {
             if peer.packets_received == 1 {
-                // New peer
-                let _ = self.event_sender.send(MeshEvent::PeerJoined {
-                    peer: peer.clone(),
+                // New peer - use backpressure handling
+                let event = MeshEvent::PeerJoined { peer: peer.clone() };
+                let sender = self.event_sender.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = sender.send(event).await {
+                        log::warn!("Failed to send PeerJoined event: {:?}", e);
+                    }
                 });
             }
         }

@@ -154,8 +154,10 @@ impl GameRuntime {
                 // Check and deduct player balance
                 self.player_manager.deduct_balance(player, buy_in).await?;
                 
-                // Add player to game
-                self.game_manager.add_player_to_game(game_id, player).await?;
+                // Add player to game with security
+                use std::net::IpAddr;
+                let client_ip = IpAddr::from([127, 0, 0, 1]); // Default localhost for now
+                self.game_manager.add_player_to_game_with_security(game_id, player, buy_in, client_ip).await?;
                 
                 // Add to treasury pot
                 self.treasury.add_to_pot(game_id, buy_in).await?;

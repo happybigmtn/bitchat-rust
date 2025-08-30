@@ -266,7 +266,7 @@ impl CompactGameState {
     
     /// Check if a bet type is active
     pub fn has_bet_type(&self, bet_type: BetType) -> bool {
-        let bit_index = bet_type as u8;
+        let bit_index = bet_type.to_u8();
         if bit_index >= 64 { return false; }
         
         // Safe bit shift with bounds check
@@ -279,7 +279,7 @@ impl CompactGameState {
     
     /// Add a bet type to the mask
     pub fn add_bet_type(&mut self, bet_type: BetType) {
-        let bit_index = bet_type as u8;
+        let bit_index = bet_type.to_u8();
         if bit_index >= 64 { return; }
         
         // Safe bit shift with overflow protection
@@ -291,7 +291,7 @@ impl CompactGameState {
     
     /// Remove a bet type from the mask
     pub fn remove_bet_type(&mut self, bet_type: BetType) {
-        let bit_index = bet_type as u8;
+        let bit_index = bet_type.to_u8();
         if bit_index >= 64 { return; }
         
         // Safe bit shift with overflow protection

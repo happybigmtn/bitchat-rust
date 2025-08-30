@@ -441,11 +441,36 @@ impl BluetoothTransport {
                                                 if current_connections < 3 { // Auto-connect to first few devices
                                                     log::info!("Auto-connecting to discovered BitCraps device: {}", device_id);
                                                     
-                                                    // Note: Auto-connection would be implemented here
-                                                    // For now, just emit a connection event to let the application decide
-                                                    let _ = event_sender.send(TransportEvent::Connected {
-                                                        peer_id: [0u8; 32], // Placeholder until we implement full connection
-                                                        address: TransportAddress::Bluetooth(device_id),
+                                                    // Spawn real connection task
+                                                    let device_id_clone = device_id.clone();
+                                                    let connections_clone = connections.clone();
+                                                    let event_sender_clone = event_sender.clone();
+                                                    let adapter_clone2 = adapter_clone.clone();
+                                                    let id_clone = id.clone();
+                                                    
+                                                    tokio::spawn(async move {
+                                                        // Attempt actual connection handshake
+                                                        match Self::perform_connection_handshake(
+                                                            adapter_clone2,
+                                                            id_clone,
+                                                            &device_id_clone,
+                                                            connections_clone,
+                                                        ).await {
+                                                            Ok(peer_id) => {
+                                                                log::info!("Successfully connected to peer {:?} at device {}", peer_id, device_id_clone);
+                                                                let _ = event_sender_clone.send(TransportEvent::Connected {
+                                                                    peer_id,
+                                                                    address: TransportAddress::Bluetooth(device_id_clone),
+                                                                });
+                                                            },
+                                                            Err(e) => {
+                                                                log::warn!("Failed to auto-connect to device {}: {}", device_id_clone, e);
+                                                                let _ = event_sender_clone.send(TransportEvent::Error {
+                                                                    peer_id: None,
+                                                                    error: format!("Auto-connection failed: {}", e),
+                                                                });
+                                                            }
+                                                        }
                                                     });
                                                 }
                                             }
@@ -682,31 +707,21 @@ impl BluetoothTransport {
         }
     }
     
-    /// Connect to a discovered peer with connection limits enforced
-    async fn connect_to_peripheral(&self, device_id: &str) -> Result<PeerId, Box<dyn std::error::Error>> {
-        // Check connection limits before attempting to connect
-        self.check_bluetooth_connection_limits_internal().await?;
+    /// Perform connection handshake with a discovered device (static method)
+    async fn perform_connection_handshake(
+        adapter: Adapter,
+        peripheral_id: PeripheralId,
+        device_id: &str,
+        connections: Arc<RwLock<HashMap<PeerId, PeerConnection>>>,
+    ) -> Result<PeerId, Box<dyn std::error::Error>> {
+        log::info!("Performing connection handshake with device: {}", device_id);
         
-        // Record the connection attempt
-        self.record_bluetooth_connection_attempt_internal().await;
-        
-        log::info!("Connecting to Bluetooth device: {} (within limits)", device_id);
-        
-        // Get the peripheral from discovered peers
-        let discovered_peers = self.discovered_peers.read().await;
-        let peer_info = discovered_peers.get(device_id)
-            .ok_or("Device not found in discovered peers")?;
-        let peripheral_id = peer_info.peripheral_id.clone();
-        drop(discovered_peers);
-        
-        // Get adapter and peripheral
-        let adapter = self.adapter.as_ref().ok_or("No Bluetooth adapter available")?;
+        // Get peripheral and attempt connection
         let peripheral = adapter.peripheral(&peripheral_id).await?;
         
-        // Actual connection with timeout protection
+        // Actual connection with timeout
+        let connection_timeout = Duration::from_secs(30);
         let connection_future = async {
-            log::info!("Attempting to connect to peripheral: {:?}", peripheral_id);
-            
             // Connect to the peripheral
             peripheral.connect().await?;
             log::info!("Connected to peripheral: {:?}", peripheral_id);
@@ -748,7 +763,7 @@ impl BluetoothTransport {
             }
             
             // Generate a peer ID based on device characteristics
-            // In a real implementation, this would be exchanged during a handshake protocol
+            // TODO: Implement proper peer ID exchange protocol
             let peer_id = {
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
                 use std::hash::Hasher;
@@ -759,18 +774,9 @@ impl BluetoothTransport {
                 peer_id
             };
             
-            // Perform key exchange for secure communication
-            let crypto_public_key = self.transport_crypto.public_key();
-            // In a real implementation, we would get the peer's public key from the key exchange characteristic
-            // For now, we'll use our own key as a placeholder
-            if let Err(e) = self.transport_crypto.perform_key_exchange(peer_id, crypto_public_key).await {
-                log::error!("Key exchange failed for peer {:?}: {}", peer_id, e);
-                return Err(format!("Key exchange failed: {}", e).into());
-            }
-            
-            // Create connection object with zero-copy fragmentation
+            // Create connection object with fragmentation
             let fragmentation = FragmentationManager {
-                memory_pool: MemoryPool::new(POOL_BUFFER_SIZE, MAX_POOLED_BUFFERS / 4), // Smaller pool per connection
+                memory_pool: MemoryPool::new(POOL_BUFFER_SIZE, MAX_POOLED_BUFFERS / 4),
                 reassembly_buffers: HashMap::new(),
                 next_sequence: 0,
             };
@@ -785,19 +791,54 @@ impl BluetoothTransport {
             };
             
             // Store the connection
-            self.connections.write().await.insert(peer_id, connection);
+            connections.write().await.insert(peer_id, connection);
             log::info!("Stored connection for peer: {:?}", peer_id);
             
             Result::<PeerId, Box<dyn std::error::Error>>::Ok(peer_id)
         };
         
         // Apply connection timeout
-        let peer_id = tokio::time::timeout(
-            self.connection_limits.connection_timeout,
-            connection_future
-        ).await
-        .map_err(|_| "Bluetooth connection timeout")??
-        ;
+        tokio::time::timeout(connection_timeout, connection_future)
+            .await
+            .map_err(|_| "Connection handshake timeout")?
+    }
+    
+    /// Connect to a discovered peer with connection limits enforced
+    async fn connect_to_peripheral(&self, device_id: &str) -> Result<PeerId, Box<dyn std::error::Error>> {
+        // Check connection limits before attempting to connect
+        self.check_bluetooth_connection_limits_internal().await?;
+        
+        // Record the connection attempt
+        self.record_bluetooth_connection_attempt_internal().await;
+        
+        log::info!("Connecting to Bluetooth device: {} (within limits)", device_id);
+        
+        // Get the peripheral from discovered peers
+        let discovered_peers = self.discovered_peers.read().await;
+        let peer_info = discovered_peers.get(device_id)
+            .ok_or("Device not found in discovered peers")?;
+        let peripheral_id = peer_info.peripheral_id.clone();
+        drop(discovered_peers);
+        
+        // Get adapter
+        let adapter = self.adapter.as_ref().ok_or("No Bluetooth adapter available")?;
+        
+        // Use the improved connection handshake
+        let peer_id = Self::perform_connection_handshake(
+            adapter.clone(),
+            peripheral_id,
+            device_id,
+            self.connections.clone(),
+        ).await?;
+        
+        // Perform key exchange for secure communication
+        let crypto_public_key = self.transport_crypto.public_key();
+        // TODO: Implement proper key exchange protocol
+        // For now, we'll use our own key as a placeholder
+        if let Err(e) = self.transport_crypto.perform_key_exchange(peer_id, crypto_public_key).await {
+            log::error!("Key exchange failed for peer {:?}: {}", peer_id, e);
+            return Err(format!("Key exchange failed: {}", e).into());
+        }
         
         // Send connection event only on successful connection
         let _ = self.event_sender.send(TransportEvent::Connected {

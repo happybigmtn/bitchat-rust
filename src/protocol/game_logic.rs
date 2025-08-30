@@ -5,7 +5,53 @@
 
 use std::collections::{HashMap, HashSet};
 use super::{PeerId, GameId, CrapTokens, DiceRoll, BetType, Bet};
-use crate::protocol::bet_types::{GamePhase, BetResolution, BetValidator};
+use crate::protocol::bet_types::{GamePhase, BetValidator};
+
+/// Bet resolution result
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BetResolution {
+    pub player_id: PeerId,
+    pub bet: Bet,
+    pub result: BetResult,
+    pub payout: CrapTokens,
+}
+
+/// Bet result type
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum BetResult {
+    Win,
+    Lose,
+    Push, // Tie/no action
+}
+
+impl BetResolution {
+    pub fn win(player_id: PeerId, bet: Bet, payout: CrapTokens) -> Self {
+        Self {
+            player_id,
+            bet,
+            result: BetResult::Win,
+            payout,
+        }
+    }
+    
+    pub fn lose(player_id: PeerId, bet: Bet) -> Self {
+        Self {
+            player_id,
+            bet,
+            result: BetResult::Lose,
+            payout: CrapTokens::new_unchecked(0),
+        }
+    }
+    
+    pub fn push(player_id: PeerId, bet: Bet, refund: CrapTokens) -> Self {
+        Self {
+            player_id,
+            bet,
+            result: BetResult::Push,
+            payout: refund,
+        }
+    }
+}
 
 /// Complete craps game state with all tracking
 /// 
@@ -322,21 +368,242 @@ pub struct GameStats {
     pub bonus_numbers: usize,
 }
 
-// Forward declarations for methods that will be implemented in the resolution module
+// Bet resolution implementation
 impl CrapsGame {
-    pub fn resolve_comeout_roll(&self, _roll: DiceRoll) -> Vec<BetResolution> {
-        // This will be implemented in the resolution module
-        Vec::new()
+    pub fn resolve_comeout_roll(&self, roll: DiceRoll) -> Vec<BetResolution> {
+        let mut resolutions = Vec::new();
+        let total = roll.total();
+        
+        // Resolve all active bets during come-out roll
+        for (player_id, player_bets) in &self.player_bets {
+            for (bet_type, bet) in player_bets {
+                let resolution = match bet_type {
+                    BetType::Pass => {
+                        match total {
+                            7 | 11 => BetResolution::win(*player_id, bet.clone(), CrapTokens::new_unchecked(bet.amount.amount() * 2)),
+                            2 | 3 | 12 => BetResolution::lose(*player_id, bet.clone()),
+                            _ => BetResolution::push(*player_id, bet.clone(), bet.amount), // Point established
+                        }
+                    },
+                    BetType::DontPass => {
+                        match total {
+                            2 | 3 => BetResolution::win(*player_id, bet.clone(), CrapTokens::new_unchecked(bet.amount.amount() * 2)),
+                            7 | 11 => BetResolution::lose(*player_id, bet.clone()),
+                            12 => BetResolution::push(*player_id, bet.clone(), bet.amount), // Tie on 12
+                            _ => BetResolution::push(*player_id, bet.clone(), bet.amount), // Point established
+                        }
+                    },
+                    BetType::Field => {
+                        match total {
+                            2 => BetResolution::win(*player_id, bet.clone(), bet.amount * 3), // 2:1 on 2
+                            3 | 4 | 9 | 10 | 11 => BetResolution::win(*player_id, bet.clone(), bet.amount * 2), // Even money
+                            12 => BetResolution::win(*player_id, bet.clone(), bet.amount * 3), // 2:1 on 12
+                            _ => BetResolution::lose(*player_id, bet.clone()),
+                        }
+                    },
+                    // TODO: Add Any7 and AnyCraps bet types when they're implemented in BetType enum
+                    _ => continue, // Skip other bet types during come-out
+                };
+                resolutions.push(resolution);
+            }
+        }
+        
+        resolutions
     }
     
-    pub fn resolve_point_roll(&mut self, _roll: DiceRoll) -> Vec<BetResolution> {
-        // This will be implemented in the resolution module  
-        Vec::new()
+    pub fn resolve_point_roll(&mut self, roll: DiceRoll) -> Vec<BetResolution> {
+        let mut resolutions = Vec::new();
+        let total = roll.total();
+        let point = self.point.unwrap_or(0);
+        
+        // Resolve all active bets during point roll
+        for (player_id, player_bets) in &self.player_bets {
+            for (bet_type, bet) in player_bets {
+                let resolution = match bet_type {
+                    BetType::Pass => {
+                        if total == point {
+                            BetResolution::win(*player_id, bet.clone(), bet.amount * 2) // Point made
+                        } else if total == 7 {
+                            BetResolution::lose(*player_id, bet.clone()) // Seven-out
+                        } else {
+                            continue; // No resolution yet
+                        }
+                    },
+                    BetType::DontPass => {
+                        if total == 7 {
+                            BetResolution::win(*player_id, bet.clone(), bet.amount * 2) // Seven-out wins
+                        } else if total == point {
+                            BetResolution::lose(*player_id, bet.clone()) // Point made loses
+                        } else {
+                            continue; // No resolution yet
+                        }
+                    },
+                    BetType::Come => {
+                        match total {
+                            7 | 11 => BetResolution::win(*player_id, bet.clone(), bet.amount * 2),
+                            2 | 3 | 12 => BetResolution::lose(*player_id, bet.clone()),
+                            _ => {
+                                // Come bet moves to come point
+                                self.come_points.entry(*player_id).or_default().insert(total, bet.amount);
+                                BetResolution::push(*player_id, bet.clone(), bet.amount)
+                            }
+                        }
+                    },
+                    BetType::DontCome => {
+                        match total {
+                            2 | 3 => BetResolution::win(*player_id, bet.clone(), bet.amount * 2),
+                            7 | 11 => BetResolution::lose(*player_id, bet.clone()),
+                            12 => BetResolution::push(*player_id, bet.clone(), bet.amount), // Tie
+                            _ => {
+                                // Don't Come bet moves to don't come point
+                                self.dont_come_points.entry(*player_id).or_default().insert(total, bet.amount);
+                                BetResolution::push(*player_id, bet.clone(), bet.amount)
+                            }
+                        }
+                    },
+                    BetType::Place(number) => {
+                        if total == *number {
+                            let payout_multiplier = match number {
+                                4 | 10 => 9, // 9:5 payout
+                                5 | 9 => 7,  // 7:5 payout  
+                                6 | 8 => 7,  // 7:6 payout
+                                _ => 2,      // Default even money
+                            };
+                            let divisor = match number {
+                                4 | 10 => 5,
+                                5 | 9 => 5,
+                                6 | 8 => 6,
+                                _ => 1,
+                            };
+                            let payout = bet.amount * payout_multiplier / divisor;
+                            BetResolution::win(*player_id, bet.clone(), bet.amount + payout)
+                        } else if total == 7 {
+                            BetResolution::lose(*player_id, bet.clone()) // Seven-out
+                        } else {
+                            continue; // No resolution
+                        }
+                    },
+                    BetType::HardWay(number) => {
+                        if roll.is_hard_way() && total == *number {
+                            let payout_multiplier = match number {
+                                4 | 10 => 8, // 7:1 payout
+                                6 | 8 => 10, // 9:1 payout
+                                _ => 2,
+                            };
+                            BetResolution::win(*player_id, bet.clone(), bet.amount * payout_multiplier)
+                        } else if total == 7 || (total == *number && !roll.is_hard_way()) {
+                            BetResolution::lose(*player_id, bet.clone())
+                        } else {
+                            continue; // No resolution
+                        }
+                    },
+                    _ => continue, // Handle other bet types
+                };
+                resolutions.push(resolution);
+            }
+        }
+        
+        // Resolve Come/Don't Come point bets
+        for (player_id, come_points) in &mut self.come_points {
+            for (come_point, amount) in come_points.iter() {
+                if total == *come_point {
+                    let dummy_bet = Bet { 
+                        id: [0u8; 16], 
+                        player: *player_id, 
+                        game_id: [0u8; 16], 
+                        bet_type: BetType::Come, 
+                        amount: *amount, 
+                        timestamp: 0 
+                    };
+                    resolutions.push(BetResolution::win(*player_id, dummy_bet, *amount * 2));
+                } else if total == 7 {
+                    let dummy_bet = Bet { 
+                        id: [0u8; 16], 
+                        player: *player_id, 
+                        game_id: [0u8; 16], 
+                        bet_type: BetType::Come, 
+                        amount: *amount, 
+                        timestamp: 0 
+                    };
+                    resolutions.push(BetResolution::lose(*player_id, dummy_bet));
+                }
+            }
+        }
+        
+        for (player_id, dont_come_points) in &mut self.dont_come_points {
+            for (dont_come_point, amount) in dont_come_points.iter() {
+                if total == 7 {
+                    let dummy_bet = Bet { 
+                        id: [0u8; 16], 
+                        player: *player_id, 
+                        game_id: [0u8; 16], 
+                        bet_type: BetType::DontCome, 
+                        amount: *amount, 
+                        timestamp: 0 
+                    };
+                    resolutions.push(BetResolution::win(*player_id, dummy_bet, *amount * 2));
+                } else if total == *dont_come_point {
+                    let dummy_bet = Bet { 
+                        id: [0u8; 16], 
+                        player: *player_id, 
+                        game_id: [0u8; 16], 
+                        bet_type: BetType::DontCome, 
+                        amount: *amount, 
+                        timestamp: 0 
+                    };
+                    resolutions.push(BetResolution::lose(*player_id, dummy_bet));
+                }
+            }
+        }
+        
+        resolutions
     }
     
-    pub fn resolve_one_roll_bets(&self, _roll: DiceRoll) -> Vec<BetResolution> {
-        // This will be implemented in the resolution module
-        Vec::new()
+    pub fn resolve_one_roll_bets(&self, roll: DiceRoll) -> Vec<BetResolution> {
+        let mut resolutions = Vec::new();
+        let total = roll.total();
+        
+        // Resolve one-roll proposition bets
+        for (player_id, player_bets) in &self.player_bets {
+            for (bet_type, bet) in player_bets {
+                let resolution = match bet_type {
+                    BetType::Field => {
+                        match total {
+                            2 => BetResolution::win(*player_id, bet.clone(), bet.amount * 3), // 2:1 on 2
+                            3 | 4 | 9 | 10 | 11 => BetResolution::win(*player_id, bet.clone(), bet.amount * 2), // Even money
+                            12 => BetResolution::win(*player_id, bet.clone(), bet.amount * 3), // 2:1 on 12
+                            _ => BetResolution::lose(*player_id, bet.clone()),
+                        }
+                    },
+                    // TODO: Add Any7 and AnyCraps bet types when they're implemented in BetType enum
+                    BetType::Eleven => {
+                        if total == 11 {
+                            BetResolution::win(*player_id, bet.clone(), bet.amount * 16) // 15:1 payout
+                        } else {
+                            BetResolution::lose(*player_id, bet.clone())
+                        }
+                    },
+                    BetType::Ace => {
+                        if total == 2 {
+                            BetResolution::win(*player_id, bet.clone(), bet.amount * 31) // 30:1 payout
+                        } else {
+                            BetResolution::lose(*player_id, bet.clone())
+                        }
+                    },
+                    BetType::Twelve => {
+                        if total == 12 {
+                            BetResolution::win(*player_id, bet.clone(), bet.amount * 31) // 30:1 payout
+                        } else {
+                            BetResolution::lose(*player_id, bet.clone())
+                        }
+                    },
+                    _ => continue, // Skip non-one-roll bets
+                };
+                resolutions.push(resolution);
+            }
+        }
+        
+        resolutions
     }
 }
 

@@ -182,6 +182,7 @@ enum TransportHealth {
 pub struct TransportCoordinator {
     bluetooth: Option<Arc<RwLock<BluetoothTransport>>>,
     enhanced_bluetooth: Option<Arc<RwLock<EnhancedBluetoothTransport>>>,
+    tcp_transport: Option<Arc<RwLock<tcp_transport::TcpTransport>>>,
     transports: Arc<RwLock<Vec<TransportInstance>>>,
     connections: Arc<RwLock<HashMap<PeerId, TransportAddress>>>,
     connection_counts_per_address: Arc<RwLock<HashMap<TransportAddress, usize>>>,
@@ -191,6 +192,16 @@ pub struct TransportCoordinator {
     event_sender: mpsc::UnboundedSender<TransportEvent>,
     event_receiver: Arc<RwLock<mpsc::UnboundedReceiver<TransportEvent>>>,
     discovery_task: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
+    active_transports: Arc<RwLock<HashMap<String, TransportType>>>,
+    failover_enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+enum TransportType {
+    Bluetooth,
+    EnhancedBluetooth,
+    Tcp,
+    Udp,
 }
 
 impl Default for TransportCoordinator {
@@ -214,15 +225,18 @@ impl TransportCoordinator {
         let coordinator = Self {
             bluetooth: None,
             enhanced_bluetooth: None,
+            tcp_transport: None,
             transports: Arc::new(RwLock::new(Vec::new())),
             connections: Arc::new(RwLock::new(HashMap::new())),
             connection_counts_per_address: Arc::new(RwLock::new(HashMap::new())),
             connection_attempts: Arc::new(RwLock::new(Vec::new())),
             connection_limits: limits,
-            coordinator_config: config,
+            coordinator_config: config.clone(),
             event_sender,
             event_receiver: Arc::new(RwLock::new(event_receiver)),
             discovery_task: Arc::new(RwLock::new(None)),
+            active_transports: Arc::new(RwLock::new(HashMap::new())),
+            failover_enabled: config.enable_failover,
         };
         
         // Start cleanup task for connection attempts
@@ -457,8 +471,111 @@ impl TransportCoordinator {
         
         self.enhanced_bluetooth = Some(Arc::new(RwLock::new(enhanced_bluetooth)));
         
+        // Register as active transport
+        self.active_transports.write().await.insert("enhanced_bluetooth".to_string(), TransportType::EnhancedBluetooth);
+        
         log::info!("Enhanced Bluetooth transport initialized successfully");
         Ok(())
+    }
+    
+    /// Initialize TCP transport for WiFi/Internet connectivity
+    pub async fn init_tcp_transport(&mut self, config: tcp_transport::TcpTransportConfig) -> Result<()> {
+        log::info!("Initializing TCP transport");
+        
+        let tcp_transport = tcp_transport::TcpTransport::new(config);
+        self.tcp_transport = Some(Arc::new(RwLock::new(tcp_transport)));
+        
+        // Register as active transport
+        self.active_transports.write().await.insert("tcp".to_string(), TransportType::Tcp);
+        
+        log::info!("TCP transport initialized successfully");
+        Ok(())
+    }
+    
+    /// Enable concurrent operation of multiple transports
+    pub async fn enable_multi_transport_mode(&mut self) -> Result<()> {
+        log::info!("Enabling multi-transport mode");
+        
+        let active_transports = self.active_transports.read().await;
+        let transport_count = active_transports.len();
+        
+        if transport_count < 2 {
+            return Err(Error::Network("Need at least 2 transports for multi-transport mode".to_string()));
+        }
+        
+        log::info!("Multi-transport mode enabled with {} transports", transport_count);
+        
+        // Start transport monitoring task
+        self.start_transport_monitoring().await;
+        
+        Ok(())
+    }
+    
+    /// Start background task to monitor transport health and performance
+    async fn start_transport_monitoring(&self) {
+        let active_transports = self.active_transports.clone();
+        let bluetooth = self.bluetooth.clone();
+        let enhanced_bluetooth = self.enhanced_bluetooth.clone();
+        let tcp_transport = self.tcp_transport.clone();
+        let event_sender = self.event_sender.clone();
+        
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            
+            loop {
+                interval.tick().await;
+                
+                let transports = active_transports.read().await;
+                log::debug!("Monitoring {} active transports", transports.len());
+                
+                // Check health of each transport
+                for (name, transport_type) in transports.iter() {
+                    let is_healthy = match transport_type {
+                        TransportType::Bluetooth => {
+                            if let Some(bt) = &bluetooth {
+                                // Check Bluetooth health
+                                let stats = bt.read().await.bluetooth_stats().await;
+                                stats.active_connections > 0 || stats.recent_connection_attempts > 0
+                            } else {
+                                false
+                            }
+                        },
+                        TransportType::EnhancedBluetooth => {
+                            if let Some(ebt) = &enhanced_bluetooth {
+                                // Check enhanced Bluetooth health
+                                let stats = ebt.read().await.get_combined_stats().await;
+                                stats.total_connections > 0
+                            } else {
+                                false
+                            }
+                        },
+                        TransportType::Tcp => {
+                            if let Some(tcp) = &tcp_transport {
+                                // Check TCP health
+                                let stats = tcp.read().await.connection_stats().await;
+                                stats.healthy_connections > 0 || stats.total_connections > 0
+                            } else {
+                                false
+                            }
+                        },
+                        TransportType::Udp => {
+                            // UDP transport not implemented yet
+                            false
+                        },
+                    };
+                    
+                    if !is_healthy {
+                        log::debug!("Transport {} is unhealthy", name);
+                        let _ = event_sender.send(TransportEvent::Error {
+                            peer_id: None,
+                            error: format!("Transport {} health check failed", name),
+                        });
+                    } else {
+                        log::debug!("Transport {} is healthy", name);
+                    }
+                }
+            }
+        });
     }
     
     /// Start BLE advertising (requires enhanced Bluetooth transport)
@@ -535,24 +652,24 @@ impl TransportCoordinator {
         }
     }
     
-    /// Connect using failover logic across multiple transports
+    /// Connect using intelligent failover logic across multiple transports
     async fn connect_with_failover(&self, peer_id: PeerId, address: TransportAddress) -> Result<()> {
-        let transports = self.transports.read().await;
+        log::info!("Attempting connection with failover to peer {:?} at {:?}", peer_id, address);
         
-        // Try transports in priority order, only healthy ones
-        for transport_instance in transports.iter() {
-            if transport_instance.health != TransportHealth::Healthy {
-                continue;
-            }
+        // Try transports in order of preference based on address type and availability
+        let transport_attempts = self.get_transport_priority_for_address(&address).await;
+        
+        for (transport_name, attempt_func) in transport_attempts {
+            log::debug!("Attempting connection via {} transport", transport_name);
             
-            println!("Attempting connection via transport priority {}", transport_instance.priority);
+            let start_time = std::time::Instant::now();
             
-            // Try to connect with timeout
-            let connect_future = self.attempt_transport_connection(transport_instance, peer_id, address.clone());
-            
-            match tokio::time::timeout(self.coordinator_config.failover_timeout, connect_future).await {
+            match tokio::time::timeout(self.coordinator_config.failover_timeout, attempt_func).await {
                 Ok(Ok(_)) => {
-                    // Connection successful - update tracking
+                    let elapsed = start_time.elapsed();
+                    log::info!("Successfully connected via {} in {:?}", transport_name, elapsed);
+                    
+                    // Update connection tracking
                     self.connections.write().await.insert(peer_id, address.clone());
                     self.increment_connection_count(&address).await;
                     
@@ -565,18 +682,114 @@ impl TransportCoordinator {
                     return Ok(());
                 }
                 Ok(Err(e)) => {
-                    println!("Transport connection failed: {}", e);
+                    log::debug!("Connection via {} failed: {}", transport_name, e);
                     continue; // Try next transport
                 }
                 Err(_) => {
-                    println!("Transport connection timed out");
+                    log::debug!("Connection via {} timed out", transport_name);
                     continue; // Try next transport
                 }
             }
         }
         
-        // All transports failed, try legacy Bluetooth as fallback
-        self.connect_single_transport(peer_id, address).await
+        // All modern transports failed - log comprehensive failure
+        log::error!("All transport failover attempts failed for peer {:?}", peer_id);
+        Err(Error::Network(format!("Failed to connect to peer {:?}: all transports exhausted", peer_id)))
+    }
+    
+    /// Get prioritized list of transport connection functions for a given address
+    async fn get_transport_priority_for_address(&self, address: &TransportAddress) -> Vec<(String, std::pin::Pin<std::boxed::Box<dyn std::future::Future<Output = Result<()>> + Send>>)> {
+        let mut attempts = Vec::new();
+        
+        match address {
+            TransportAddress::Bluetooth(_) => {
+                // For Bluetooth addresses, prefer enhanced BT over legacy
+                if let Some(enhanced_bt) = &self.enhanced_bluetooth {
+                    let enhanced_bt = enhanced_bt.clone();
+                    let address = address.clone();
+                    attempts.push((
+                        "enhanced_bluetooth".to_string(),
+                        Box::pin(async move {
+                            let mut transport = enhanced_bt.write().await;
+                            match transport.connect(address).await {
+                                Ok(_) => Ok(()),
+                                Err(e) => Err(Error::Network(e.to_string())),
+                            }
+                        }) as std::pin::Pin<std::boxed::Box<dyn std::future::Future<Output = Result<()>> + Send>>
+                    ));
+                }
+                
+                if let Some(bluetooth) = &self.bluetooth {
+                    let bluetooth = bluetooth.clone();
+                    let address = address.clone();
+                    attempts.push((
+                        "bluetooth".to_string(),
+                        Box::pin(async move {
+                            let mut transport = bluetooth.write().await;
+                            match transport.connect(address).await {
+                                Ok(_) => Ok(()),
+                                Err(e) => Err(Error::Network(e.to_string())),
+                            }
+                        })
+                    ));
+                }
+            },
+            TransportAddress::Tcp(_) => {
+                // For TCP addresses, use TCP transport
+                if let Some(tcp) = &self.tcp_transport {
+                    let tcp = tcp.clone();
+                    let address = address.clone();
+                    attempts.push((
+                        "tcp".to_string(),
+                        Box::pin(async move {
+                            let mut transport = tcp.write().await;
+                            match transport.connect(address).await {
+                                Ok(_) => Ok(()),
+                                Err(e) => Err(Error::Network(e.to_string())),
+                            }
+                        })
+                    ));
+                }
+            },
+            TransportAddress::Udp(_) => {
+                // UDP transport not yet implemented
+                log::debug!("UDP transport requested but not implemented");
+            },
+            TransportAddress::Mesh(_) => {
+                // For mesh addresses, try all available transports
+                if let Some(enhanced_bt) = &self.enhanced_bluetooth {
+                    let enhanced_bt = enhanced_bt.clone();
+                    let mesh_address = TransportAddress::Bluetooth("mesh".to_string());
+                    attempts.push((
+                        "enhanced_bluetooth_mesh".to_string(),
+                        Box::pin(async move {
+                            let mut transport = enhanced_bt.write().await;
+                            match transport.connect(mesh_address).await {
+                                Ok(_) => Ok(()),
+                                Err(e) => Err(Error::Network(e.to_string())),
+                            }
+                        })
+                    ));
+                }
+                
+                if let Some(tcp) = &self.tcp_transport {
+                    let tcp = tcp.clone();
+                    let tcp_address = TransportAddress::Tcp("127.0.0.1:8000".parse().unwrap()); // Default mesh TCP
+                    attempts.push((
+                        "tcp_mesh".to_string(),
+                        Box::pin(async move {
+                            let mut transport = tcp.write().await;
+                            match transport.connect(tcp_address).await {
+                                Ok(_) => Ok(()),
+                                Err(e) => Err(Error::Network(e.to_string())),
+                            }
+                        })
+                    ));
+                }
+            },
+        }
+        
+        attempts
     }
     
     /// Attempt connection using a specific transport instance
@@ -699,28 +912,116 @@ impl TransportCoordinator {
         }
     }
     
-    /// Send data to a peer
+    /// Send data to a peer using best available transport with automatic failover
     pub async fn send_to_peer(&self, peer_id: PeerId, data: Vec<u8>) -> Result<()> {
         let connections = self.connections.read().await;
         
         if let Some(address) = connections.get(&peer_id) {
-            match address {
-                TransportAddress::Bluetooth(_) => {
-                    if let Some(bluetooth) = &self.bluetooth {
-                        let mut bt = bluetooth.write().await;
-                        bt.send(peer_id, data).await
-                            .map_err(|e| Error::Network(format!("Bluetooth send failed: {}", e)))?;
+            // Try sending based on the known connection address
+            let primary_result = self.send_via_address(peer_id, address, &data).await;
+            
+            if primary_result.is_ok() {
+                return Ok(());
+            }
+            
+            log::debug!("Primary transport failed for peer {:?}, trying failover", peer_id);
+            
+            // If primary transport failed and failover is enabled, try other transports
+            if self.failover_enabled {
+                drop(connections); // Release the lock
+                return self.send_with_transport_failover(peer_id, data).await;
+            }
+            
+            primary_result
+        } else {
+            Err(Error::Network(format!("Peer {:?} not connected", peer_id)))
+        }
+    }
+    
+    /// Send data via a specific transport address
+    async fn send_via_address(&self, peer_id: PeerId, address: &TransportAddress, data: &[u8]) -> Result<()> {
+        match address {
+            TransportAddress::Bluetooth(_) => {
+                // Try enhanced Bluetooth first, then fall back to regular Bluetooth
+                if let Some(enhanced_bt) = &self.enhanced_bluetooth {
+                    if let Ok(result) = enhanced_bt.read().await.send_to_peer(peer_id, data.to_vec()).await {
+                        return Ok(result);
                     }
                 }
-                _ => {
-                    return Err(Error::Network("Unsupported transport type".to_string()));
+                
+                if let Some(bluetooth) = &self.bluetooth {
+                    let mut bt = bluetooth.write().await;
+                    bt.send(peer_id, data.to_vec()).await
+                        .map_err(|e| Error::Network(format!("Bluetooth send failed: {}", e)))?;
                 }
-            }
-        } else {
-            return Err(Error::Network("Peer not connected".to_string()));
+            },
+            TransportAddress::Tcp(_) => {
+                if let Some(tcp) = &self.tcp_transport {
+                    let mut transport = tcp.write().await;
+                    transport.send(peer_id, data.to_vec()).await
+                        .map_err(|e| Error::Network(format!("TCP send failed: {}", e)))?;
+                }
+            },
+            TransportAddress::Udp(_) => {
+                return Err(Error::Network("UDP transport not yet implemented".to_string()));
+            },
+            TransportAddress::Mesh(_) => {
+                // For mesh addresses, try all available transports
+                return self.send_with_transport_failover(peer_id, data.to_vec()).await;
+            },
         }
         
         Ok(())
+    }
+    
+    /// Send with automatic transport failover
+    async fn send_with_transport_failover(&self, peer_id: PeerId, data: Vec<u8>) -> Result<()> {
+        let mut last_error = Error::Network("No transports available".to_string());
+        
+        // Try enhanced Bluetooth
+        if let Some(enhanced_bt) = &self.enhanced_bluetooth {
+            match enhanced_bt.read().await.send_to_peer(peer_id, data.clone()).await {
+                Ok(_) => {
+                    log::debug!("Successfully sent via enhanced Bluetooth to peer {:?}", peer_id);
+                    return Ok(());
+                },
+                Err(e) => {
+                    log::debug!("Enhanced Bluetooth send failed to peer {:?}: {}", peer_id, e);
+                    last_error = e;
+                }
+            }
+        }
+        
+        // Try TCP transport
+        if let Some(tcp) = &self.tcp_transport {
+            match tcp.write().await.send(peer_id, data.clone()).await {
+                Ok(_) => {
+                    log::debug!("Successfully sent via TCP to peer {:?}", peer_id);
+                    return Ok(());
+                },
+                Err(e) => {
+                    log::debug!("TCP send failed to peer {:?}: {}", peer_id, e);
+                    last_error = Error::Network(e.to_string());
+                }
+            }
+        }
+        
+        // Try regular Bluetooth as last resort
+        if let Some(bluetooth) = &self.bluetooth {
+            match bluetooth.write().await.send(peer_id, data).await {
+                Ok(_) => {
+                    log::debug!("Successfully sent via Bluetooth to peer {:?}", peer_id);
+                    return Ok(());
+                },
+                Err(e) => {
+                    log::debug!("Bluetooth send failed to peer {:?}: {}", peer_id, e);
+                    last_error = Error::Network(e.to_string());
+                }
+            }
+        }
+        
+        log::error!("All transport send attempts failed for peer {:?}", peer_id);
+        Err(last_error)
     }
     
     /// Broadcast packet to all connected peers
