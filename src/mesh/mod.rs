@@ -539,21 +539,38 @@ impl MeshService {
             while *is_running.read().await {
                 cleanup_interval.tick().await;
                 
-                // Clean message cache - remove old entries
+                // Clean message cache - remove old entries AND handle memory pressure
                 let mut cache = message_cache.write().await;
                 let cutoff = Instant::now() - Duration::from_secs(600); // 10 minutes
                 
-                // Collect keys to remove (avoid borrowing issues)
-                let mut keys_to_remove = Vec::new();
-                for (key, value) in cache.iter() {
-                    if value.first_seen <= cutoff {
-                        keys_to_remove.push(*key);
-                    }
-                }
+                // Check memory pressure first
+                let cache_size = cache.len();
+                const MAX_CACHE_SIZE: usize = 10000;
+                const HIGH_WATER_MARK: usize = (MAX_CACHE_SIZE as f64 * 0.8) as usize;
+                const LOW_WATER_MARK: usize = MAX_CACHE_SIZE / 2;
                 
-                // Remove expired entries
-                for key in keys_to_remove {
-                    cache.pop(&key);
+                if cache_size > HIGH_WATER_MARK {
+                    // Memory pressure - aggressively evict oldest entries
+                    let to_remove = cache_size - LOW_WATER_MARK;
+                    log::warn!("Message cache memory pressure: {} entries, removing {}", cache_size, to_remove);
+                    
+                    // LRU eviction - remove least recently used
+                    for _ in 0..to_remove {
+                        cache.pop_lru();
+                    }
+                } else {
+                    // Normal time-based cleanup
+                    let mut keys_to_remove = Vec::new();
+                    for (key, value) in cache.iter() {
+                        if value.first_seen <= cutoff {
+                            keys_to_remove.push(*key);
+                        }
+                    }
+                    
+                    // Remove expired entries
+                    for key in keys_to_remove {
+                        cache.pop(&key);
+                    }
                 }
                 
                 // Clean inactive peers

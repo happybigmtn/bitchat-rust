@@ -141,8 +141,10 @@ impl FileSecretsProvider {
     fn encrypt_value(&self, plaintext: &str) -> Result<String> {
         let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.encryption_key));
         
-        // Generate random nonce
-        let nonce_bytes = rand::random::<[u8; 12]>();
+        // Generate cryptographically secure random nonce
+        let mut nonce_bytes = [0u8; 12];
+        use rand::{RngCore, rngs::OsRng};
+        OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
         
         // Encrypt

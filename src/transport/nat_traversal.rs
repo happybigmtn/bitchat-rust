@@ -345,7 +345,8 @@ impl NetworkHandler {
             .map_err(|e| Error::Network(format!("Invalid STUN server address: {}", e)))?;
 
         // Create STUN binding request
-        let transaction_id: [u8; 12] = rand::thread_rng().gen();
+        let mut transaction_id = [0u8; 12];
+        rand::rngs::OsRng.fill_bytes(&mut transaction_id);
         let stun_request = Self::create_stun_binding_request_static(transaction_id);
 
         // Send STUN request
@@ -379,7 +380,8 @@ impl NetworkHandler {
             .map_err(|e| Error::Network(format!("Invalid STUN server address: {}", e)))?;
 
         // Create STUN binding request
-        let transaction_id: [u8; 12] = rand::thread_rng().gen();
+        let mut transaction_id = [0u8; 12];
+        rand::rngs::OsRng.fill_bytes(&mut transaction_id);
         let stun_request = self.create_stun_binding_request(transaction_id);
 
         // Send STUN request

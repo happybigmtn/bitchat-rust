@@ -645,7 +645,10 @@ impl TreasuryManager {
         let mut hasher = Sha256::new();
         hasher.update(wallet_type.as_bytes());
         hasher.update(Self::current_timestamp().to_be_bytes());
-        hasher.update(rand::random::<[u8; 16]>());
+        let mut random_bytes = [0u8; 16];
+        use rand::{RngCore, rngs::OsRng};
+        OsRng.fill_bytes(&mut random_bytes);
+        hasher.update(random_bytes);
         
         let result = hasher.finalize();
         let mut id = [0u8; 32];
@@ -658,7 +661,10 @@ impl TreasuryManager {
         let mut hasher = Sha256::new();
         hasher.update(b"amm");
         hasher.update(Self::current_timestamp().to_be_bytes());
-        hasher.update(rand::random::<[u8; 16]>());
+        let mut random_bytes = [0u8; 16];
+        use rand::{RngCore, rngs::OsRng};
+        OsRng.fill_bytes(&mut random_bytes);
+        hasher.update(random_bytes);
         
         let result = hasher.finalize();
         let mut id = [0u8; 32];
@@ -671,7 +677,10 @@ impl TreasuryManager {
         let mut hasher = Sha256::new();
         hasher.update(b"treasury_op");
         hasher.update(Self::current_timestamp().to_be_bytes());
-        hasher.update(rand::random::<[u8; 16]>());
+        let mut random_bytes = [0u8; 16];
+        use rand::{RngCore, rngs::OsRng};
+        OsRng.fill_bytes(&mut random_bytes);
+        hasher.update(random_bytes);
         
         let result = hasher.finalize();
         let mut id = [0u8; 32];
