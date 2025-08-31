@@ -1,4 +1,4 @@
-# Chapter 49: Alerting System Walkthrough
+# Chapter 149: Alerting System Walkthrough
 
 ## Introduction
 
@@ -64,4 +64,4 @@ Comprehensive alerting with enterprise features.
 
 ---
 
-*Next: Chapter 50*
+*Next: Chapter 150*

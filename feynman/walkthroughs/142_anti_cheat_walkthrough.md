@@ -1,4 +1,4 @@
-# Chapter 42: Anti-Cheat System Walkthrough
+# Chapter 142: Anti-Cheat System Walkthrough
 
 ## Introduction
 
@@ -141,4 +141,4 @@ async fn validate_balance_changes(&self, changes: &FxHashMap<PeerId, CrapTokens>
 
 ---
 
-*Next: [Chapter 43: Byzantine Consensus →](43_byzantine_consensus_walkthrough.md)*
+*Next: [Chapter 143: Byzantine Consensus →](143_byzantine_consensus_walkthrough.md)*

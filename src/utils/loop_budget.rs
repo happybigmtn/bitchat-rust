@@ -102,7 +102,14 @@ impl LoopBudget {
     /// Get backoff duration when budget is exhausted
     pub async fn backoff(&self) {
         let backoff_duration = {
-            let mut current = self.backoff.current_backoff.lock().unwrap();
+            // Handle poisoned mutex by using the poisoned data
+            let mut current = match self.backoff.current_backoff.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    log::error!("Backoff mutex poisoned, recovering");
+                    poisoned.into_inner()
+                }
+            };
             let duration = *current;
             
             // Increase backoff for next time
@@ -248,7 +255,13 @@ impl CircuitBreaker {
 
     /// Check if requests should be allowed through
     pub fn allow_request(&self) -> bool {
-        let mut state = self.state.lock().unwrap();
+        let mut state = match self.state.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                log::error!("Circuit state mutex poisoned in allow_request, recovering");
+                poisoned.into_inner()
+            }
+        };
         
         match *state {
             CircuitState::Closed => true,
@@ -271,7 +284,13 @@ impl CircuitBreaker {
     /// Record a successful operation
     pub fn record_success(&self) {
         self.current_failures.store(0, Ordering::Relaxed);
-        let mut state = self.state.lock().unwrap();
+        let mut state = match self.state.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                log::error!("Circuit state mutex poisoned in record_success, recovering");
+                poisoned.into_inner()
+            }
+        };
         *state = CircuitState::Closed;
     }
 
@@ -280,17 +299,35 @@ impl CircuitBreaker {
         let failures = self.current_failures.fetch_add(1, Ordering::Relaxed) + 1;
         
         if failures >= self.failure_threshold {
-            let mut state = self.state.lock().unwrap();
+            let mut state = match self.state.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    log::error!("Circuit state mutex poisoned in record_failure, recovering");
+                    poisoned.into_inner()
+                }
+            };
             *state = CircuitState::Open;
             
-            let mut last_failure = self.last_failure.lock().unwrap();
+            let mut last_failure = match self.last_failure.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    log::error!("Last failure mutex poisoned, recovering");
+                    poisoned.into_inner()
+                }
+            };
             *last_failure = Some(Instant::now());
         }
     }
 
     /// Get current state
     pub fn state(&self) -> CircuitState {
-        self.state.lock().unwrap().clone()
+        match self.state.lock() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => {
+                log::error!("Circuit state mutex poisoned in getter, recovering");
+                poisoned.into_inner().clone()
+            }
+        }
     }
 }
 

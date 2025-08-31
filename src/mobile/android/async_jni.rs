@@ -96,7 +96,13 @@ impl<T> AsyncJNIManager<T> {
 
     /// Check if an async operation is complete
     pub fn check_completion(&self, handle: AsyncHandle) -> AsyncResult<T> {
-        let mut ops = self.operations.lock().unwrap();
+        let mut ops = match self.operations.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                log::error!("Operations mutex poisoned in check_completion, recovering");
+                poisoned.into_inner()
+            }
+        };
         
         if let Some(mut rx) = ops.remove(&handle) {
             match rx.try_recv() {
@@ -117,7 +123,13 @@ impl<T> AsyncJNIManager<T> {
 
     /// Remove a completed or timed out operation
     pub fn cleanup_operation(&self, handle: AsyncHandle) {
-        let mut ops = self.operations.lock().unwrap();
+        let mut ops = match self.operations.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                log::error!("Operations mutex poisoned in cleanup_operation, recovering");
+                poisoned.into_inner()
+            }
+        };
         ops.remove(&handle);
     }
 }

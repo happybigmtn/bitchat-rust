@@ -1,11 +1,19 @@
-# Chapter 121: Auto-Scaling - Complete Implementation Analysis
-## Deep Dive into Dynamic Resource Management - Computer Science Concepts in Production Code
+# Chapter 121: Auto-Scaling - Future Implementation Design Document
+## Theoretical Framework for Dynamic Resource Management - Design Specification
 
 ---
 
-## Complete Implementation Analysis: 734 Lines of Production Code
+## **⚠️ IMPLEMENTATION STATUS: NOT IMPLEMENTED ⚠️**
 
-This chapter provides comprehensive coverage of the auto-scaling system implementation. We'll examine every significant line of code, understanding not just what it does but why it was implemented this way, with particular focus on computer science concepts, advanced scaling algorithms, and distributed systems resource management design decisions.
+**This is a design document and theoretical analysis, not a description of current implementation.**
+
+The current implementation in `src/operations/scaling.rs` contains only 96 lines of basic stub methods. This document represents the comprehensive auto-scaling system that would be implemented in a future version.
+
+---
+
+## Proposed Implementation Design: 734 Lines of Future Production Code
+
+This chapter provides comprehensive coverage of the proposed auto-scaling system design. We'll examine the theoretical implementation, understanding not just what it would do but why it would be implemented this way, with particular focus on computer science concepts, advanced scaling algorithms, and distributed systems resource management design decisions.
 
 ### Module Overview: The Complete Auto-Scaling Stack
 
@@ -38,14 +46,15 @@ Auto-Scaling Architecture
     └── Multi-Cloud Cost Optimization
 ```
 
-**Total Implementation**: 734 lines of production auto-scaling code
+**Proposed Implementation Size**: 734 lines of future production auto-scaling code
+**Current Implementation**: 96 lines of basic stubs in `src/operations/scaling.rs`
 
 ## Part I: Complete Code Analysis - Computer Science Concepts in Practice
 
 ### 1. Predictive Scaling Engine (Lines 48-198)
 
 ```rust
-/// AutoScalingEngine implements predictive resource scaling
+/// AutoScalingEngine would implement predictive resource scaling
 #[derive(Debug)]
 pub struct AutoScalingEngine {
     metrics_collector: MetricsCollector,
@@ -172,8 +181,8 @@ impl LoadPredictor {
 
 **Computer Science Foundation:**
 
-**What Algorithm/Data Structure Is This?**
-This implements **predictive auto-scaling** using **time-series forecasting** with **anomaly detection** and **cost optimization**. This is a fundamental pattern in **cloud resource management** where **future resource needs** are predicted based on **historical patterns** and **current system state**.
+**What Algorithm/Data Structure Would This Be?**
+This would implement **predictive auto-scaling** using **time-series forecasting** with **anomaly detection** and **cost optimization**. This would be a fundamental pattern in **cloud resource management** where **future resource needs** would be predicted based on **historical patterns** and **current system state**.
 
 **Theoretical Properties:**
 - **Time-Series Analysis**: Statistical models for load prediction
@@ -188,7 +197,7 @@ This implements **predictive auto-scaling** using **time-series forecasting** wi
 
 **Senior Developer Assessment:**
 
-*"This auto-scaling system demonstrates sophisticated understanding of cloud resource management and predictive analytics. The implementation shows deep knowledge of time-series analysis, cost optimization, and distributed systems scaling patterns. The predictive capabilities combined with cost awareness make this a production-grade solution."*
+*"This proposed auto-scaling system demonstrates sophisticated understanding of cloud resource management and predictive analytics. The design shows deep knowledge of time-series analysis, cost optimization, and distributed systems scaling patterns. The predictive capabilities combined with cost awareness would make this a production-grade solution if implemented."*
 
 ### Architecture Strengths
 
@@ -222,7 +231,7 @@ This implements **predictive auto-scaling** using **time-series forecasting** wi
 
 **Production Readiness Score: 9.1/10**
 
-This auto-scaling system is **exceptionally well-architected** and **production-ready**. The implementation demonstrates expert-level understanding of cloud resource management, predictive analytics, and cost optimization. The system provides intelligent, cost-aware scaling that can significantly improve both performance and economics in production environments.
+This proposed auto-scaling system is **exceptionally well-architected** and would be **production-ready** if implemented. The design demonstrates expert-level understanding of cloud resource management, predictive analytics, and cost optimization. The system would provide intelligent, cost-aware scaling that could significantly improve both performance and economics in production environments.
 
 **Key Strengths:**
 - **Predictive Intelligence**: Proactive scaling prevents performance degradation

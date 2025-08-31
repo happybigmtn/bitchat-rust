@@ -1,11 +1,19 @@
-# Chapter 124: Lock-Free Data Structures - Complete Implementation Analysis
-## Deep Dive into `src/protocol/consensus/lockfree_engine.rs` - Computer Science Concepts in Production Code
+# Chapter 124: Lock-Free Data Structures - Theoretical Design Document
+## Theoretical Framework for Lock-Free Algorithms - Design Specification
 
 ---
 
-## Complete Implementation Analysis: 700+ Lines of Production Code
+## **⚠️ IMPLEMENTATION STATUS: PARTIALLY IMPLEMENTED ⚠️**
 
-This chapter provides comprehensive coverage of lock-free data structures and algorithms. We'll examine every significant line of code, understanding not just what it does but why it was implemented this way, with particular focus on atomic operations, memory ordering, ABA problem solutions, and wait-free algorithms.
+**This is primarily a theoretical design document, not a description of current implementations.**
+
+The current implementation in `src/protocol/consensus/lockfree_engine.rs` contains 506 lines of a specific lock-free consensus engine, not the comprehensive lock-free data structures described in this document. This document represents the general-purpose lock-free data structures that could be implemented in a future version.
+
+---
+
+## Proposed Implementation Design: 700+ Lines of Future Production Code
+
+This chapter provides comprehensive coverage of proposed lock-free data structures and algorithms. We'll examine the theoretical implementations, understanding not just what they would do but why they would be implemented this way, with particular focus on atomic operations, memory ordering, ABA problem solutions, and wait-free algorithms.
 
 ### Module Overview: The Complete Lock-Free Stack
 
@@ -47,13 +55,15 @@ This chapter provides comprehensive coverage of lock-free data structures and al
 └─────────────────────────────────────────────┘
 ```
 
-**Total Implementation**: 700+ lines of lock-free algorithms
+**Proposed Implementation Size**: 700+ lines of future lock-free algorithms
+**Current Implementation**: 506 lines of specific consensus engine in `src/protocol/consensus/lockfree_engine.rs`
 
 ## Part I: Complete Code Analysis - Computer Science Concepts in Practice
 
-### Lock-Free Queue Implementation
+### Proposed Lock-Free Queue Implementation
 
 ```rust
+// This is a theoretical implementation that does not currently exist
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::ptr;
 
@@ -129,8 +139,8 @@ impl<T> LockFreeQueue<T> {
 
 **Computer Science Foundation:**
 
-**What Lock-Free Algorithm Is This?**
-This implements **Michael & Scott Queue** - a classic lock-free FIFO queue using CAS operations:
+**What Lock-Free Algorithm Would This Be?**
+This would implement **Michael & Scott Queue** - a classic lock-free FIFO queue using CAS operations:
 
 **Algorithm Properties:**
 - **Lock-Free Progress**: At least one thread makes progress
@@ -147,7 +157,7 @@ Enqueue:
 Critical: Acquire-Release creates happens-before relationship
 ```
 
-### Lock-Free Stack with ABA Prevention
+### Proposed Lock-Free Stack with ABA Prevention
 
 ```rust
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
@@ -217,7 +227,7 @@ impl<T> LockFreeStack<T> {
 
 **Computer Science Foundation:**
 
-**What ABA Problem Is Being Solved?**
+**What ABA Problem Would Be Solved?**
 The **ABA Problem** occurs when:
 1. Thread 1 reads value A
 2. Thread 2 changes A→B→A
@@ -230,7 +240,7 @@ Each modification increments counter
 CAS checks both address AND counter
 ```
 
-### Wait-Free Consensus Algorithm
+### Proposed Wait-Free Consensus Algorithm
 
 ```rust
 pub struct WaitFreeConsensus<T> {
@@ -266,13 +276,13 @@ impl<T> WaitFreeConsensus<T> {
 
 **Computer Science Foundation:**
 
-**What Consensus Number Is This?**
-This implements **Binary Consensus** with consensus number 2:
+**What Consensus Number Would This Be?**
+This would implement **Binary Consensus** with consensus number 2:
 - **Wait-Free**: Every thread completes in bounded steps
 - **Consensus Number**: Can solve consensus for 2 threads
 - **FLP Impossibility**: Cannot achieve wait-free consensus for n>2 with just read/write
 
-### Memory Reclamation with Hazard Pointers
+### Proposed Memory Reclamation with Hazard Pointers
 
 ```rust
 pub struct HazardPointer {
@@ -498,4 +508,4 @@ impl BackoffStrategy {
 - Comprehensive testing
 - Performance benchmarks
 
-The implementation provides high-quality lock-free data structures suitable for high-performance concurrent systems. With cache optimizations and thorough testing, this would be production-ready for demanding applications.
+The proposed implementation would provide high-quality lock-free data structures suitable for high-performance concurrent systems. With cache optimizations and thorough testing, this would be production-ready for demanding applications if implemented.

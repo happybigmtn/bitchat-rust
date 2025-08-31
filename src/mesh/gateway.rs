@@ -479,7 +479,13 @@ impl GatewayNode {
                 // Start message relay loop
                 let mut buffer = GrowableBuffer::new();
                 loop {
-                    let buffer_slice = buffer.get_mut(GrowableBuffer::MTU_SIZE);
+                    let buffer_slice = match buffer.get_mut(GrowableBuffer::MTU_SIZE) {
+                        Ok(slice) => slice,
+                        Err(e) => {
+                            log::error!("Failed to get buffer: {}", e);
+                            break;
+                        }
+                    };
                     match stream.read(buffer_slice).await {
                         Ok(0) => {
                             // Connection closed

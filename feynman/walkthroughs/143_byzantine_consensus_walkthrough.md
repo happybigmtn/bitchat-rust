@@ -1,4 +1,4 @@
-# Chapter 43: Byzantine Consensus Engine Walkthrough
+# Chapter 143: Byzantine Consensus Engine Walkthrough
 
 ## Introduction
 
@@ -94,4 +94,4 @@ pub enum SlashingReason {
 
 ---
 
-*Next: Chapter 44*
+*Next: Chapter 44 (original sequence continues)*

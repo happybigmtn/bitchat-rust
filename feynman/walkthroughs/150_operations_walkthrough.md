@@ -1,4 +1,4 @@
-# Chapter 50: Operations Module Walkthrough
+# Chapter 150: Operations Module Walkthrough
 
 ## Introduction
 
@@ -58,4 +58,4 @@ Complete operational tooling.
 
 ---
 
-*Next: Chapter 51*
+*Next: Chapter 151*

@@ -80,6 +80,10 @@ impl IOSKeychainManager {
 
         #[cfg(target_os = "ios")]
         {
+            // SAFETY: FFI call to iOS keychain API is safe because:
+            // 1. All C strings are properly null-terminated via CString
+            // 2. Data pointer and length are valid for the lifetime of the call
+            // 3. The iOS API copies the data, not retaining our pointers
             let result = unsafe {
                 ios_keychain_store_item(
                     service_cstr.as_ptr(),
@@ -120,9 +124,14 @@ impl IOSKeychainManager {
         #[cfg(target_os = "ios")]
         {
             // Start with a small buffer, will grow if needed
-            let buffer_slice = self.buffer.get_mut(1024);
+            let buffer_slice = self.buffer.get_mut(1024)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::OutOfMemory, e))?;
             let mut actual_size: usize = 0;
 
+            // SAFETY: FFI call to iOS keychain API is safe because:
+            // 1. All C strings are properly null-terminated
+            // 2. Buffer pointer and size are valid for the write operation
+            // 3. actual_size is properly initialized and will be updated by the API
             let result = unsafe {
                 ios_keychain_retrieve_item(
                     service_cstr.as_ptr(),
@@ -140,7 +149,10 @@ impl IOSKeychainManager {
                 0 => {
                     // If the data was larger than our initial buffer, try again with correct size
                     if actual_size > buffer_slice.len() {
-                        let larger_buffer = self.buffer.get_mut(actual_size);
+                        let larger_buffer = self.buffer.get_mut(actual_size)
+                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::OutOfMemory, e))?;
+                        // SAFETY: Second retrieval with correct buffer size
+                        // Buffer has been resized to accommodate actual_size bytes
                         let result = unsafe {
                             ios_keychain_retrieve_item(
                                 service_cstr.as_ptr(),
@@ -291,12 +303,15 @@ impl IOSKeychainManager {
             let mut accounts = Vec::new();
             for i in 0..actual_count {
                 if !accounts_buffer[i].is_null() {
+                    // SAFETY: The pointer is guaranteed to be valid and null-terminated
+                    // by the iOS keychain API contract
                     let account_cstr = unsafe { CStr::from_ptr(accounts_buffer[i]) };
                     if let Ok(account_str) = account_cstr.to_str() {
                         accounts.push(account_str.to_string());
                     }
 
                     // Free the C string
+                    // SAFETY: The pointer was allocated by iOS keychain API and must be freed
                     unsafe { ios_keychain_free_string(accounts_buffer[i]) };
                 }
             }
@@ -326,6 +341,9 @@ impl IOSKeychainManager {
             let mut public_key_size: usize = 0;
             let mut key_ref: *mut c_void = ptr::null_mut();
 
+            // SAFETY: FFI call to generate Secure Enclave key is safe because:
+            // 1. key_tag is properly null-terminated
+            // 2. key_ref pointer will be set by the API to a valid key reference
             let result = unsafe {
                 ios_keychain_generate_se_key(
                     key_tag_cstr.as_ptr(),
@@ -379,6 +397,10 @@ impl IOSKeychainManager {
             let mut signature_buffer = vec![0u8; 256];
             let mut signature_size: usize = 0;
 
+            // SAFETY: FFI call to sign with Secure Enclave is safe because:
+            // 1. key_tag is properly null-terminated
+            // 2. Data pointer and length are valid for the read operation
+            // 3. Signature buffer has sufficient capacity (256 bytes)
             let result = unsafe {
                 ios_keychain_sign_with_se(
                     key_tag_cstr.as_ptr(),
@@ -415,6 +437,7 @@ impl IOSKeychainManager {
 
         #[cfg(target_os = "ios")]
         {
+            // SAFETY: FFI call with properly null-terminated C string
             let result = unsafe { ios_keychain_delete_se_key(key_tag_cstr.as_ptr()) };
 
             if result != 0 && result != -25300 {
