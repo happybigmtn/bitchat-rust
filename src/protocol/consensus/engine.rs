@@ -120,6 +120,14 @@ pub enum GameOperation {
         changes: FxHashMap<PeerId, CrapTokens>,
         reason: String,
     },
+    ResolveDispute {
+        dispute_id: super::DisputeId,
+        resolution: String,
+    },
+    BanPlayer {
+        player: PeerId,
+        reason: String,
+    },
 }
 
 impl ConsensusEngine {
@@ -375,6 +383,20 @@ impl ConsensusEngine {
                         *balance = token_arithmetic::safe_add_tokens(*balance, *change)?;
                     }
                 }
+            }
+            GameOperation::ResolveDispute { dispute_id, resolution } => {
+                // Log dispute resolution
+                log::info!("Dispute {:?} resolved: {}", dispute_id, resolution);
+                // In a full implementation, this would update dispute tracking state
+            }
+            GameOperation::BanPlayer { player, reason } => {
+                // Remove player from game
+                log::warn!("Banning player {:?}: {}", player, reason);
+                new_state.player_balances.remove(player);
+                // In a full implementation, this would also:
+                // - Add to banned list
+                // - Redistribute their funds
+                // - Remove from active bets
             }
             _ => {
                 // Handle other operations

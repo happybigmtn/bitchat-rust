@@ -452,9 +452,73 @@ impl ConsensusCoordinator {
     /// Handle dispute claim
     async fn handle_dispute_claim(
         &self,
-        _dispute: crate::protocol::consensus::validation::Dispute,
+        dispute: crate::protocol::consensus::validation::Dispute,
     ) -> Result<()> {
-        // TODO: Implement dispute handling
+        use crate::protocol::consensus::validation::DisputeClaim;
+        
+        log::warn!("Received dispute claim from {:?}: {:?}", dispute.disputer, dispute.claim);
+        
+        // Validate the dispute based on type
+        let is_valid = match &dispute.claim {
+            DisputeClaim::InvalidBet { player, bet, reason } => {
+                log::info!("Dispute: Invalid bet from {:?}, reason: {}", player, reason);
+                // Check if bet violates game rules
+                bet.amount.0 > 0 && !reason.is_empty()
+            }
+            DisputeClaim::InvalidRoll { round_id, claimed_roll, reason } => {
+                log::info!("Dispute: Invalid roll in round {}, reason: {}", round_id, reason);
+                // Validate dice values are in range
+                claimed_roll.die1 < 1 || claimed_roll.die1 > 6 || 
+                claimed_roll.die2 < 1 || claimed_roll.die2 > 6
+            }
+            DisputeClaim::InvalidPayout { player, expected, actual } => {
+                log::info!("Dispute: Invalid payout for {:?}", player);
+                // Check if payout mismatch is significant
+                expected.0 != actual.0
+            }
+            DisputeClaim::DoubleSpending { player, conflicting_bets } => {
+                log::info!("Dispute: Double spending by {:?}", player);
+                // Check if there are actually conflicting bets
+                conflicting_bets.len() > 1
+            }
+            DisputeClaim::ConsensusViolation { violated_rule, details } => {
+                log::info!("Dispute: Consensus violation - {}: {}", violated_rule, details);
+                !violated_rule.is_empty()
+            }
+        };
+        
+        if !is_valid {
+            log::warn!("Invalid dispute from {:?}, ignoring", dispute.disputer);
+            return Ok(());
+        }
+        
+        // Track the disputer as potentially suspicious if they file too many disputes
+        let mut behavior = self.suspicious_behavior
+            .entry(dispute.disputer)
+            .or_insert_with(Vec::new);
+        behavior.push(CheatType::Other("Filing dispute".to_string()));
+        
+        // Forward to consensus engine for resolution
+        let mut engine = self.consensus_engine.lock().await;
+        
+        // Create a proposal to resolve the dispute
+        let proposal = GameProposal {
+            id: ProposalId::new(),
+            proposer: self.identity.peer_id,
+            operations: vec![GameOperation::ResolveDispute {
+                dispute_id: dispute.id,
+                resolution: format!("Auto-resolved: {:?}", dispute.claim),
+            }],
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            signatures: vec![],
+        };
+        
+        // Submit proposal to consensus
+        engine.propose(proposal).await?;
+        
         Ok(())
     }
 
@@ -529,18 +593,65 @@ impl ConsensusCoordinator {
     /// Handle cheat alert
     async fn handle_cheat_alert(
         &self,
-        _sender: PeerId,
+        sender: PeerId,
         suspected_peer: PeerId,
         violation_type: CheatType,
-        _evidence: Vec<u8>,
+        evidence: Vec<u8>,
     ) -> Result<()> {
-        log::warn!("Cheat alert for {:?}: {:?}", suspected_peer, violation_type);
+        log::warn!("Cheat alert from {:?} about {:?}: {:?}", sender, suspected_peer, violation_type);
 
         // Track suspicious behavior
         let mut behavior = self.suspicious_behavior.entry(suspected_peer).or_insert_with(Vec::new);
-        behavior.push(violation_type);
-
-        // TODO: Implement cheat response logic
+        behavior.push(violation_type.clone());
+        
+        // Implement cheat response logic based on violation severity
+        let response_action = match &violation_type {
+            CheatType::InvalidDiceRoll | CheatType::InvalidBet | CheatType::DoubleSpending => {
+                // Severe violations - propose immediate ban
+                log::error!("Severe violation detected from {:?}: {:?}", suspected_peer, violation_type);
+                
+                // Check if we have enough evidence (multiple reports)
+                if behavior.len() >= 3 {
+                    // Create proposal to ban the cheater
+                    let mut engine = self.consensus_engine.lock().await;
+                    let proposal = GameProposal {
+                        id: ProposalId::new(),
+                        proposer: self.identity.peer_id,
+                        operations: vec![GameOperation::BanPlayer {
+                            player: suspected_peer,
+                            reason: format!("{:?} - Evidence: {} bytes", violation_type, evidence.len()),
+                        }],
+                        created_at: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs(),
+                        signatures: vec![],
+                    };
+                    engine.propose(proposal).await?;
+                    
+                    // Remove from participants
+                    let mut participants = self.participants.write().await;
+                    participants.remove(&suspected_peer);
+                }
+            }
+            CheatType::TimestampManipulation | CheatType::StateManipulation => {
+                // Medium severity - warn and monitor
+                log::warn!("Medium severity violation from {:?}: {:?}", suspected_peer, violation_type);
+                
+                // Broadcast warning to all participants
+                let warning_msg = ConsensusMessage::CheatAlert {
+                    sender: self.identity.peer_id,
+                    suspected_peer,
+                    violation_type: violation_type.clone(),
+                    evidence: evidence.clone(),
+                };
+                self.broadcast_message(warning_msg).await?;
+            }
+            CheatType::Other(details) => {
+                // Low severity - just log
+                log::info!("Low severity violation from {:?}: {}", suspected_peer, details);
+            }
+        };
 
         Ok(())
     }
@@ -590,7 +701,58 @@ impl ConsensusCoordinator {
 
     /// Start message processing task
     async fn start_message_processing_task(&self) {
-        // TODO: Implement message processing from mesh service
+        let mesh_service = Arc::clone(&self.mesh_service);
+        let inbound_sender = self.outbound_sender.clone();
+        let message_cache = Arc::clone(&self.message_cache);
+        let messages_received = Arc::clone(&self.messages_received);
+        
+        tokio::spawn(async move {
+            let mut budget = LoopBudget::for_consensus();
+            
+            loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
+                // Poll for consensus messages from mesh service
+                match mesh_service.poll_consensus_message().await {
+                    Some(packet) => {
+                        // Check if this is a consensus packet
+                        if packet.packet_type == PACKET_TYPE_CONSENSUS_VOTE {
+                            // Deserialize consensus message
+                            if let Ok(consensus_msg) = bincode::deserialize::<ConsensusMessage>(&packet.payload) {
+                                // Check message cache for duplicates
+                                let msg_hash = {
+                                    use sha2::{Digest, Sha256};
+                                    let mut hasher = Sha256::new();
+                                    hasher.update(&packet.payload);
+                                    let result = hasher.finalize();
+                                    let mut hash = [0u8; 32];
+                                    hash.copy_from_slice(&result);
+                                    hash
+                                };
+                                
+                                let mut cache = message_cache.write().await;
+                                if !cache.contains(&msg_hash) {
+                                    cache.put(msg_hash, Instant::now());
+                                    messages_received.fetch_add(1, Ordering::Relaxed);
+                                    
+                                    // Forward to processing
+                                    let _ = inbound_sender.send(consensus_msg).await;
+                                }
+                            }
+                        }
+                        budget.consume(1);
+                    }
+                    None => {
+                        // No messages available, wait a bit
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
+            }
+        });
     }
 
     /// Start retry task for failed messages
@@ -644,12 +806,132 @@ impl ConsensusCoordinator {
 
     /// Start leader election task
     async fn start_leader_election_task(&self) {
-        // TODO: Implement leader election logic
+        let participants = Arc::clone(&self.participants);
+        let current_leader = Arc::clone(&self.current_leader);
+        let current_term = Arc::clone(&self.current_term);
+        let identity = Arc::clone(&self.identity);
+        let outbound_sender = self.outbound_sender.clone();
+        let config = self.config.clone();
+        let game_id = self.game_id;
+        
+        tokio::spawn(async move {
+            let mut election_interval = interval(config.leader_election_timeout);
+            let mut budget = LoopBudget::for_consensus();
+            
+            loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
+                election_interval.tick().await;
+                budget.consume(1);
+                
+                // Check if we need a new leader
+                let leader = current_leader.read().await;
+                if leader.is_none() {
+                    drop(leader);
+                    
+                    // Propose ourselves as leader (simple deterministic selection)
+                    // In production, this would use a more sophisticated algorithm
+                    let participants_list = participants.read().await;
+                    let mut sorted_participants: Vec<PeerId> = participants_list.iter().cloned().collect();
+                    sorted_participants.sort();
+                    
+                    // Select leader based on term and participant order
+                    let term = current_term.read().await;
+                    let leader_index = (*term as usize) % sorted_participants.len();
+                    let proposed_leader = sorted_participants.get(leader_index).cloned()
+                        .unwrap_or(identity.peer_id);
+                    
+                    drop(term);
+                    
+                    // If we're the proposed leader, claim leadership
+                    if proposed_leader == identity.peer_id {
+                        log::info!("Claiming leadership for term {}", *current_term.read().await);
+                        
+                        let mut leader_guard = current_leader.write().await;
+                        *leader_guard = Some(identity.peer_id);
+                        
+                        // Broadcast leadership claim
+                        let claim = ConsensusMessage::new_with_payload(
+                            identity.peer_id,
+                            game_id,
+                            0, // round
+                            ConsensusPayload::LeaderElection {
+                                proposed_leader: identity.peer_id,
+                                term: *current_term.read().await,
+                            },
+                        );
+                        
+                        let _ = outbound_sender.send(claim).await;
+                    }
+                }
+            }
+        });
     }
 
     /// Start partition detection task
     async fn start_partition_detection_task(&self) {
-        // TODO: Implement partition detection and recovery
+        let participants = Arc::clone(&self.participants);
+        let network_view = Arc::clone(&self.network_view);
+        let partition_detected = Arc::clone(&self.partition_detected);
+        let last_heartbeat = Arc::clone(&self.last_heartbeat);
+        let config = self.config.clone();
+        
+        tokio::spawn(async move {
+            let mut check_interval = interval(config.partition_recovery_timeout);
+            let mut budget = LoopBudget::for_consensus();
+            
+            loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
+                check_interval.tick().await;
+                budget.consume(1);
+                
+                // Check for partition based on heartbeat timeout
+                let last_hb = last_heartbeat.read().await;
+                let time_since_heartbeat = last_hb.elapsed();
+                drop(last_hb);
+                
+                if time_since_heartbeat > config.partition_recovery_timeout {
+                    // We might be partitioned
+                    let mut is_partitioned = partition_detected.write().await;
+                    if !*is_partitioned {
+                        log::warn!("Network partition detected! No heartbeats for {:?}", time_since_heartbeat);
+                        *is_partitioned = true;
+                        
+                        // Try to recover by resetting network view
+                        let mut view = network_view.write().await;
+                        
+                        // Keep only participants we can directly reach
+                        // In a real implementation, this would probe each participant
+                        let reachable_participants = participants.read().await.clone();
+                        view.participants = reachable_participants.into_iter().collect();
+                        view.partition_id = Some(rand::random::<u64>());
+                        
+                        log::info!("Attempting partition recovery with {} participants", 
+                                  view.participants.len());
+                    }
+                } else {
+                    // Network seems healthy
+                    let mut is_partitioned = partition_detected.write().await;
+                    if *is_partitioned {
+                        log::info!("Network partition resolved");
+                        *is_partitioned = false;
+                        
+                        // Clear partition ID
+                        let mut view = network_view.write().await;
+                        view.partition_id = None;
+                    }
+                }
+            }
+        });
     }
 
     /// Check if message is duplicate
