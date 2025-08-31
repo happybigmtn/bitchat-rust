@@ -901,7 +901,8 @@ impl Default for NotificationConfig {
             channels: vec![NotificationChannel {
                 name: "console".to_string(),
                 channel_type: NotificationChannelType::Webhook {
-                    url: "http://localhost:8080/alerts".to_string(),
+                    url: std::env::var("ALERT_WEBHOOK_URL")
+                        .unwrap_or_else(|_| "http://localhost:8080/alerts".to_string()),
                     headers: HashMap::new(),
                 },
                 min_severity: Some(AlertSeverity::Medium),
@@ -1417,7 +1418,8 @@ pub mod enhanced_notifications {
                     "name": "View Dashboard",
                     "targets": [{
                         "os": "default",
-                        "uri": "http://monitoring.bitcraps.local:3000"
+                        "uri": std::env::var("MONITORING_DASHBOARD_URL")
+                            .unwrap_or_else(|_| "http://monitoring.bitcraps.local:3000".to_string())
                     }]
                 }]
             });

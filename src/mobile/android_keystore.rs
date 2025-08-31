@@ -15,10 +15,11 @@
 use crate::error::{Error, Result};
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int};
+use std::sync::Arc;
 
 /// Android Keystore interface
 pub struct AndroidKeystore {
-    keystore_alias: String,
+    keystore_alias: Arc<str>,
     initialized: bool,
 }
 
@@ -104,14 +105,14 @@ extern "C" {
 
 /// Android Keystore manager with hardware security module backing
 pub struct AndroidKeystoreManager {
-    keystore_alias: String,
+    keystore_alias: Arc<str>,
     initialized: bool,
 }
 
 impl AndroidKeystoreManager {
     /// Create new Android Keystore manager
     pub fn new(app_package_name: &str) -> Result<Self> {
-        let keystore_alias = format!("bitcraps_{}", app_package_name);
+        let keystore_alias: Arc<str> = format!("bitcraps_{}", app_package_name).into();
         let mut manager = Self {
             keystore_alias,
             initialized: false,
@@ -127,7 +128,7 @@ impl AndroidKeystoreManager {
             return Ok(());
         }
 
-        let alias_cstr = CString::new(self.keystore_alias.clone())
+        let alias_cstr = CString::new(self.keystore_alias.as_ref())
             .map_err(|e| Error::InvalidData(format!("Invalid keystore alias: {}", e)))?;
 
         #[cfg(target_os = "android")]
@@ -158,7 +159,7 @@ impl AndroidKeystoreManager {
             return Err(Error::InvalidState("Keystore not initialized".to_string()));
         }
 
-        let keystore_alias_cstr = CString::new(self.keystore_alias.clone())
+        let keystore_alias_cstr = CString::new(self.keystore_alias.as_ref())
             .map_err(|e| Error::InvalidData(format!("Invalid keystore alias: {}", e)))?;
         let key_alias_cstr = CString::new(key_alias)
             .map_err(|e| Error::InvalidData(format!("Invalid key alias: {}", e)))?;
@@ -214,7 +215,7 @@ impl AndroidKeystoreManager {
             return Err(Error::InvalidState("Keystore not initialized".to_string()));
         }
 
-        let keystore_alias_cstr = CString::new(self.keystore_alias.clone())
+        let keystore_alias_cstr = CString::new(self.keystore_alias.as_ref())
             .map_err(|e| Error::InvalidData(format!("Invalid keystore alias: {}", e)))?;
         let key_alias_cstr = CString::new(key_alias)
             .map_err(|e| Error::InvalidData(format!("Invalid key alias: {}", e)))?;
@@ -267,7 +268,7 @@ impl AndroidKeystoreManager {
             return Err(Error::InvalidState("Keystore not initialized".to_string()));
         }
 
-        let keystore_alias_cstr = CString::new(self.keystore_alias.clone())
+        let keystore_alias_cstr = CString::new(self.keystore_alias.as_ref())
             .map_err(|e| Error::InvalidData(format!("Invalid keystore alias: {}", e)))?;
         let key_alias_cstr = CString::new(key_alias)
             .map_err(|e| Error::InvalidData(format!("Invalid key alias: {}", e)))?;
@@ -319,7 +320,7 @@ impl AndroidKeystoreManager {
             return Err(Error::InvalidState("Keystore not initialized".to_string()));
         }
 
-        let keystore_alias_cstr = CString::new(self.keystore_alias.clone())
+        let keystore_alias_cstr = CString::new(self.keystore_alias.as_ref())
             .map_err(|e| Error::InvalidData(format!("Invalid keystore alias: {}", e)))?;
         let key_alias_cstr = CString::new(key_alias)
             .map_err(|e| Error::InvalidData(format!("Invalid key alias: {}", e)))?;
@@ -352,7 +353,7 @@ impl AndroidKeystoreManager {
             return Err(Error::InvalidState("Keystore not initialized".to_string()));
         }
 
-        let keystore_alias_cstr = CString::new(self.keystore_alias.clone())
+        let keystore_alias_cstr = CString::new(self.keystore_alias.as_ref())
             .map_err(|e| Error::InvalidData(format!("Invalid keystore alias: {}", e)))?;
         let key_alias_cstr = CString::new(key_alias)
             .map_err(|e| Error::InvalidData(format!("Invalid key alias: {}", e)))?;
@@ -387,7 +388,7 @@ impl AndroidKeystoreManager {
             return Err(Error::InvalidState("Keystore not initialized".to_string()));
         }
 
-        let keystore_alias_cstr = CString::new(self.keystore_alias.clone())
+        let keystore_alias_cstr = CString::new(self.keystore_alias.as_ref())
             .map_err(|e| Error::InvalidData(format!("Invalid keystore alias: {}", e)))?;
         let key_alias_cstr = CString::new(key_alias)
             .map_err(|e| Error::InvalidData(format!("Invalid key alias: {}", e)))?;
@@ -438,7 +439,7 @@ impl AndroidKeystoreManager {
             return Err(Error::InvalidState("Keystore not initialized".to_string()));
         }
 
-        let keystore_alias_cstr = CString::new(self.keystore_alias.clone())
+        let keystore_alias_cstr = CString::new(self.keystore_alias.as_ref())
             .map_err(|e| Error::InvalidData(format!("Invalid keystore alias: {}", e)))?;
 
         #[cfg(target_os = "android")]

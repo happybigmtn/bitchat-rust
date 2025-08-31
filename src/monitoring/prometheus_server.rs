@@ -30,7 +30,7 @@ use crate::Error;
 /// Prometheus metrics server configuration
 #[derive(Debug, Clone)]
 pub struct PrometheusConfig {
-    /// Server bind address (default: 0.0.0.0:9090)
+    /// Server bind address (default from env or 0.0.0.0:9090)
     pub bind_address: SocketAddr,
     /// Metrics collection interval in seconds
     pub collection_interval_seconds: u64,
@@ -46,8 +46,14 @@ pub struct PrometheusConfig {
 
 impl Default for PrometheusConfig {
     fn default() -> Self {
+        // Get bind address from environment or use default
+        let bind_address = std::env::var("PROMETHEUS_BIND_ADDRESS")
+            .ok()
+            .and_then(|addr| addr.parse().ok())
+            .unwrap_or_else(|| ([0, 0, 0, 0], 9090).into());
+        
         Self {
-            bind_address: ([0, 0, 0, 0], 9090).into(),
+            bind_address,
             collection_interval_seconds: 15,
             enable_detailed_labels: true,
             global_labels: vec![

@@ -11,12 +11,14 @@ pub mod constant_time;
 pub mod dos_protection;
 pub mod input_validation;
 pub mod rate_limiting;
+pub mod resource_quotas;
 pub mod security_events;
 
 pub use constant_time::ConstantTimeOps;
 pub use dos_protection::{DosProtection, DosProtectionConfig, ProtectionResult};
 pub use input_validation::{InputValidator, ValidationContext, ValidationResult};
 pub use rate_limiting::{RateLimitConfig, RateLimitResult, RateLimiter};
+pub use resource_quotas::{ResourceQuotaManager, QuotaConfig, ResourceType, QuotaViolation};
 pub use security_events::{SecurityEvent, SecurityEventLogger, SecurityLevel};
 
 use crate::error::{Error, Result};

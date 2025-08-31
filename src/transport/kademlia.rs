@@ -25,11 +25,14 @@ pub struct NodeId {
 }
 
 impl NodeId {
-    /// Create a new NodeId without proof-of-work (for testing/legacy)
-    pub fn new_legacy(bytes: [u8; 32]) -> Self {
+    /// Create a new NodeId for testing only
+    #[cfg(test)]
+    pub fn new_test(bytes: [u8; 32]) -> Self {
+        // Generate minimal proof for testing
+        let proof = ProofOfWork::generate(&bytes, 1).expect("Test proof generation");
         Self {
             id: bytes,
-            proof_of_work: None,
+            proof_of_work: Some(proof),
         }
     }
 
@@ -62,10 +65,11 @@ impl NodeId {
         }
     }
 
-    pub fn from_peer_id(peer_id: &PeerId) -> Self {
+    pub fn from_peer_id(peer_id: &PeerId) -> Result<Self, &'static str> {
         // Feynman: Convert a peer's identity into their DHT "address"
-        // For now, create legacy NodeId - should migrate to proof-based
-        Self::new_legacy(*peer_id)
+        // Require proof-of-work for all production nodes
+        // The peer should have pre-computed their proof
+        Err("Peer must provide NodeId with proof-of-work")
     }
 
     pub fn as_bytes(&self) -> &[u8; 32] {
@@ -76,13 +80,13 @@ impl NodeId {
     pub fn is_valid(&self) -> bool {
         match &self.proof_of_work {
             Some(proof) => proof.verify(&self.id),
-            None => false, // Legacy nodes are considered insecure
+            None => false, // Nodes without proof are rejected
         }
     }
 
-    /// Check if this is a legacy NodeId without proof
-    pub fn is_legacy(&self) -> bool {
-        self.proof_of_work.is_none()
+    /// Check if this NodeId has valid proof
+    pub fn has_proof(&self) -> bool {
+        self.proof_of_work.is_some()
     }
 
     /// Calculate XOR distance between two node IDs
@@ -157,7 +161,7 @@ impl Contact {
 impl Default for Contact {
     fn default() -> Self {
         Self {
-            id: NodeId::new_legacy([0; 32]),
+            id: NodeId::generate_secure(8), // Generate with proper proof
             peer_id: [0; 32],
             address: "0.0.0.0:0"
                 .parse()
@@ -221,10 +225,28 @@ impl KBucket {
 
     /// Get K closest contacts to a target
     pub fn closest_contacts(&self, target: &NodeId, k: usize) -> Vec<SharedContact> {
-        let mut contacts = self.contacts.clone(); // Arc cloning is cheap
-        contacts.sort_by_key(|c| c.id.distance(target));
-        contacts.truncate(k);
-        contacts
+        // Use a BinaryHeap to maintain only K closest contacts
+        use std::collections::BinaryHeap;
+        use std::cmp::Reverse;
+        
+        let mut heap: BinaryHeap<(Reverse<[u8; 32]>, SharedContact)> = BinaryHeap::with_capacity(k);
+        
+        for contact in &self.contacts {
+            let distance = contact.id.distance(target);
+            if heap.len() < k {
+                heap.push((Reverse(distance), contact.clone()));
+            } else if let Some((Reverse(max_dist), _)) = heap.peek() {
+                if distance < *max_dist {
+                    heap.pop();
+                    heap.push((Reverse(distance), contact.clone()));
+                }
+            }
+        }
+        
+        heap.into_sorted_vec()
+            .into_iter()
+            .map(|(_, contact)| contact)
+            .collect()
     }
 }
 
@@ -547,7 +569,7 @@ impl KademliaNode {
 
         while !to_query.is_empty() && round < MAX_ROUNDS {
             round += 1;
-            let mut futures = Vec::new();
+            let mut futures = Vec::with_capacity(3); // Alpha parameter (typically 3)
 
             // Query α nodes in parallel - optimize by avoiding unnecessary clones
             let contacts_to_query: Vec<_> =
@@ -622,7 +644,9 @@ impl KademliaNode {
         // Calculate key ID
         let mut hasher = Sha256::new();
         hasher.update(&key);
-        let key_id = NodeId::new_legacy(hasher.finalize().into());
+        // Keys don't need proof-of-work, only nodes do
+        let key_bytes: [u8; 32] = hasher.finalize().into();
+        let key_id = NodeId::new_with_proof(key_bytes, ProofOfWork::generate(&key_bytes, 1).unwrap()).unwrap();
 
         // Find K closest nodes
         let nodes = self.lookup_node(key_id.clone()).await;
@@ -694,7 +718,9 @@ impl KademliaNode {
         // Calculate key ID and search network
         let mut hasher = Sha256::new();
         hasher.update(&key);
-        let key_id = NodeId::new_legacy(hasher.finalize().into());
+        // Keys don't need proof-of-work, only nodes do
+        let key_bytes: [u8; 32] = hasher.finalize().into();
+        let key_id = NodeId::new_with_proof(key_bytes, ProofOfWork::generate(&key_bytes, 1).unwrap()).unwrap();
 
         // Use iterative lookup for FIND_VALUE
         match self.iterative_find_value(key_id, key.clone()).await {
@@ -723,7 +749,7 @@ impl KademliaNode {
 
         while !to_query.is_empty() && round < MAX_ROUNDS {
             round += 1;
-            let mut futures = Vec::new();
+            let mut futures = Vec::with_capacity(3); // Alpha parameter (typically 3)
 
             // Query α nodes in parallel - optimize by avoiding unnecessary clones
             let contacts_to_query: Vec<_> =
@@ -1071,7 +1097,9 @@ impl KademliaNode {
                         storage.write().await.remove(&key);
                         let mut hasher = Sha256::new();
                         hasher.update(&key);
-                        let key_id = NodeId::new_legacy(hasher.finalize().into());
+                        // Keys don't need proof-of-work, only nodes do
+        let key_bytes: [u8; 32] = hasher.finalize().into();
+        let key_id = NodeId::new_with_proof(key_bytes, ProofOfWork::generate(&key_bytes, 1).unwrap()).unwrap();
                         let shared_nodes =
                             routing_table.find_closest(&key_id, routing_table.k).await;
                         let nodes = Contact::from_shared_vec(shared_nodes);
@@ -1081,7 +1109,9 @@ impl KademliaNode {
                     // Value not found, return closest nodes
                     let mut hasher = Sha256::new();
                     hasher.update(&key);
-                    let key_id = NodeId::new_legacy(hasher.finalize().into());
+                    // Keys don't need proof-of-work, only nodes do
+        let key_bytes: [u8; 32] = hasher.finalize().into();
+        let key_id = NodeId::new_with_proof(key_bytes, ProofOfWork::generate(&key_bytes, 1).unwrap()).unwrap();
                     let shared_nodes = routing_table.find_closest(&key_id, routing_table.k).await;
                     let nodes = Contact::from_shared_vec(shared_nodes);
                     FindValueResult::Nodes(nodes)
@@ -1227,7 +1257,7 @@ impl KademliaNode {
         for addr in bootstrap_nodes {
             // Create a contact for the bootstrap node
             let _contact = Contact {
-                id: NodeId::new_legacy([0u8; 32]), // Unknown ID initially
+                id: NodeId::generate_secure(1), // Generate minimal proof for initial connection
                 peer_id: [0u8; 32],
                 address: addr,
                 last_seen: Instant::now(),
@@ -1323,8 +1353,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_distance_calculation() {
-        let id1 = NodeId::new_legacy([0u8; 32]);
-        let id2 = NodeId::new_legacy([255u8; 32]);
+        let id1 = NodeId::new_test([0u8; 32]);
+        let id2 = NodeId::new_test([255u8; 32]);
 
         let distance = id1.distance(&id2);
         assert_eq!(distance.leading_zeros(), 0); // All bits different
@@ -1335,11 +1365,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_routing_table() {
-        let local_id = NodeId::new_legacy([0u8; 32]);
+        let local_id = NodeId::new_test([0u8; 32]);
         let routing_table = RoutingTable::new(local_id, 20, 3);
 
         let contact = Arc::new(Contact {
-            id: NodeId::new_legacy([1u8; 32]),
+            id: NodeId::new_test([1u8; 32]),
             peer_id: [1u8; 32],
             address: "127.0.0.1:8000"
                 .parse()

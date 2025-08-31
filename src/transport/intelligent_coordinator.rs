@@ -541,9 +541,9 @@ impl IntelligentTransportCoordinator {
 
     /// Start monitoring a transport
     async fn start_transport_monitoring(&self, transport_id: String) {
-        let transports = self.transports.clone();
-        let config = self.config.clone();
-        let performance_history = self.performance_history.clone();
+        let transports = Arc::clone(&self.transports);
+        let config = Arc::clone(&self.config);
+        let performance_history = Arc::clone(&self.performance_history);
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(config.health_check_interval);

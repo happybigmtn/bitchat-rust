@@ -373,9 +373,9 @@ impl PersistentLedger {
 
         // Simple Merkle tree implementation
         while hashes.len() > 1 {
-            let mut next_level = Vec::new();
+            let mut next_level = Vec::with_capacity(hashes.len() / 2 + 1);
             for chunk in hashes.chunks(2) {
-                let mut data = Vec::new();
+                let mut data = Vec::with_capacity(64); // 2 * 32 byte hashes
                 data.extend_from_slice(&chunk[0]);
                 if chunk.len() > 1 {
                     data.extend_from_slice(&chunk[1]);

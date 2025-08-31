@@ -29,9 +29,10 @@ pub struct Config {
     pub game: GameConfig,
     pub treasury: TreasuryConfig,
     pub performance: PerformanceProfile,
-    // TODO: [Config] Add hot-reload support for production config changes
-    //       Currently requires restart for config changes to take effect
-    //       Priority: Medium - Important for production operations
+    /// Configuration version for hot-reload tracking
+    pub version: u64,
+    /// Last reload timestamp
+    pub last_reload: Option<std::time::SystemTime>,
 }
 
 /// Application-level configuration

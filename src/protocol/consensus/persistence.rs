@@ -200,10 +200,17 @@ impl ConsensusPersistence {
             hash: state_hash,
         };
 
-        self.wal.lock().unwrap().append(wal_entry)?;
+        self.wal.lock()
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
+                std::io::Error::new(std::io::ErrorKind::Other, format!("WAL lock poisoned: {}", e))
+            )))?
+            .append(wal_entry)?;
 
         // Write to database
-        let db = self.db.lock().unwrap();
+        let db = self.db.lock()
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
+                std::io::Error::new(std::io::ErrorKind::Other, format!("DB lock poisoned: {}", e))
+            )))?;
         db.execute(
             "INSERT OR REPLACE INTO consensus_state 
              (round_id, state_hash, state_data, timestamp, confirmations, is_finalized)
@@ -229,7 +236,10 @@ impl ConsensusPersistence {
 
     /// Load consensus state
     pub fn load_consensus_state(&self, round_id: u64) -> Result<Option<Vec<u8>>> {
-        let db = self.db.lock().unwrap();
+        let db = self.db.lock()
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
+                std::io::Error::new(std::io::ErrorKind::Other, format!("DB lock poisoned: {}", e))
+            )))?;
 
         let result: SqlResult<Vec<u8>> = db.query_row(
             "SELECT state_data FROM consensus_state WHERE round_id = ?1",
@@ -246,7 +256,10 @@ impl ConsensusPersistence {
 
     /// Get latest consensus state
     pub fn load_latest_state(&self) -> Result<Option<(u64, Vec<u8>)>> {
-        let db = self.db.lock().unwrap();
+        let db = self.db.lock()
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
+                std::io::Error::new(std::io::ErrorKind::Other, format!("DB lock poisoned: {}", e))
+            )))?;
 
         let result: SqlResult<(i64, Vec<u8>)> = db.query_row(
             "SELECT round_id, state_data FROM consensus_state 
@@ -282,10 +295,17 @@ impl ConsensusPersistence {
             hash: crate::crypto::GameCrypto::hash(vote_data),
         };
 
-        self.wal.lock().unwrap().append(wal_entry)?;
+        self.wal.lock()
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
+                std::io::Error::new(std::io::ErrorKind::Other, format!("WAL lock poisoned: {}", e))
+            )))?
+            .append(wal_entry)?;
 
         // Write to database
-        let db = self.db.lock().unwrap();
+        let db = self.db.lock()
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
+                std::io::Error::new(std::io::ErrorKind::Other, format!("DB lock poisoned: {}", e))
+            )))?;
         db.execute(
             "INSERT INTO consensus_votes 
              (round_id, voter, vote_data, signature, timestamp)
@@ -305,7 +325,10 @@ impl ConsensusPersistence {
 
     /// Get votes for a round
     pub fn get_votes(&self, round_id: u64) -> Result<Vec<(PeerId, Vec<u8>, [u8; 64])>> {
-        let db = self.db.lock().unwrap();
+        let db = self.db.lock()
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
+                std::io::Error::new(std::io::ErrorKind::Other, format!("DB lock poisoned: {}", e))
+            )))?;
 
         let mut stmt = db
             .prepare(
@@ -351,7 +374,10 @@ impl ConsensusPersistence {
         };
 
         // Store checkpoint
-        let db = self.db.lock().unwrap();
+        let db = self.db.lock()
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
+                std::io::Error::new(std::io::ErrorKind::Other, format!("DB lock poisoned: {}", e))
+            )))?;
         let checkpoint_data =
             bincode::serialize(&checkpoint).map_err(|e| Error::Serialization(e.to_string()))?;
 
@@ -378,7 +404,10 @@ impl ConsensusPersistence {
 
     /// Load latest checkpoint
     pub fn load_latest_checkpoint(&self) -> Result<Option<ConsensusCheckpoint>> {
-        let db = self.db.lock().unwrap();
+        let db = self.db.lock()
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
+                std::io::Error::new(std::io::ErrorKind::Other, format!("DB lock poisoned: {}", e))
+            )))?;
 
         let result: SqlResult<Vec<u8>> = db.query_row(
             "SELECT checkpoint_data FROM consensus_checkpoints 
@@ -402,7 +431,10 @@ impl ConsensusPersistence {
     fn prune_old_data(&self, checkpoint_round: u64) -> Result<()> {
         let cutoff = checkpoint_round.saturating_sub(CHECKPOINT_INTERVAL * 2);
 
-        let db = self.db.lock().unwrap();
+        let db = self.db.lock()
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
+                std::io::Error::new(std::io::ErrorKind::Other, format!("DB lock poisoned: {}", e))
+            )))?;
 
         // Delete old votes
         db.execute(

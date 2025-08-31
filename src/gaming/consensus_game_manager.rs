@@ -344,7 +344,7 @@ impl ConsensusGameManager {
 
         // Collect responses for 2 seconds
         let start_time = Instant::now();
-        let mut discovered_games = Vec::new();
+        let mut discovered_games = Vec::with_capacity(32); // typical network size
 
         while start_time.elapsed() < Duration::from_secs(2) {
             // Check for discovery responses in mesh service
@@ -703,10 +703,10 @@ impl ConsensusGameManager {
 
     /// Start game maintenance task
     async fn start_game_maintenance(&self) {
-        let active_games = self.active_games.clone();
-        let consensus_bridges = self.consensus_bridges.clone();
-        let consensus_handler = self.consensus_handler.clone();
-        let total_completed = self.total_games_completed.clone();
+        let active_games = Arc::clone(&self.active_games);
+        let consensus_bridges = Arc::clone(&self.consensus_bridges);
+        let consensus_handler = Arc::clone(&self.consensus_handler);
+        let total_completed = Arc::clone(&self.total_games_completed);
 
         tokio::spawn(async move {
             let mut maintenance_interval = interval(Duration::from_secs(60));

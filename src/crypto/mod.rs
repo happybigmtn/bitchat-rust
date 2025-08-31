@@ -657,7 +657,7 @@ impl MerkleTree {
         let mut current_level = leaves.to_vec();
 
         while current_level.len() > 1 {
-            let mut next_level = Vec::new();
+            let mut next_level = Vec::with_capacity(current_level.len() / 2 + 1);
 
             for chunk in current_level.chunks(2) {
                 let mut hasher = Sha256::new();
@@ -708,7 +708,7 @@ impl MerkleTree {
             }
 
             // Move to next level
-            let mut next_level = Vec::new();
+            let mut next_level = Vec::with_capacity(current_level.len() / 2 + 1);
             for chunk in current_level.chunks(2) {
                 let mut hasher = Sha256::new();
                 hasher.update(chunk[0]);

@@ -302,12 +302,12 @@ impl PayoutEngine {
         }
 
         // Calculate payouts
-        let mut individual_payouts = HashMap::new();
+        let mut individual_payouts = HashMap::with_capacity(16); // typical players per game
         let mut total_wagered = CrapTokens(0);
         let mut total_house_take = CrapTokens(0);
 
         // Group bets by player
-        let mut player_bets: HashMap<PeerId, Vec<&BetRecord>> = HashMap::new();
+        let mut player_bets: HashMap<PeerId, Vec<&BetRecord>> = HashMap::with_capacity(16); // typical players
         for bet in &active_bets {
             player_bets.entry(bet.player).or_default().push(bet);
             total_wagered = CrapTokens(total_wagered.0 + bet.amount.0);
@@ -458,8 +458,8 @@ impl PayoutEngine {
     ) -> Result<PlayerPayout> {
         let mut total_bet = CrapTokens(0);
         let mut total_won = CrapTokens(0);
-        let mut winning_bets = Vec::new();
-        let mut losing_bets = Vec::new();
+        let mut winning_bets = Vec::with_capacity(bets.len() / 2);
+        let mut losing_bets = Vec::with_capacity(bets.len() / 2);
 
         for bet in bets {
             total_bet = CrapTokens(total_bet.0 + bet.amount.0);

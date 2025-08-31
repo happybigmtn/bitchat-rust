@@ -512,13 +512,13 @@ impl EnhancedTransportSecurity {
         };
 
         // Build message without HMAC first
-        let mut message_data = Vec::new();
+        let mut message_data = Vec::with_capacity(encrypted_data.len() + 24); // nonce + data
         message_data.extend_from_slice(&nonce);
         message_data.extend_from_slice(&encrypted_data);
 
         // Calculate HMAC over header (without HMAC field) + encrypted data
         if enable_hmac {
-            let mut hmac_input = Vec::new();
+            let mut hmac_input = Vec::with_capacity(message_data.len() + 32); // message + extra
             hmac_input.extend_from_slice(&current_sequence.to_be_bytes());
             hmac_input.extend_from_slice(&header.timestamp.to_be_bytes());
             hmac_input.push(message_type);
@@ -601,7 +601,7 @@ impl EnhancedTransportSecurity {
         let message_id = rand::random::<u16>();
         let total_fragments = ((plaintext.len() + max_fragment_size - 1) / max_fragment_size) as u8;
 
-        let mut encrypted_fragments = Vec::new();
+        let mut encrypted_fragments = Vec::with_capacity(total_fragments as usize);
 
         for (i, chunk) in plaintext.chunks(max_fragment_size).enumerate() {
             // Create fragment header
@@ -683,7 +683,7 @@ impl EnhancedTransportSecurity {
         let message_data = &ciphertext[AuthenticatedHeader::SIZE..];
 
         if enable_hmac {
-            let mut hmac_input = Vec::new();
+            let mut hmac_input = Vec::with_capacity(data.len() + 32); // data + extra
             hmac_input.extend_from_slice(&header.sequence.to_be_bytes());
             hmac_input.extend_from_slice(&header.timestamp.to_be_bytes());
             hmac_input.push(header.message_type);
