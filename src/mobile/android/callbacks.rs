@@ -61,14 +61,14 @@ pub struct CallbackManager {
     #[cfg(target_os = "android")]
     callback_object: Option<GlobalRef>,
     handlers: RwLock<Vec<Arc<dyn CallbackHandler>>>,
-    event_sender: Option<mpsc::UnboundedSender<CallbackEvent>>,
-    event_receiver: Arc<Mutex<Option<mpsc::UnboundedReceiver<CallbackEvent>>>>,
+    event_sender: Option<mpsc::Sender<CallbackEvent>>,
+    event_receiver: Arc<Mutex<Option<mpsc::Receiver<CallbackEvent>>>>,
     is_running: Arc<Mutex<bool>>,
 }
 
 impl CallbackManager {
     pub fn new() -> Self {
-        let (sender, receiver) = mpsc::unbounded_channel();
+        let (sender, receiver) = mpsc::channel(1000); // Moderate traffic for Android callbacks
 
         Self {
             #[cfg(target_os = "android")]
@@ -121,11 +121,20 @@ impl CallbackManager {
     /// Send an event to be processed
     pub fn send_event(&self, event: CallbackEvent) -> Result<(), BitCrapsError> {
         if let Some(sender) = &self.event_sender {
-            sender
-                .send(event)
-                .map_err(|e| BitCrapsError::BluetoothError {
-                    message: format!("Failed to send callback event: {}", e),
-                })?;
+            // Use try_send for bounded channels to handle backpressure
+            match sender.try_send(event) {
+                Ok(_) => {},
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    log::warn!("Android callback channel full, dropping event (backpressure)");
+                    // Could add metrics here: CALLBACK_DROPS.inc();
+                    return Ok(()); // Drop the event instead of blocking
+                },
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    return Err(BitCrapsError::BluetoothError {
+                        message: "Callback channel closed".to_string(),
+                    });
+                }
+            }
         }
         Ok(())
     }

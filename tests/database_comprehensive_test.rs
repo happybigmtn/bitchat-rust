@@ -544,14 +544,14 @@ fn test_query_builder() {
     assert_eq!(query.parameters.len(), 3);
 
     // Test specialized queries
-    let user_query = UserQueries::find_by_id("user123");
+    let user_query = UserQueries::find_by_id("user123").expect("Valid query");
     assert!(user_query.sql.contains("SELECT * FROM users WHERE id = ?"));
     assert_eq!(user_query.parameters.len(), 1);
 
-    let reputation_query = UserQueries::find_by_reputation_range(10.0, 90.0);
+    let reputation_query = UserQueries::find_by_reputation_range(10.0, 90.0).expect("Valid query");
     assert!(user_query.sql.contains("reputation"));
 
-    let search_query = UserQueries::search_by_username("alice");
+    let search_query = UserQueries::search_by_username("alice").expect("Valid query");
     assert!(search_query.sql.contains("LIKE"));
     assert!(search_query.sql.contains("is_active"));
 }

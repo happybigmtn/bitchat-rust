@@ -9,9 +9,10 @@
 
 use crate::error::{Error, Result};
 use crate::security::{ConstantTimeOps, SecurityConfig, SecurityManager};
+use crate::utils::AdaptiveInterval;
 use dashmap::DashMap;
 use lru::LruCache;
-use rand::{Rng, RngCore};
+use rand::RngCore;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::num::NonZeroUsize;
 use std::sync::{
@@ -199,7 +200,7 @@ impl NetworkHandler {
             pending_messages: Arc::new(DashMap::new()),
             security_manager,
             stun_cache: Arc::new(Mutex::new(LruCache::new(
-                NonZeroUsize::new(100).expect("Cache size must be non-zero"),
+                NonZeroUsize::new(100).unwrap_or_else(|| NonZeroUsize::new(1).unwrap()),
             ))),
             connection_pool: Arc::new(DashMap::new()),
             stun_server_metrics: Arc::new({
@@ -715,7 +716,8 @@ impl NetworkHandler {
                 .with_no_client_auth();
 
             let connector = TlsConnector::from(Arc::new(config));
-            let domain = ServerName::try_from("localhost").unwrap();
+            let domain = ServerName::try_from("localhost")
+                .map_err(|e| Error::Network(format!("Invalid server name: {}", e)))?;
 
             let stream = TcpStream::connect(msg.destination)
                 .await
@@ -786,13 +788,16 @@ impl NetworkHandler {
         let network_handler = self.clone_for_retransmission();
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_millis(500));
+            // Use adaptive interval for retransmission - starts at 250ms for network ops
+            // Backs off to 5s when no retransmissions needed (battery efficient)
+            let mut interval = AdaptiveInterval::for_network();
 
             loop {
                 interval.tick().await;
 
                 let mut to_retry = Vec::new();
                 let mut to_remove = Vec::new();
+                let mut has_activity = false;
 
                 // Check for messages that need retransmission - lock-free iteration
                 let now = Instant::now();
@@ -806,10 +811,17 @@ impl NetworkHandler {
                             msg.attempts += 1;
                             msg.last_attempt = now;
                             to_retry.push(msg.clone());
+                            has_activity = true; // Signal retransmission activity
                         } else {
                             to_remove.push(id);
+                            has_activity = true; // Signal cleanup activity
                         }
                     }
+                }
+
+                // Signal activity if we have retransmissions or cleanups
+                if has_activity {
+                    interval.signal_activity();
                 }
 
                 // Remove expired messages
@@ -1262,8 +1274,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_stun_request_creation() {
-        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let handler = NetworkHandler::new(socket, None, "127.0.0.1:0".parse().unwrap());
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind test socket");
+        let handler = NetworkHandler::new(socket, None, "127.0.0.1:0".parse().expect("Valid test address"));
 
         let transaction_id = [1u8; 12];
         let request = handler.create_stun_binding_request(transaction_id);
@@ -1277,11 +1289,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_nat_type_detection() {
-        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let handler = NetworkHandler::new(socket, None, "127.0.0.1:0".parse().unwrap());
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind test socket");
+        let handler = NetworkHandler::new(socket, None, "127.0.0.1:0".parse().expect("Valid test address"));
 
         // Test with empty STUN servers
-        let nat_type = handler.detect_nat_type().await.unwrap();
+        let nat_type = handler.detect_nat_type().await.expect("NAT detection failed");
         assert_eq!(nat_type, NatType::Unknown);
     }
 }

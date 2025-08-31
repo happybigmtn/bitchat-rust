@@ -96,7 +96,7 @@ impl ConsensusPersistence {
         let db = Connection::open(&storage_path).map_err(|e| Error::IoError(e.to_string()))?;
 
         // Enable WAL mode for better concurrency
-        db.execute("PRAGMA journal_mode=WAL", [])
+        let _: String = db.query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))
             .map_err(|e| Error::IoError(e.to_string()))?;
 
         // Create tables

@@ -144,10 +144,10 @@ impl PersistentStorageManager {
             data: stored_data.clone(),
             content_hash,
             is_compressed,
-            created_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            created_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
             size_bytes: stored_data.len() as u64,
             access_count: 0,
-            last_accessed: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            last_accessed: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
         };
 
         self.db_pool.store_record(&storage_record).await?;
@@ -528,9 +528,11 @@ impl DatabasePool {
     }
 
     async fn store_record(&self, record: &StorageRecord) -> Result<(), StorageError> {
-        let _permit = self.semaphore.acquire().await.unwrap();
+        let _permit = self.semaphore.acquire().await
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to acquire semaphore: {}", e)))?;
         let mut connections = self.connections.lock().await;
-        let conn = connections.pop().unwrap();
+        let conn = connections.pop()
+            .ok_or_else(|| StorageError::DatabaseError("No database connections available".to_string()))?;
 
         let result = conn.execute(
             "INSERT OR REPLACE INTO storage_records 
@@ -555,9 +557,11 @@ impl DatabasePool {
     }
 
     async fn load_record(&self, collection: &str, key: &str) -> Result<Option<StorageRecord>, StorageError> {
-        let _permit = self.semaphore.acquire().await.unwrap();
+        let _permit = self.semaphore.acquire().await
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to acquire semaphore: {}", e)))?;
         let mut connections = self.connections.lock().await;
-        let conn = connections.pop().unwrap();
+        let conn = connections.pop()
+            .ok_or_else(|| StorageError::DatabaseError("No database connections available".to_string()))?;
 
         let result = conn.query_row(
             "SELECT collection, key, data, content_hash, is_compressed, created_at, size_bytes, access_count, last_accessed
@@ -588,9 +592,11 @@ impl DatabasePool {
     }
 
     async fn delete_record(&self, collection: &str, key: &str) -> Result<bool, StorageError> {
-        let _permit = self.semaphore.acquire().await.unwrap();
+        let _permit = self.semaphore.acquire().await
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to acquire semaphore: {}", e)))?;
         let mut connections = self.connections.lock().await;
-        let conn = connections.pop().unwrap();
+        let conn = connections.pop()
+            .ok_or_else(|| StorageError::DatabaseError("No database connections available".to_string())))?;
 
         let result = conn.execute(
             "DELETE FROM storage_records WHERE collection = ?1 AND key = ?2",
@@ -602,9 +608,11 @@ impl DatabasePool {
     }
 
     async fn list_keys(&self, collection: &str, offset: usize, limit: usize) -> Result<Vec<String>, StorageError> {
-        let _permit = self.semaphore.acquire().await.unwrap();
+        let _permit = self.semaphore.acquire().await
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to acquire semaphore: {}", e)))?;
         let mut connections = self.connections.lock().await;
-        let conn = connections.pop().unwrap();
+        let conn = connections.pop()
+            .ok_or_else(|| StorageError::DatabaseError("No database connections available".to_string())))?;
 
         let mut stmt = conn.prepare(
             "SELECT key FROM storage_records WHERE collection = ?1 ORDER BY key LIMIT ?2 OFFSET ?3"
@@ -621,11 +629,13 @@ impl DatabasePool {
     }
 
     async fn update_access_stats(&self, collection: &str, key: &str) -> Result<(), StorageError> {
-        let _permit = self.semaphore.acquire().await.unwrap();
+        let _permit = self.semaphore.acquire().await
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to acquire semaphore: {}", e)))?;
         let mut connections = self.connections.lock().await;
-        let conn = connections.pop().unwrap();
+        let conn = connections.pop()
+            .ok_or_else(|| StorageError::DatabaseError("No database connections available".to_string()))?;
 
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
         let result = conn.execute(
             "UPDATE storage_records SET access_count = access_count + 1, last_accessed = ?1 
              WHERE collection = ?2 AND key = ?3",
@@ -638,9 +648,11 @@ impl DatabasePool {
     }
 
     async fn find_by_content_hash(&self, content_hash: &str) -> Result<Option<String>, StorageError> {
-        let _permit = self.semaphore.acquire().await.unwrap();
+        let _permit = self.semaphore.acquire().await
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to acquire semaphore: {}", e)))?;
         let mut connections = self.connections.lock().await;
-        let conn = connections.pop().unwrap();
+        let conn = connections.pop()
+            .ok_or_else(|| StorageError::DatabaseError("No database connections available".to_string())))?;
 
         let result = conn.query_row(
             "SELECT key FROM storage_records WHERE content_hash = ?1 LIMIT 1",
@@ -658,11 +670,13 @@ impl DatabasePool {
     }
 
     async fn create_reference(&self, collection: &str, key: &str, target_key: &str) -> Result<(), StorageError> {
-        let _permit = self.semaphore.acquire().await.unwrap();
+        let _permit = self.semaphore.acquire().await
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to acquire semaphore: {}", e)))?;
         let mut connections = self.connections.lock().await;
-        let conn = connections.pop().unwrap();
+        let conn = connections.pop()
+            .ok_or_else(|| StorageError::DatabaseError("No database connections available".to_string()))?;
 
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
         let result = conn.execute(
             "INSERT OR REPLACE INTO content_references (collection, key, target_key, created_at) VALUES (?1, ?2, ?3, ?4)",
             params![collection, key, target_key, now]
@@ -674,9 +688,11 @@ impl DatabasePool {
     }
 
     async fn optimize(&self) -> Result<(), StorageError> {
-        let _permit = self.semaphore.acquire().await.unwrap();
+        let _permit = self.semaphore.acquire().await
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to acquire semaphore: {}", e)))?;
         let mut connections = self.connections.lock().await;
-        let conn = connections.pop().unwrap();
+        let conn = connections.pop()
+            .ok_or_else(|| StorageError::DatabaseError("No database connections available".to_string()))?;
 
         conn.execute_batch("
             VACUUM;

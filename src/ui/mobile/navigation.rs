@@ -391,13 +391,13 @@ impl DeepLinkPattern {
 
 /// Navigation event system
 pub struct NavigationEventSystem {
-    sender: mpsc::UnboundedSender<NavigationEvent>,
-    receiver: Option<mpsc::UnboundedReceiver<NavigationEvent>>,
+    sender: mpsc::Sender<NavigationEvent>,
+    receiver: Option<mpsc::Receiver<NavigationEvent>>,
 }
 
 impl NavigationEventSystem {
     pub fn new() -> Self {
-        let (sender, receiver) = mpsc::unbounded_channel();
+        let (sender, receiver) = mpsc::channel(500); // Low priority: UI navigation events
         Self {
             sender,
             receiver: Some(receiver),
@@ -405,7 +405,18 @@ impl NavigationEventSystem {
     }
 
     pub fn emit(&self, event: NavigationEvent) {
-        let _ = self.sender.send(event);
+        // Use try_send for bounded channels to handle backpressure
+        match self.sender.try_send(event) {
+            Ok(_) => {},
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                log::warn!("UI navigation channel full, dropping event (backpressure)");
+                // Could add metrics here: UI_EVENT_DROPS.inc();
+                // Drop the event instead of blocking UI
+            },
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                log::error!("Navigation event channel closed");
+            }
+        }
     }
 
     pub async fn next_event(&mut self) -> Option<NavigationEvent> {

@@ -10,9 +10,11 @@
 #![allow(dead_code)]
 
 use crate::error::{Error, Result};
+use crate::utils::GrowableBuffer;
 use serde::{Deserialize, Serialize};
 use std::ffi::CString;
 use std::os::raw::c_int;
+use std::ptr;
 
 /// iOS Keychain interface (alias for compatibility)
 pub type IOSKeychain = IOSKeychainManager;
@@ -32,6 +34,7 @@ pub struct IOSKeychainManager {
     service_identifier: String,
     access_group: Option<String>,
     synchronizable: bool,
+    buffer: GrowableBuffer,
 }
 
 impl IOSKeychainManager {
@@ -41,6 +44,7 @@ impl IOSKeychainManager {
             service_identifier: service_identifier.to_string(),
             access_group: None,
             synchronizable: false,
+            buffer: GrowableBuffer::with_initial_capacity(1024), // Start smaller for keychain data
         })
     }
 
@@ -50,6 +54,7 @@ impl IOSKeychainManager {
             service_identifier: service_identifier.to_string(),
             access_group: Some(access_group.to_string()),
             synchronizable: false,
+            buffer: GrowableBuffer::with_initial_capacity(1024), // Start smaller for keychain data
         })
     }
 
@@ -103,7 +108,7 @@ impl IOSKeychainManager {
     }
 
     /// Retrieve item from keychain
-    pub fn retrieve_item(&self, account: &str) -> Result<Option<Vec<u8>>> {
+    pub fn retrieve_item(&mut self, account: &str) -> Result<Option<Vec<u8>>> {
         let service_cstr = CString::new(self.service_identifier.clone())?;
         let account_cstr = CString::new(account)?;
         let access_group_cstr = self
@@ -114,7 +119,8 @@ impl IOSKeychainManager {
 
         #[cfg(target_os = "ios")]
         {
-            let mut data_buffer = vec![0u8; 8192]; // 8KB max
+            // Start with a small buffer, will grow if needed
+            let buffer_slice = self.buffer.get_mut(1024);
             let mut actual_size: usize = 0;
 
             let result = unsafe {
@@ -124,16 +130,40 @@ impl IOSKeychainManager {
                     access_group_cstr
                         .as_ref()
                         .map_or(ptr::null(), |cstr| cstr.as_ptr()),
-                    data_buffer.as_mut_ptr(),
-                    data_buffer.len(),
+                    buffer_slice.as_mut_ptr(),
+                    buffer_slice.len(),
                     &mut actual_size,
                 )
             };
 
             match result {
                 0 => {
-                    data_buffer.truncate(actual_size);
-                    Ok(Some(data_buffer))
+                    // If the data was larger than our initial buffer, try again with correct size
+                    if actual_size > buffer_slice.len() {
+                        let larger_buffer = self.buffer.get_mut(actual_size);
+                        let result = unsafe {
+                            ios_keychain_retrieve_item(
+                                service_cstr.as_ptr(),
+                                account_cstr.as_ptr(),
+                                access_group_cstr
+                                    .as_ref()
+                                    .map_or(ptr::null(), |cstr| cstr.as_ptr()),
+                                larger_buffer.as_mut_ptr(),
+                                larger_buffer.len(),
+                                &mut actual_size,
+                            )
+                        };
+                        
+                        if result == 0 {
+                            self.buffer.mark_used(actual_size);
+                            Ok(Some(self.buffer.as_slice(actual_size).to_vec()))
+                        } else {
+                            Err(self.map_keychain_error(result, "retrieve_item"))
+                        }
+                    } else {
+                        self.buffer.mark_used(actual_size);
+                        Ok(Some(self.buffer.as_slice(actual_size).to_vec()))
+                    }
                 }
                 -25300 => Ok(None), // errSecItemNotFound
                 _ => Err(self.map_keychain_error(result, "retrieve_item")),
@@ -615,7 +645,7 @@ mod tests {
 
     #[test]
     fn test_keychain_operations() {
-        let manager = IOSKeychainManager::new("com.bitcraps.test").unwrap();
+        let mut manager = IOSKeychainManager::new("com.bitcraps.test").unwrap();
 
         let account = "test_account";
         let data = b"secret_test_data";

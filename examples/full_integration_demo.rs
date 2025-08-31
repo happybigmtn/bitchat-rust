@@ -6,7 +6,7 @@ use bitcraps::crypto::{Identity, SessionManager};
 use bitcraps::error::Result;
 use bitcraps::mesh::{MeshConfig, MeshService};
 use bitcraps::protocol::consensus::engine::{ConsensusConfig, ConsensusEngine};
-use bitcraps::protocol::craps::{Bet, BetType, CrapTokens, CrapsGame};
+use bitcraps::protocol::craps::{Bet, BetType, CrapTokens};
 use bitcraps::protocol::{GameId, PeerId};
 use bitcraps::transport::{BluetoothTransport, TransportCoordinator};
 use std::sync::Arc;
@@ -35,7 +35,8 @@ async fn main() -> Result<()> {
     println!("Phase 2: Initializing transport layer...");
     println!("-" * 50);
 
-    let transport = Arc::new(BluetoothTransport::new().await?);
+    let transport = Arc::new(BluetoothTransport::new().await
+        .map_err(|e| bitcraps::error::Error::Transport(e.to_string()))?);
     let coordinator = TransportCoordinator::new(transport.clone());
 
     // Start transport discovery
@@ -75,7 +76,7 @@ async fn main() -> Result<()> {
         enable_anti_cheat: true,
     };
 
-    let mut consensus = ConsensusEngine::new(peer_id, consensus_config);
+    let mut consensus = ConsensusEngine::new(game_id, vec![peer_id], peer_id, consensus_config)?;
     println!("Consensus engine started");
     println!("Byzantine threshold: 33%");
     println!("Anti-cheat: enabled\n");
@@ -105,43 +106,30 @@ async fn main() -> Result<()> {
     println!();
 
     // Place a bet
-    let bet = Bet {
-        player: peers[0],
-        bet_type: BetType::Pass,
-        amount: CrapTokens::new(100).unwrap(),
-        outcome: None,
-    };
+    let bet = Bet::new(peers[0], game_id, BetType::Pass, CrapTokens::new(100));
 
     println!("Player {:?} placing bet:", peers[0]);
     println!("  Type: Pass line");
     println!("  Amount: 100 CRAP tokens\n");
 
     // Create consensus proposal for the bet
-    let proposal =
-        consensus.create_proposal(game_id, "PlaceBet".to_string(), bincode::serialize(&bet)?)?;
+    // Submit bet proposal to consensus
+    let proposal_id = consensus.submit_proposal(bitcraps::protocol::consensus::engine::GameOperation::PlaceBet {
+        player: peers[0],
+        bet,
+        nonce: 12345,  // Demo nonce
+    })?;
 
     println!("Consensus proposal created");
     println!("Waiting for validator votes...\n");
 
-    // Simulate voting
-    for (i, voter) in peers.iter().enumerate() {
-        let vote = i < 2; // First 2 vote yes, last votes no
-        consensus.receive_vote(proposal.id, *voter, vote)?;
-        println!(
-            "Validator {:?} voted: {}",
-            voter,
-            if vote { "YES" } else { "NO" }
-        );
-    }
+    // Simulate our own vote (simplified demo)
+    consensus.vote_on_proposal(proposal_id, true)?;
+    println!("Vote cast for proposal: {:?}\n", proposal_id);
 
-    // Add our own vote
-    consensus.receive_vote(proposal.id, peer_id, true)?;
-    println!("Validator {:?} voted: YES\n", peer_id);
-
-    // Check consensus
-    if consensus.has_consensus(proposal.id)? {
-        println!("✓ Consensus reached! (3/4 validators agreed)");
-        consensus.execute_proposal(proposal.id)?;
+    // Check consensus (simplified check)
+    if consensus.has_consensus() {
+        println!("✓ Consensus reached!");
         println!("✓ Bet accepted and recorded\n");
 
         // Simulate dice roll
@@ -171,7 +159,8 @@ async fn main() -> Result<()> {
     println!("  Messages received: {}", mesh_stats.messages_received);
     println!("  Cache hits: {}", mesh_stats.cache_hits);
 
-    let consensus_stats = consensus.get_statistics();
+    // Get final statistics
+    println!("Demo completed successfully!");
     println!("\nConsensus Engine:");
     println!("  Total proposals: {}", consensus_stats.total_proposals);
     println!("  Accepted: {}", consensus_stats.accepted_proposals);

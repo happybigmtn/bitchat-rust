@@ -56,6 +56,27 @@ pub struct ApplicationConfig {
 
     /// Enable mobile optimizations
     pub mobile_mode: bool,
+
+    /// Maximum concurrent connections for gateway
+    pub max_concurrent_connections: usize,
+
+    /// Maximum bandwidth in Mbps
+    pub max_bandwidth_mbps: f64,
+
+    /// Maximum string length for validation
+    pub max_string_length: usize,
+
+    /// Maximum array length for validation
+    pub max_array_length: usize,
+
+    /// Maximum message rate per second
+    pub max_message_rate: u32,
+
+    /// Memory pool configuration
+    pub vec_pool_size: usize,
+    pub vec_pool_capacity: usize,
+    pub string_pool_size: usize,
+    pub string_pool_capacity: usize,
 }
 
 impl Default for ApplicationConfig {
@@ -67,7 +88,111 @@ impl Default for ApplicationConfig {
             max_games: 100,
             session_timeout: Duration::from_secs(3600),
             mobile_mode: false,
+            max_concurrent_connections: 1000,
+            max_bandwidth_mbps: 100.0,
+            max_string_length: 1024,
+            max_array_length: 1000,
+            max_message_rate: 100,
+            vec_pool_size: 100,
+            vec_pool_capacity: 1024,
+            string_pool_size: 50,
+            string_pool_capacity: 256,
         }
+    }
+}
+
+impl ApplicationConfig {
+    /// Create configuration from environment variables
+    pub fn from_env() -> Self {
+        use std::env;
+        
+        let mut config = Self::default();
+
+        if let Ok(port) = env::var("BITCRAPS_PORT") {
+            if let Ok(port) = port.parse() {
+                config.port = port;
+            }
+        }
+
+        if let Ok(debug) = env::var("BITCRAPS_DEBUG") {
+            config.debug = debug.to_lowercase() == "true" || debug == "1";
+        }
+
+        if let Ok(db_path) = env::var("BITCRAPS_DB_PATH") {
+            config.db_path = db_path;
+        }
+
+        if let Ok(max_games) = env::var("BITCRAPS_MAX_GAMES") {
+            if let Ok(max_games) = max_games.parse() {
+                config.max_games = max_games;
+            }
+        }
+
+        if let Ok(timeout) = env::var("BITCRAPS_SESSION_TIMEOUT") {
+            if let Ok(timeout_secs) = timeout.parse::<u64>() {
+                config.session_timeout = Duration::from_secs(timeout_secs);
+            }
+        }
+
+        if let Ok(mobile) = env::var("BITCRAPS_MOBILE_MODE") {
+            config.mobile_mode = mobile.to_lowercase() == "true" || mobile == "1";
+        }
+
+        if let Ok(max_conn) = env::var("BITCRAPS_MAX_CONNECTIONS") {
+            if let Ok(max_conn) = max_conn.parse() {
+                config.max_concurrent_connections = max_conn;
+            }
+        }
+
+        if let Ok(bandwidth) = env::var("BITCRAPS_MAX_BANDWIDTH_MBPS") {
+            if let Ok(bandwidth) = bandwidth.parse() {
+                config.max_bandwidth_mbps = bandwidth;
+            }
+        }
+
+        if let Ok(max_str_len) = env::var("BITCRAPS_MAX_STRING_LENGTH") {
+            if let Ok(max_str_len) = max_str_len.parse() {
+                config.max_string_length = max_str_len;
+            }
+        }
+
+        if let Ok(max_arr_len) = env::var("BITCRAPS_MAX_ARRAY_LENGTH") {
+            if let Ok(max_arr_len) = max_arr_len.parse() {
+                config.max_array_length = max_arr_len;
+            }
+        }
+
+        if let Ok(msg_rate) = env::var("BITCRAPS_MAX_MESSAGE_RATE") {
+            if let Ok(msg_rate) = msg_rate.parse() {
+                config.max_message_rate = msg_rate;
+            }
+        }
+
+        if let Ok(vec_size) = env::var("BITCRAPS_VEC_POOL_SIZE") {
+            if let Ok(vec_size) = vec_size.parse() {
+                config.vec_pool_size = vec_size;
+            }
+        }
+
+        if let Ok(vec_cap) = env::var("BITCRAPS_VEC_POOL_CAPACITY") {
+            if let Ok(vec_cap) = vec_cap.parse() {
+                config.vec_pool_capacity = vec_cap;
+            }
+        }
+
+        if let Ok(str_size) = env::var("BITCRAPS_STRING_POOL_SIZE") {
+            if let Ok(str_size) = str_size.parse() {
+                config.string_pool_size = str_size;
+            }
+        }
+
+        if let Ok(str_cap) = env::var("BITCRAPS_STRING_POOL_CAPACITY") {
+            if let Ok(str_cap) = str_cap.parse() {
+                config.string_pool_capacity = str_cap;
+            }
+        }
+
+        config
     }
 }
 

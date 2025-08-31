@@ -17,6 +17,7 @@ use crate::error::{Error, Result};
 use crate::mesh::MeshService;
 use crate::protocol::versioning::ProtocolVersion;
 use crate::protocol::PeerId;
+use crate::utils::GrowableBuffer;
 
 /// Gateway node configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,7 +95,7 @@ pub struct GatewayNode {
     routing_table: Arc<RwLock<HashMap<PeerId, GatewayRoute>>>,
     bandwidth_monitor: Arc<BandwidthMonitor>,
     relay_stats: Arc<RwLock<RelayStatistics>>,
-    event_sender: mpsc::UnboundedSender<GatewayEvent>,
+    event_sender: mpsc::Sender<GatewayEvent>,
     is_running: Arc<RwLock<bool>>,
 }
 
@@ -219,7 +220,7 @@ impl GatewayNode {
         config: GatewayConfig,
         mesh_service: Arc<MeshService>,
     ) -> Self {
-        let (event_sender, _) = mpsc::unbounded_channel();
+        let (event_sender, _) = mpsc::channel(1000); // Moderate traffic for gateway events
 
         Self {
             identity,
@@ -407,7 +408,7 @@ impl GatewayNode {
         local_peers: Arc<RwLock<HashMap<PeerId, LocalPeer>>>,
         internet_peers: Arc<RwLock<HashMap<PeerId, InternetPeer>>>,
         identity: Arc<BitchatIdentity>,
-        event_sender: mpsc::UnboundedSender<GatewayEvent>,
+        event_sender: mpsc::Sender<GatewayEvent>,
         bandwidth_monitor: Arc<BandwidthMonitor>,
     ) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -476,14 +477,18 @@ impl GatewayNode {
                 );
 
                 // Start message relay loop
-                let mut buffer = vec![0u8; 65536];
+                let mut buffer = GrowableBuffer::new();
                 loop {
-                    match stream.read(&mut buffer).await {
+                    let buffer_slice = buffer.get_mut(GrowableBuffer::MTU_SIZE);
+                    match stream.read(buffer_slice).await {
                         Ok(0) => {
                             // Connection closed
                             break;
                         }
                         Ok(n) => {
+                            // Mark buffer usage for memory optimization
+                            buffer.mark_used(n);
+                            
                             // Update bandwidth monitoring
                             bandwidth_monitor.update_usage(is_local, n).await;
 
@@ -827,7 +832,7 @@ impl GatewayDiscovery {
                 candidates.sort_by(|a, b| {
                     b.max_bandwidth_mbps
                         .partial_cmp(&a.max_bandwidth_mbps)
-                        .unwrap()
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 });
                 candidates.first().cloned().cloned()
             }
@@ -835,7 +840,7 @@ impl GatewayDiscovery {
                 candidates.sort_by(|a, b| {
                     b.uptime_percentage
                         .partial_cmp(&a.uptime_percentage)
-                        .unwrap()
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 });
                 candidates.first().cloned().cloned()
             }
@@ -915,7 +920,7 @@ mod tests {
     fn test_gateway_info_serialization() {
         let gateway_info = GatewayInfo {
             peer_id: [0u8; 32],
-            address: "127.0.0.1:8333".parse().unwrap(),
+            address: "127.0.0.1:8333".parse().expect("Valid test address"),
             protocol: GatewayProtocol::Tcp,
             max_bandwidth_mbps: 100.0,
             current_load: 0.5,

@@ -230,7 +230,8 @@ impl SecureKeystore {
                     let session_key = self.derive_session_key(context)?;
                     self.session_keys.insert(context_key.clone(), session_key);
                 }
-                Ok(self.session_keys.get(&context_key).unwrap())
+                self.session_keys.get(&context_key)
+                    .ok_or_else(|| crate::error::Error::Crypto("Failed to retrieve session key after creation".to_string()))
             }
         }
     }
@@ -250,7 +251,16 @@ impl SecureKeystore {
 
 impl Default for SecureKeystore {
     fn default() -> Self {
-        Self::new().expect("Failed to create secure keystore")
+        Self::new().unwrap_or_else(|e| {
+            eprintln!("WARNING: Failed to create secure keystore, using fallback: {}", e);
+            // Create a minimal fallback keystore
+            SecureKeystore {
+                identity_key: SigningKey::generate(&mut OsRng),
+                verifying_key: VerifyingKey::from(&SigningKey::generate(&mut OsRng)),
+                session_keys: HashMap::new(),
+                secure_rng: OsRng,
+            }
+        })
     }
 }
 

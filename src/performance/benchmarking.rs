@@ -321,7 +321,7 @@ impl PerformanceBenchmarker {
         let throughput_start = Instant::now();
 
         throughput_samples.par_iter().for_each(|_| {
-            // Simulate network operation
+            // Simulate network operation - blocking sleep intentional for benchmark timing accuracy
             std::thread::sleep(Duration::from_micros(10));
         });
 
@@ -333,6 +333,7 @@ impl PerformanceBenchmarker {
         let mut latency_samples: Vec<Duration> = (0..100)
             .map(|_| {
                 let start = Instant::now();
+                // Blocking sleep intentional for latency simulation in benchmark
                 std::thread::sleep(Duration::from_micros(rand::random::<u64>() % 1000 + 100));
                 start.elapsed()
             })
@@ -372,6 +373,7 @@ impl PerformanceBenchmarker {
             .map(|_| {
                 let start = Instant::now();
                 // Simulate consensus round
+                // Blocking sleep intentional for consensus simulation in benchmark
                 std::thread::sleep(Duration::from_millis(rand::random::<u64>() % 100 + 50));
                 start.elapsed()
             })
@@ -411,6 +413,7 @@ impl PerformanceBenchmarker {
 
         (0..sig_count).collect::<Vec<_>>().par_iter().for_each(|_| {
             // Simulate signature operation
+            // Blocking sleep intentional for signature simulation in benchmark
             std::thread::sleep(Duration::from_micros(100));
         });
 
@@ -426,6 +429,7 @@ impl PerformanceBenchmarker {
             .par_iter()
             .for_each(|_| {
                 // Simulate verification operation
+                // Blocking sleep intentional for verification simulation in benchmark
                 std::thread::sleep(Duration::from_micros(50));
             });
 
@@ -441,6 +445,7 @@ impl PerformanceBenchmarker {
             .par_iter()
             .for_each(|_| {
                 // Simulate hash operation
+                // Blocking sleep intentional for hash simulation in benchmark
                 std::thread::sleep(Duration::from_nanos(10));
             });
 
@@ -518,6 +523,7 @@ impl PerformanceBenchmarker {
             .par_iter()
             .for_each(|_| {
                 // Simulate game execution
+                // Blocking sleep intentional for game simulation in benchmark
                 std::thread::sleep(Duration::from_millis(10));
             });
 

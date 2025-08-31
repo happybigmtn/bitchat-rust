@@ -19,6 +19,7 @@ use tracing::{info, warn, error, debug};
 
 use crate::transport::connection_pool::ConnectionPool;
 use crate::monitoring::metrics::METRICS;
+use crate::utils::LoopBudget;
 
 /// Network optimization engine
 pub struct NetworkOptimizer {
@@ -143,9 +144,17 @@ impl NetworkOptimizer {
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(30));
+            let mut budget = LoopBudget::for_maintenance();
             
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 interval.tick().await;
+                budget.consume(1);
                 
                 let stats = stats_collector.get_current_stats().await;
                 
@@ -203,9 +212,17 @@ impl LoadBalancer {
     /// Start load balancer optimization
     pub async fn start_optimization(&self) {
         let mut interval = interval(Duration::from_secs(10));
+        let mut budget = LoopBudget::for_network();
         
         loop {
+            // Check budget before processing
+            if !budget.can_proceed() {
+                budget.backoff().await;
+                continue;
+            }
+            
             interval.tick().await;
+            budget.consume(1);
             
             // Update server health
             self.health_checker.check_all_servers(&self.servers).await;
@@ -347,9 +364,17 @@ impl ProtocolOptimizer {
     /// Start protocol optimization
     pub async fn start_optimization(&self) {
         let mut interval = interval(Duration::from_secs(15));
+        let mut budget = LoopBudget::for_consensus();
         
         loop {
+            // Check budget before processing
+            if !budget.can_proceed() {
+                budget.backoff().await;
+                continue;
+            }
+            
             interval.tick().await;
+            budget.consume(1);
             
             // Analyze protocol performance and adjust settings
             self.analyze_and_optimize().await;
@@ -435,9 +460,17 @@ impl BandwidthManager {
         
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(1));
+            let mut budget = LoopBudget::for_network();
             
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 interval.tick().await;
+                budget.consume(1);
                 
                 // Update current throughput measurement
                 let bytes_sent = METRICS.network.bytes_sent.load(Ordering::Relaxed);
@@ -488,9 +521,17 @@ impl LatencyOptimizer {
         
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(5));
+            let mut budget = LoopBudget::for_consensus();
             
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 interval.tick().await;
+                budget.consume(1);
                 
                 // Collect latency sample
                 let current_latency = METRICS.consensus.average_latency_ms();
@@ -546,9 +587,17 @@ impl NetworkStatsCollector {
         
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(5));
+            let mut budget = LoopBudget::for_maintenance();
             
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 interval.tick().await;
+                budget.consume(1);
                 
                 // Collect and update network statistics
                 let mut current_stats = stats.write().await;

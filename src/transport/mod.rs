@@ -42,6 +42,7 @@ mod ble_integration_test;
 mod multi_transport_test;
 
 use serde::{Deserialize, Serialize};
+use dashmap::DashMap;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -192,21 +193,28 @@ enum TransportHealth {
     Failed,
 }
 
+/// Connection metadata for tracking and LRU eviction
+#[derive(Debug, Clone)]
+struct ConnectionMetadata {
+    address: TransportAddress,
+    established_at: Instant,
+}
+
 /// Transport coordinator managing multiple transport types
 pub struct TransportCoordinator {
     bluetooth: Option<Arc<RwLock<BluetoothTransport>>>,
     enhanced_bluetooth: Option<Arc<RwLock<EnhancedBluetoothTransport>>>,
     tcp_transport: Option<Arc<RwLock<tcp_transport::TcpTransport>>>,
     transports: Arc<RwLock<Vec<TransportInstance>>>,
-    connections: Arc<RwLock<HashMap<PeerId, TransportAddress>>>,
-    connection_counts_per_address: Arc<RwLock<HashMap<TransportAddress, usize>>>,
+    connections: Arc<DashMap<PeerId, ConnectionMetadata>>,
+    connection_counts_per_address: Arc<DashMap<TransportAddress, usize>>,
     connection_attempts: Arc<RwLock<Vec<ConnectionAttempt>>>,
     connection_limits: ConnectionLimits,
     coordinator_config: CoordinatorConfig,
-    event_sender: mpsc::UnboundedSender<TransportEvent>,
-    event_receiver: Arc<RwLock<mpsc::UnboundedReceiver<TransportEvent>>>,
+    event_sender: mpsc::Sender<TransportEvent>,
+    event_receiver: Arc<RwLock<mpsc::Receiver<TransportEvent>>>,
     discovery_task: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
-    active_transports: Arc<RwLock<HashMap<String, TransportType>>>,
+    active_transports: Arc<DashMap<String, TransportType>>,
     failover_enabled: bool,
 }
 
@@ -234,22 +242,22 @@ impl TransportCoordinator {
     }
 
     pub fn new_with_config(limits: ConnectionLimits, config: CoordinatorConfig) -> Self {
-        let (event_sender, event_receiver) = mpsc::unbounded_channel();
+        let (event_sender, event_receiver) = mpsc::channel(1000); // Bounded transport events
 
         let coordinator = Self {
             bluetooth: None,
             enhanced_bluetooth: None,
             tcp_transport: None,
             transports: Arc::new(RwLock::new(Vec::new())),
-            connections: Arc::new(RwLock::new(HashMap::new())),
-            connection_counts_per_address: Arc::new(RwLock::new(HashMap::new())),
+            connections: Arc::new(DashMap::new()),
+            connection_counts_per_address: Arc::new(DashMap::new()),
             connection_attempts: Arc::new(RwLock::new(Vec::new())),
             connection_limits: limits,
             coordinator_config: config.clone(),
             event_sender,
             event_receiver: Arc::new(RwLock::new(event_receiver)),
             discovery_task: Arc::new(RwLock::new(None)),
-            active_transports: Arc::new(RwLock::new(HashMap::new())),
+            active_transports: Arc::new(DashMap::new()),
             failover_enabled: config.enable_failover,
         };
 
@@ -276,20 +284,59 @@ impl TransportCoordinator {
         });
     }
 
+    /// Enforce connection capacity limits by evicting oldest connections if needed
+    async fn enforce_connection_capacity(&self) {
+        let max_connections = self.connection_limits.max_total_connections;
+        
+        // Check if we need to evict connections
+        while self.connections.len() >= max_connections {
+            // Find the oldest connection
+            let oldest = self.connections
+                .iter()
+                .min_by_key(|entry| entry.value().established_at)
+                .map(|entry| (*entry.key(), entry.value().clone()));
+            
+            if let Some((peer_id, metadata)) = oldest {
+                // Remove the oldest connection
+                self.connections.remove(&peer_id);
+                
+                // Decrement the connection count for this address
+                if let Some(mut count) = self.connection_counts_per_address.get_mut(&metadata.address) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        drop(count);
+                        self.connection_counts_per_address.remove(&metadata.address);
+                    }
+                }
+                
+                log::warn!(
+                    "Evicted oldest connection to peer {:?} (established at {:?}) to enforce capacity limit of {}",
+                    peer_id,
+                    metadata.established_at,
+                    max_connections
+                );
+                
+                // Send disconnection event
+                let _ = self.event_sender.send(TransportEvent::Disconnected {
+                    peer_id,
+                    reason: "Connection evicted due to capacity limit".to_string(),
+                }).await;
+            } else {
+                // No connections to evict, break the loop
+                break;
+            }
+        }
+    }
+
     /// Check if a new connection is allowed based on limits
     async fn check_connection_limits(&self, address: &TransportAddress) -> Result<()> {
-        // Check total connection limit
-        let connections = self.connections.read().await;
-        if connections.len() >= self.connection_limits.max_total_connections {
-            return Err(Error::Network(format!(
-                "Connection rejected: Maximum total connections ({}) exceeded",
-                self.connection_limits.max_total_connections
-            )));
-        }
+        // Note: We no longer reject connections due to total limit.
+        // Instead, we'll evict old connections to make room in enforce_connection_capacity().
+        // This check is now for rate limiting and per-peer limits only.
 
         // Check per-peer connection limit
-        let connection_counts = self.connection_counts_per_address.read().await;
-        if let Some(&count) = connection_counts.get(address) {
+        if let Some(count_ref) = self.connection_counts_per_address.get(address) {
+            let count = *count_ref.value();
             if count >= self.connection_limits.max_connections_per_peer {
                 return Err(Error::Network(format!(
                     "Connection rejected: Maximum connections per peer ({}) exceeded for {:?}",
@@ -403,7 +450,7 @@ impl TransportCoordinator {
     async fn discovery_task(
         config: CoordinatorConfig,
         transports: Arc<RwLock<Vec<TransportInstance>>>,
-        event_sender: mpsc::UnboundedSender<TransportEvent>,
+        event_sender: mpsc::Sender<TransportEvent>,
     ) {
         let mut interval = interval(config.discovery_interval);
 
@@ -432,7 +479,7 @@ impl TransportCoordinator {
     /// Check health of all transports
     async fn check_transport_health(
         transports: &Arc<RwLock<Vec<TransportInstance>>>,
-        event_sender: &mpsc::UnboundedSender<TransportEvent>,
+        event_sender: &mpsc::Sender<TransportEvent>,
     ) {
         let mut transports_guard = transports.write().await;
         let now = Instant::now();
@@ -445,7 +492,7 @@ impl TransportCoordinator {
                     let _ = event_sender.send(TransportEvent::Error {
                         peer_id: None,
                         error: "Transport health check failed".to_string(),
-                    });
+                    }).await;
                 }
             }
         }
@@ -462,17 +509,18 @@ impl TransportCoordinator {
 
     /// Update connection counts when a connection is established
     async fn increment_connection_count(&self, address: &TransportAddress) {
-        let mut counts = self.connection_counts_per_address.write().await;
-        *counts.entry(address.clone()).or_insert(0) += 1;
+        // DashMap provides thread-safe operations
+        let mut entry = self.connection_counts_per_address.entry(address.clone()).or_insert(0);
+        *entry += 1;
     }
 
     /// Update connection counts when a connection is closed
     async fn decrement_connection_count(&self, address: &TransportAddress) {
-        let mut counts = self.connection_counts_per_address.write().await;
-        if let Some(count) = counts.get_mut(address) {
+        // DashMap provides thread-safe operations
+        if let Some(mut count) = self.connection_counts_per_address.get_mut(address) {
             *count = count.saturating_sub(1);
             if *count == 0 {
-                counts.remove(address);
+                self.connection_counts_per_address.remove(address);
             }
         }
     }
@@ -508,7 +556,7 @@ impl TransportCoordinator {
         self.enhanced_bluetooth = Some(Arc::new(RwLock::new(enhanced_bluetooth)));
 
         // Register as active transport
-        self.active_transports.write().await.insert(
+        self.active_transports.insert(
             "enhanced_bluetooth".to_string(),
             TransportType::EnhancedBluetooth,
         );
@@ -528,10 +576,7 @@ impl TransportCoordinator {
         self.tcp_transport = Some(Arc::new(RwLock::new(tcp_transport)));
 
         // Register as active transport
-        self.active_transports
-            .write()
-            .await
-            .insert("tcp".to_string(), TransportType::Tcp);
+        self.active_transports.insert("tcp".to_string(), TransportType::Tcp);
 
         log::info!("TCP transport initialized successfully");
         Ok(())
@@ -555,8 +600,7 @@ impl TransportCoordinator {
     pub async fn enable_multi_transport_mode(&mut self) -> Result<()> {
         log::info!("Enabling multi-transport mode");
 
-        let active_transports = self.active_transports.read().await;
-        let transport_count = active_transports.len();
+        let transport_count = self.active_transports.len();
 
         if transport_count < 2 {
             return Err(Error::Network(
@@ -589,11 +633,11 @@ impl TransportCoordinator {
             loop {
                 interval.tick().await;
 
-                let transports = active_transports.read().await;
-                log::debug!("Monitoring {} active transports", transports.len());
+                log::debug!("Monitoring {} active transports", active_transports.len());
 
                 // Check health of each transport
-                for (name, transport_type) in transports.iter() {
+                for entry in active_transports.iter() {
+                    let (name, transport_type) = (entry.key(), entry.value());
                     let is_healthy = match transport_type {
                         TransportType::Bluetooth => {
                             if let Some(bt) = &bluetooth {
@@ -633,7 +677,7 @@ impl TransportCoordinator {
                         let _ = event_sender.send(TransportEvent::Error {
                             peer_id: None,
                             error: format!("Transport {} health check failed", name),
-                        });
+                        }).await;
                     } else {
                         log::debug!("Transport {} is healthy", name);
                     }
@@ -759,11 +803,15 @@ impl TransportCoordinator {
                         elapsed
                     );
 
-                    // Update connection tracking
-                    self.connections
-                        .write()
-                        .await
-                        .insert(peer_id, address.clone());
+                    // Enforce capacity limits before adding new connection
+                    self.enforce_connection_capacity().await;
+                    
+                    // Update connection tracking with metadata
+                    let metadata = ConnectionMetadata {
+                        address: address.clone(),
+                        established_at: Instant::now(),
+                    };
+                    self.connections.insert(peer_id, metadata);
                     self.increment_connection_count(&address).await;
 
                     // Send connection event
@@ -935,11 +983,15 @@ impl TransportCoordinator {
                     // Attempt the connection
                     match bt.connect(address.clone()).await {
                         Ok(_) => {
-                            // Connection successful - update tracking
-                            self.connections
-                                .write()
-                                .await
-                                .insert(peer_id, address.clone());
+                            // Enforce capacity limits before adding new connection
+                            self.enforce_connection_capacity().await;
+                            
+                            // Connection successful - update tracking with metadata
+                            let metadata = ConnectionMetadata {
+                                address: address.clone(),
+                                established_at: Instant::now(),
+                            };
+                            self.connections.insert(peer_id, metadata);
                             self.increment_connection_count(&address).await;
 
                             // Send connection event
@@ -970,14 +1022,13 @@ impl TransportCoordinator {
 
     /// Disconnect from a peer and update connection tracking
     pub async fn disconnect_from_peer(&self, peer_id: PeerId) -> Result<()> {
-        let mut connections = self.connections.write().await;
-
-        if let Some(address) = connections.remove(&peer_id) {
+        // DashMap provides thread-safe operations
+        if let Some((_, metadata)) = self.connections.remove(&peer_id) {
             // Decrement connection count for this address
-            self.decrement_connection_count(&address).await;
+            self.decrement_connection_count(&metadata.address.clone()).await;
 
             // Perform actual disconnect based on transport type
-            match address {
+            match metadata.address {
                 TransportAddress::Bluetooth(_) => {
                     if let Some(bluetooth) = &self.bluetooth {
                         let mut bt = bluetooth.write().await;
@@ -1013,8 +1064,8 @@ impl TransportCoordinator {
 
     /// Get connection statistics
     pub async fn connection_stats(&self) -> ConnectionStats {
-        let connections = self.connections.read().await;
-        let counts = self.connection_counts_per_address.read().await;
+        let connections_len = self.connections.len();
+        let total_connections_by_address: usize = self.connection_counts_per_address.iter().map(|entry| *entry.value()).sum();
         let attempts = self.connection_attempts.read().await;
 
         let now = Instant::now();
@@ -1024,8 +1075,8 @@ impl TransportCoordinator {
             .count();
 
         ConnectionStats {
-            total_connections: connections.len(),
-            connections_by_address: counts.clone(),
+            total_connections: connections_len,
+            connections_by_address: self.connection_counts_per_address.iter().map(|entry| (entry.key().clone(), *entry.value())).collect(),
             recent_connection_attempts: recent_attempts,
             connection_limit: self.connection_limits.max_total_connections,
         }
@@ -1033,11 +1084,10 @@ impl TransportCoordinator {
 
     /// Send data to a peer using best available transport with automatic failover
     pub async fn send_to_peer(&self, peer_id: PeerId, data: Vec<u8>) -> Result<()> {
-        let connections = self.connections.read().await;
-
-        if let Some(address) = connections.get(&peer_id) {
+        if let Some(metadata) = self.connections.get(&peer_id) {
+            let address = metadata.address.clone(); // Extract address from metadata
             // Try sending based on the known connection address
-            let primary_result = self.send_via_address(peer_id, address, &data).await;
+            let primary_result = self.send_via_address(peer_id, &address, &data).await;
 
             if primary_result.is_ok() {
                 return Ok(());
@@ -1050,7 +1100,7 @@ impl TransportCoordinator {
 
             // If primary transport failed and failover is enabled, try other transports
             if self.failover_enabled {
-                drop(connections); // Release the lock
+                // No need to drop connections as DashMap doesn't use locks
                 return self.send_with_transport_failover(peer_id, data).await;
             }
 
@@ -1182,10 +1232,10 @@ impl TransportCoordinator {
             .serialize()
             .map_err(|e| Error::Protocol(format!("Packet serialization failed: {}", e)))?;
 
-        let connections = self.connections.read().await;
-
-        for peer_id in connections.keys() {
-            if let Err(e) = self.send_to_peer(*peer_id, data.clone()).await {
+        // Use DashMap iter() directly instead of read().await
+        for peer_ref in self.connections.iter() {
+            let peer_id = *peer_ref.key();
+            if let Err(e) = self.send_to_peer(peer_id, data.clone()).await {
                 log::warn!("Failed to broadcast to peer {:?}: {}", peer_id, e);
             }
         }
@@ -1201,7 +1251,7 @@ impl TransportCoordinator {
 
     /// Get list of connected peers
     pub async fn connected_peers(&self) -> Vec<PeerId> {
-        self.connections.read().await.keys().copied().collect()
+        self.connections.iter().map(|entry| *entry.key()).collect()
     }
 }
 

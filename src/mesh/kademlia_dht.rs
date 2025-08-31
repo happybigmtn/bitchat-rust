@@ -38,10 +38,9 @@ impl Distance {
 
     /// Get the highest bit set (leading zeros)
     pub fn leading_zeros(&self) -> u32 {
-        for byte in &self.0 {
+        for (i, byte) in self.0.iter().enumerate() {
             if *byte != 0 {
-                return byte.leading_zeros()
-                    + (self.0.iter().position(|&b| b != 0).unwrap() as u32 * 8);
+                return byte.leading_zeros() + (i as u32 * 8);
             }
         }
         256 // All zeros
@@ -77,7 +76,7 @@ impl Node {
             address,
             last_seen: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             rtt: None,
             failures: 0,
@@ -89,7 +88,7 @@ impl Node {
         use std::time::{SystemTime, UNIX_EPOCH};
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
         (now - self.last_seen) < PING_INTERVAL.as_secs() * 3 && self.failures < 3
     }
@@ -99,7 +98,7 @@ impl Node {
         use std::time::{SystemTime, UNIX_EPOCH};
         self.last_seen = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
         self.rtt = Some(rtt);
         self.failures = 0;
@@ -132,9 +131,8 @@ impl KBucket {
     /// Add or update a node
     pub fn add_node(&mut self, node: Node) -> bool {
         // Check if node already exists
-        if let Some(_existing) = self.nodes.iter_mut().find(|n| n.id == node.id) {
+        if let Some(idx) = self.nodes.iter().position(|n| n.id == node.id) {
             // Move to end (most recently seen)
-            let idx = self.nodes.iter().position(|n| n.id == node.id).unwrap();
             self.nodes.remove(idx);
             self.nodes.push(node);
             return true;
@@ -317,7 +315,7 @@ impl KademliaDHT {
             closest_nodes: closest,
             started_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             is_value_lookup: false,
             found_value: None,
@@ -343,11 +341,11 @@ impl KademliaDHT {
             publisher: self.local_id,
             published_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             expires_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs()
                 + EXPIRATION_TIME.as_secs(),
         };
@@ -375,7 +373,7 @@ impl KademliaDHT {
         if let Some(stored) = self.storage.get(&key) {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs();
             if stored.expires_at > now {
                 return Some(stored.value.clone());
@@ -489,7 +487,7 @@ impl KademliaDHT {
             // Complete if timeout
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs();
             if Duration::from_secs(now - lookup.started_at) > LOOKUP_TIMEOUT {
                 return true;
@@ -513,7 +511,7 @@ impl KademliaDHT {
         // Remove expired values
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
         self.storage.retain(|_, v| v.expires_at > now);
 

@@ -146,6 +146,23 @@ impl Default for GatewayCapabilities {
     }
 }
 
+impl GatewayCapabilities {
+    /// Create gateway capabilities from application configuration
+    pub fn from_app_config(config: &crate::app::ApplicationConfig) -> Self {
+        Self {
+            supports_tcp: true,
+            supports_udp: true,
+            supports_websocket: false,
+            supports_quic: false,
+            supports_ble_bridging: true,
+            supports_nat_traversal: true,
+            supports_load_balancing: true,
+            max_concurrent_connections: config.max_concurrent_connections,
+            max_bandwidth_mbps: config.max_bandwidth_mbps,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

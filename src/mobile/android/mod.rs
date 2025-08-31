@@ -6,6 +6,7 @@
 //! - Thread-safe callback handling
 //! - Android lifecycle integration
 
+pub mod async_jni;
 pub mod ble_jni;
 pub mod callbacks;
 pub mod gatt_server;

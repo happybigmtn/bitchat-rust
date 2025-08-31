@@ -17,7 +17,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Consensus parameters
-pub const CONSENSUS_THRESHOLD: f64 = 0.67; // 2/3 majority required
+/// CRITICAL FIX: Use precise threshold calculation for Byzantine fault tolerance
+/// Must ensure ceiling(2n/3) when converted to integer votes
+pub const CONSENSUS_THRESHOLD: f64 = 0.6667; // More precise 2/3 for ceiling calculation
 pub const COMMIT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const REVEAL_TIMEOUT: Duration = Duration::from_secs(10);
 pub const SETTLEMENT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -433,7 +435,8 @@ impl RobustConsensusEngine {
         match self.phase {
             ConsensusPhase::Commit => {
                 // Progress if we have threshold of commits or timeout
-                let threshold = (self.participants.len() as f64 * CONSENSUS_THRESHOLD) as usize;
+                // CRITICAL FIX: Use ceiling calculation for Byzantine fault tolerance
+                let threshold = (self.participants.len() * 2 + 2) / 3;
                 if self.commits.len() >= threshold || self.phase_start.elapsed() > COMMIT_TIMEOUT {
                     self.phase = ConsensusPhase::Reveal;
                     self.phase_start = Instant::now();
@@ -448,7 +451,8 @@ impl RobustConsensusEngine {
             }
             ConsensusPhase::Reveal => {
                 // Progress if we have threshold of reveals or timeout
-                let threshold = (self.commits.len() as f64 * CONSENSUS_THRESHOLD) as usize;
+                // CRITICAL FIX: Use ceiling calculation for Byzantine fault tolerance
+                let threshold = (self.commits.len() * 2 + 2) / 3;
                 if self.reveals.len() >= threshold || self.phase_start.elapsed() > REVEAL_TIMEOUT {
                     self.phase = ConsensusPhase::Propose;
                     self.phase_start = Instant::now();
@@ -463,7 +467,8 @@ impl RobustConsensusEngine {
             }
             ConsensusPhase::Vote => {
                 // Check if proposal is accepted
-                let threshold = (self.participants.len() as f64 * CONSENSUS_THRESHOLD) as usize;
+                // CRITICAL FIX: Use ceiling calculation for Byzantine fault tolerance
+                let threshold = (self.participants.len() * 2 + 2) / 3;
                 let approvals = self.votes.values().filter(|v| v.content.approve).count();
 
                 if approvals >= threshold {

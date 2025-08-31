@@ -4,9 +4,11 @@
 //! handling message dispatch, state synchronization, and failure recovery.
 
 use lru::LruCache;
+use dashmap::DashMap;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::interval;
@@ -20,6 +22,7 @@ use crate::protocol::p2p_messages::{
     CheatType, ConsensusMessage, ConsensusPayload, MessagePriority, NetworkView, RoundId,
 };
 use crate::protocol::{BitchatPacket, GameId, PeerId, PACKET_TYPE_CONSENSUS_VOTE};
+use crate::utils::LoopBudget;
 
 /// Configuration for consensus networking
 #[derive(Debug, Clone)]
@@ -86,8 +89,8 @@ pub struct ConsensusCoordinator {
     retry_queue: Arc<RwLock<HashMap<[u8; 32], RetryInfo>>>,
 
     // Event channels
-    inbound_messages: mpsc::UnboundedReceiver<ConsensusMessage>,
-    outbound_sender: mpsc::UnboundedSender<ConsensusMessage>,
+    inbound_messages: mpsc::Receiver<ConsensusMessage>,
+    outbound_sender: mpsc::Sender<ConsensusMessage>,
 
     // State tracking
     last_heartbeat: Arc<RwLock<Instant>>,
@@ -95,12 +98,12 @@ pub struct ConsensusCoordinator {
     network_view: Arc<RwLock<NetworkView>>,
 
     // Anti-cheat tracking
-    suspicious_behavior: Arc<RwLock<HashMap<PeerId, Vec<CheatType>>>>,
+    suspicious_behavior: Arc<DashMap<PeerId, Vec<CheatType>>>,
 
-    // Performance metrics
-    messages_sent: Arc<RwLock<u64>>,
-    messages_received: Arc<RwLock<u64>>,
-    consensus_rounds_completed: Arc<RwLock<u64>>,
+    // Performance metrics - using atomic counters for better performance
+    messages_sent: Arc<AtomicU64>,
+    messages_received: Arc<AtomicU64>,
+    consensus_rounds_completed: Arc<AtomicU64>,
 }
 
 impl ConsensusCoordinator {
@@ -112,7 +115,7 @@ impl ConsensusCoordinator {
         game_id: GameId,
         participants: Vec<PeerId>,
     ) -> Result<Self> {
-        let (outbound_sender, inbound_messages) = mpsc::unbounded_channel();
+        let (outbound_sender, inbound_messages) = mpsc::channel(5000); // High capacity for consensus
         let config = ConsensusNetworkConfig::default();
 
         let coordinator = Self {
@@ -140,10 +143,10 @@ impl ConsensusCoordinator {
                 partition_id: None,
                 leader: None,
             })),
-            suspicious_behavior: Arc::new(RwLock::new(HashMap::new())),
-            messages_sent: Arc::new(RwLock::new(0)),
-            messages_received: Arc::new(RwLock::new(0)),
-            consensus_rounds_completed: Arc::new(RwLock::new(0)),
+            suspicious_behavior: Arc::new(DashMap::new()),
+            messages_sent: Arc::new(AtomicU64::new(0)),
+            messages_received: Arc::new(AtomicU64::new(0)),
+            consensus_rounds_completed: Arc::new(AtomicU64::new(0)),
         };
 
         Ok(coordinator)
@@ -247,7 +250,7 @@ impl ConsensusCoordinator {
             .write()
             .await
             .put(message.message_id, Instant::now());
-        *self.messages_received.write().await += 1;
+        self.messages_received.fetch_add(1, Ordering::Relaxed);
 
         // Process message based on payload type
         match &message.payload {
@@ -342,7 +345,7 @@ impl ConsensusCoordinator {
         self.mesh_service.broadcast_packet(packet).await?;
 
         // Update metrics
-        *self.messages_sent.write().await += 1;
+        self.messages_sent.fetch_add(1, Ordering::Relaxed);
 
         // Add to retry queue for critical messages
         if message.payload.priority() == MessagePriority::Critical {
@@ -519,11 +522,8 @@ impl ConsensusCoordinator {
         log::warn!("Cheat alert for {:?}: {:?}", suspected_peer, violation_type);
 
         // Track suspicious behavior
-        let mut behavior = self.suspicious_behavior.write().await;
-        behavior
-            .entry(suspected_peer)
-            .or_default()
-            .push(violation_type);
+        let mut behavior = self.suspicious_behavior.entry(suspected_peer).or_insert_with(Vec::new);
+        behavior.push(violation_type);
 
         // TODO: Implement cheat response logic
 
@@ -542,9 +542,17 @@ impl ConsensusCoordinator {
 
         tokio::spawn(async move {
             let mut heartbeat_interval = interval(interval_duration);
+            let mut budget = LoopBudget::for_consensus();
 
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 heartbeat_interval.tick().await;
+                budget.consume(1);
 
                 let participants_list = participants.read().await.iter().copied().collect();
                 let view = network_view.read().await.clone();
@@ -578,9 +586,17 @@ impl ConsensusCoordinator {
 
         tokio::spawn(async move {
             let mut retry_interval = interval(Duration::from_secs(5));
+            let mut budget = LoopBudget::for_consensus();
 
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 retry_interval.tick().await;
+                budget.consume(1);
 
                 let mut queue = retry_queue.write().await;
                 let mut to_retry = Vec::new();
@@ -676,9 +692,9 @@ impl ConsensusCoordinator {
     /// Get consensus statistics
     pub async fn get_stats(&self) -> ConsensusStats {
         ConsensusStats {
-            messages_sent: *self.messages_sent.read().await,
-            messages_received: *self.messages_received.read().await,
-            consensus_rounds: *self.consensus_rounds_completed.read().await,
+            messages_sent: self.messages_sent.load(Ordering::Relaxed),
+            messages_received: self.messages_received.load(Ordering::Relaxed),
+            consensus_rounds: self.consensus_rounds_completed.load(Ordering::Relaxed),
             active_participants: self.participants.read().await.len(),
             current_leader: *self.current_leader.read().await,
             partition_detected: *self.partition_detected.read().await,

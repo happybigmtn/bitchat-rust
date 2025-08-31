@@ -297,6 +297,7 @@ mod tests {
             bench.record_operation();
         }
 
+        // Use blocking sleep in test since this is synchronous test function
         std::thread::sleep(Duration::from_millis(100));
 
         let ops_per_sec = bench.get_ops_per_second();

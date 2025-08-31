@@ -225,7 +225,7 @@ pub struct EventBus {
 
 impl EventBus {
     pub fn new() -> Self {
-        let (sender, _) = mpsc::unbounded_channel();
+        let (sender, _) = mpsc::channel(100); // Bounded UI events
         Self { sender }
     }
 
@@ -233,8 +233,8 @@ impl EventBus {
         let _ = self.sender.send(event);
     }
 
-    pub fn subscribe(&self) -> mpsc::UnboundedReceiver<StateEvent> {
-        let (tx, rx) = mpsc::unbounded_channel();
+    pub fn subscribe(&self) -> mpsc::Receiver<StateEvent> {
+        let (tx, rx) = mpsc::channel(100); // Bounded subscription channel
         // In a real implementation, would store tx and forward events
         rx
     }

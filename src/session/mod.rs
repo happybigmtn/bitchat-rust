@@ -99,7 +99,7 @@ pub enum ExpiryReason {
 pub struct SessionManager {
     sessions: Arc<RwLock<HashMap<SessionId, BitchatSession>>>,
     limits: SessionLimits,
-    event_sender: mpsc::UnboundedSender<SessionEvent>,
+    event_sender: mpsc::Sender<SessionEvent>,
 }
 
 /// Session events
@@ -304,7 +304,7 @@ impl BitchatSession {
 
 impl SessionManager {
     pub fn new(limits: SessionLimits) -> Self {
-        let (event_sender, _) = mpsc::unbounded_channel();
+        let (event_sender, _) = mpsc::channel(1000); // Moderate traffic for session events
 
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),

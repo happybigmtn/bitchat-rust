@@ -72,13 +72,19 @@ impl CpuOptimizer {
             .num_threads((core_count / 2).max(1)) // Half cores for game logic
             .thread_name(|i| format!("game-worker-{}", i))
             .build()
-            .expect("Failed to create game thread pool");
+            .unwrap_or_else(|e| {
+                eprintln!("WARNING: Failed to create game thread pool, using global pool: {}", e);
+                rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap()
+            });
 
         let network_pool = rayon::ThreadPoolBuilder::new()
             .num_threads((core_count / 4).max(1)) // Quarter cores for network
             .thread_name(|i| format!("network-worker-{}", i))
             .build()
-            .expect("Failed to create network thread pool");
+            .unwrap_or_else(|e| {
+                eprintln!("WARNING: Failed to create network thread pool, using global pool: {}", e);
+                rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap()
+            });
 
         Self {
             core_count,

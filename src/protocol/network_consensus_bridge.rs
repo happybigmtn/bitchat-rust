@@ -12,6 +12,7 @@ use tokio::time::interval;
 use crate::crypto::BitchatIdentity;
 use crate::error::{Error, Result};
 use crate::mesh::MeshService;
+use crate::utils::AdaptiveInterval;
 use crate::protocol::consensus::engine::{ConsensusEngine, GameConsensusState, GameOperation};
 use crate::protocol::consensus::ProposalId;
 use crate::protocol::consensus_coordinator::ConsensusCoordinator;
@@ -61,8 +62,8 @@ pub struct NetworkConsensusBridge {
     pending_operations: Arc<RwLock<HashMap<ProposalId, PendingOperation>>>,
 
     // Event processing
-    message_sender: mpsc::UnboundedSender<ConsensusMessage>,
-    message_receiver: Arc<RwLock<mpsc::UnboundedReceiver<ConsensusMessage>>>,
+    message_sender: mpsc::Sender<ConsensusMessage>,
+    message_receiver: Arc<RwLock<mpsc::Receiver<ConsensusMessage>>>,
 
     // State tracking
     last_state_sync: Arc<RwLock<Instant>>,
@@ -105,7 +106,7 @@ impl NetworkConsensusBridge {
             .await?,
         );
 
-        let (message_sender, message_receiver) = mpsc::unbounded_channel();
+        let (message_sender, message_receiver) = mpsc::channel(10000); // High capacity for consensus messages
 
         Ok(Self {
             consensus_engine,
@@ -332,8 +333,9 @@ impl NetworkConsensusBridge {
         let identity = self.identity.clone();
 
         tokio::spawn(async move {
-            // This is a simplified version - in practice, you'd hook into mesh service events
-            let mut event_interval = interval(Duration::from_millis(100));
+            // Use adaptive interval for mesh event handling
+            // 100ms is acceptable for consensus operations, but can back off when idle
+            let mut event_interval = AdaptiveInterval::for_consensus();
 
             loop {
                 event_interval.tick().await;
@@ -341,6 +343,11 @@ impl NetworkConsensusBridge {
                 // In practice, this would receive actual mesh events
                 // For now, we simulate by checking for packets periodically
                 // The actual implementation would integrate with MeshService's event system
+                
+                // When real mesh events are processed, signal activity:
+                // if mesh_events_processed {
+                //     event_interval.signal_activity();
+                // }
             }
         });
     }
@@ -460,6 +467,7 @@ impl NetworkConsensusBridge {
         // Send to message processing task
         self.message_sender
             .send(message)
+            .await
             .map_err(|e| Error::Network(format!("Failed to queue message: {}", e)))?;
 
         Ok(())

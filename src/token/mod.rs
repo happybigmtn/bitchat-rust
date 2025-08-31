@@ -136,7 +136,7 @@ pub struct TokenLedger {
     total_supply: Arc<RwLock<u64>>,
     treasury_balance: Arc<RwLock<u64>>,
     mining_config: MiningConfig,
-    event_sender: mpsc::UnboundedSender<TokenEvent>,
+    event_sender: mpsc::Sender<TokenEvent>,
 }
 
 /// Mining configuration
@@ -229,7 +229,7 @@ impl Default for TokenLedger {
 
 impl TokenLedger {
     pub fn new() -> Self {
-        let (event_sender, _) = mpsc::unbounded_channel();
+        let (event_sender, _) = mpsc::channel(1000); // Moderate traffic for token events
 
         Self {
             accounts: Arc::new(RwLock::new(HashMap::new())),

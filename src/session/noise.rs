@@ -1,4 +1,5 @@
 use crate::crypto::BitchatKeypair;
+use crate::utils::GrowableBuffer;
 use snow::{Builder, HandshakeState, TransportState};
 
 #[derive(Debug, Clone)]
@@ -25,6 +26,7 @@ pub struct NoiseSession {
     pub local_ephemeral: Option<BitchatKeypair>,
     pub remote_static: Option<[u8; 32]>,
     pub handshake_hash: Option<[u8; 32]>,
+    buffer: GrowableBuffer,
 }
 
 impl NoiseSession {
@@ -43,6 +45,7 @@ impl NoiseSession {
             local_ephemeral: Some(local_keypair.clone()),
             remote_static: None,
             handshake_hash: None,
+            buffer: GrowableBuffer::new(),
         })
     }
 
@@ -61,16 +64,18 @@ impl NoiseSession {
             local_ephemeral: Some(local_keypair.clone()),
             remote_static: None,
             handshake_hash: None,
+            buffer: GrowableBuffer::new(),
         })
     }
 
     pub fn write_handshake_message(&mut self, payload: &[u8]) -> Result<Vec<u8>, snow::Error> {
         match &mut self.state {
             NoiseSessionState::HandshakeInProgress { handshake_state } => {
-                let mut buffer = vec![0u8; 65535];
-                let len = handshake_state.write_message(payload, &mut buffer)?;
-                buffer.truncate(len);
-                Ok(buffer)
+                // Use growable buffer with a reasonable initial size for handshake
+                let buffer_slice = self.buffer.get_mut(payload.len() + 1024);
+                let len = handshake_state.write_message(payload, buffer_slice)?;
+                self.buffer.mark_used(len);
+                Ok(self.buffer.as_slice(len).to_vec())
             }
             _ => Err(snow::Error::Input),
         }
@@ -79,9 +84,10 @@ impl NoiseSession {
     pub fn read_handshake_message(&mut self, message: &[u8]) -> Result<Vec<u8>, snow::Error> {
         match &mut self.state {
             NoiseSessionState::HandshakeInProgress { handshake_state } => {
-                let mut buffer = vec![0u8; 65535];
-                let len = handshake_state.read_message(message, &mut buffer)?;
-                buffer.truncate(len);
+                // Use growable buffer with reasonable size for handshake response
+                let buffer_slice = self.buffer.get_mut(message.len() + 1024);
+                let len = handshake_state.read_message(message, buffer_slice)?;
+                self.buffer.mark_used(len);
 
                 if handshake_state.is_handshake_finished() {
                     let hash_slice = handshake_state.get_handshake_hash();
@@ -100,7 +106,7 @@ impl NoiseSession {
                     }
                 }
 
-                Ok(buffer)
+                Ok(self.buffer.as_slice(len).to_vec())
             }
             _ => Err(snow::Error::Input),
         }

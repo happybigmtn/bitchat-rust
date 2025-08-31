@@ -46,6 +46,7 @@ pub mod token; // Token economics and CRAP tokens
 pub mod transport; // Network transport layer (Bluetooth mesh)
 pub mod treasury; // Treasury management and automated market making
 pub mod ui; // User interface (CLI and TUI)
+pub mod utils; // Utility functions and helpers
 pub mod validation; // Security hardening and input validation
 
 // UniFFI type tag (required by generated code)
@@ -83,6 +84,7 @@ pub use treasury::{
     AutomatedMarketMaker, TreasuryConfig, TreasuryManager, TreasuryStats, TreasuryWallet,
 };
 pub use ui::{Cli, Commands};
+pub use utils::{AdaptiveInterval, AdaptiveIntervalConfig};
 
 /// Application configuration
 #[derive(Debug, Clone)]

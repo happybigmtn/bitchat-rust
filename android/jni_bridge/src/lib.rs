@@ -43,7 +43,8 @@ pub extern "C" fn Java_com_bitcraps_android_keystore_KeystoreJNI_initKeystore(
     if instances.is_none() {
         *instances = Some(HashMap::new());
     }
-    instances.as_mut().unwrap().insert(handle_id, handle);
+    // Note: We don't store the handle in the HashMap since we have the raw pointer
+    // The raw pointer itself serves as the identifier
     
     handle_id
 }
@@ -239,18 +240,40 @@ pub extern "C" fn Java_com_bitcraps_android_keystore_KeystoreJNI_isHardwareBacke
     }
 }
 
-/// Clean up keystore handle
+/// Destroy keystore handle and free memory
+#[no_mangle]
+pub extern "C" fn Java_com_bitcraps_android_keystore_KeystoreJNI_destroyKeystore(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) {
+    if handle != 0 {
+        unsafe {
+            // SAFETY: We've verified handle is non-null and it should be a valid pointer
+            // that was previously returned by Box::into_raw from initKeystore.
+            // This reclaims ownership and allows proper memory cleanup.
+            let _handle = Box::from_raw(handle as *mut AndroidKeystoreHandle);
+            // Box is automatically dropped here, freeing the heap memory
+        }
+        
+        let mut instances = KEYSTORE_INSTANCES.lock().unwrap();
+        if let Some(ref mut map) = instances.as_mut() {
+            map.remove(&handle);
+        }
+        
+        log::info!("Destroyed keystore handle and freed memory: {}", handle);
+    }
+}
+
+/// Clean up keystore handle (deprecated - use destroyKeystore instead)
 #[no_mangle]
 pub extern "C" fn Java_com_bitcraps_android_keystore_KeystoreJNI_cleanup(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
 ) {
-    let mut instances = KEYSTORE_INSTANCES.lock().unwrap();
-    if let Some(map) = instances.as_mut() {
-        map.remove(&handle);
-        log::info!("Cleaned up keystore handle: {}", handle);
-    }
+    log::warn!("cleanup() is deprecated, use destroyKeystore() instead for handle: {}", handle);
+    Java_com_bitcraps_android_keystore_KeystoreJNI_destroyKeystore(_env, _class, handle);
 }
 
 // Internal implementation functions

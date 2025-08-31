@@ -48,6 +48,25 @@ impl Default for ValidationRules {
     }
 }
 
+impl ValidationRules {
+    /// Create validation rules from application configuration
+    pub fn from_app_config(config: &crate::app::ApplicationConfig) -> Self {
+        Self {
+            max_packet_size: 65536,
+            max_string_length: config.max_string_length,
+            max_array_length: config.max_array_length,
+            max_bet_amount: 1_000_000,
+            min_bet_amount: 1,
+            max_players_per_game: 8,
+            max_games_per_player: 5,
+            max_message_rate: config.max_message_rate,
+            rate_limit_window: Duration::from_secs(60),
+            require_signatures: true,
+            allow_anonymous: false,
+        }
+    }
+}
+
 /// Input validator with rate limiting
 pub struct InputValidator {
     rules: ValidationRules,

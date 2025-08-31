@@ -63,9 +63,16 @@ public class KeystoreJNI {
     public native boolean isHardwareBackedAvailable();
     
     /**
-     * Clean up native resources
+     * Destroy keystore instance and free all associated memory
      * @param handle Native handle
      */
+    public native void destroyKeystore(long handle);
+    
+    /**
+     * Clean up native resources (deprecated - use destroyKeystore instead)
+     * @param handle Native handle
+     */
+    @Deprecated
     public native void cleanup(long handle);
     
     /**
@@ -84,12 +91,22 @@ public class KeystoreJNI {
     }
     
     /**
-     * Cleanup on finalization
+     * Explicit cleanup method - call this when done with the keystore
+     */
+    public void destroy() {
+        if (nativeHandle != 0) {
+            destroyKeystore(nativeHandle);
+            nativeHandle = 0;
+        }
+    }
+    
+    /**
+     * Cleanup on finalization (fallback if destroy() not called)
      */
     @Override
     protected void finalize() throws Throwable {
         if (nativeHandle != 0) {
-            cleanup(nativeHandle);
+            destroyKeystore(nativeHandle);
             nativeHandle = 0;
         }
         super.finalize();

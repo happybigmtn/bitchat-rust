@@ -143,16 +143,16 @@ impl DatabasePool {
         }
 
         // Set optimal pragmas
-        conn.execute("PRAGMA synchronous = NORMAL", [])
+        let _: String = conn.query_row("PRAGMA synchronous = NORMAL", [], |row| row.get(0))
             .map_err(|e| Error::Database(format!("Failed to set synchronous: {}", e)))?;
 
-        conn.execute("PRAGMA cache_size = -64000", []) // 64MB cache
+        let _: i64 = conn.query_row("PRAGMA cache_size = -64000", [], |row| row.get(0)) // 64MB cache
             .map_err(|e| Error::Database(format!("Failed to set cache size: {}", e)))?;
 
-        conn.execute("PRAGMA temp_store = MEMORY", [])
+        let _: String = conn.query_row("PRAGMA temp_store = MEMORY", [], |row| row.get(0))
             .map_err(|e| Error::Database(format!("Failed to set temp store: {}", e)))?;
 
-        conn.execute("PRAGMA mmap_size = 268435456", []) // 256MB mmap
+        let _: i64 = conn.query_row("PRAGMA mmap_size = 268435456", [], |row| row.get(0)) // 256MB mmap
             .map_err(|e| Error::Database(format!("Failed to set mmap size: {}", e)))?;
 
         // Set busy timeout
@@ -284,8 +284,10 @@ impl DatabasePool {
     /// Checkpoint the database (WAL mode)
     pub async fn checkpoint(&self) -> Result<()> {
         self.with_connection(|conn| {
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)", [])
-                .map_err(|e| Error::Database(format!("Checkpoint failed: {}", e)))?;
+            let _: (i64, i64) = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .map_err(|e| Error::Database(format!("Checkpoint failed: {}", e)))?;
             Ok(())
         })
         .await

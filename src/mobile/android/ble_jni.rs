@@ -8,6 +8,9 @@ use crate::error::BitCrapsError;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::sync::oneshot;
+use tokio::time::timeout;
 
 #[cfg(target_os = "android")]
 use jni::objects::{GlobalRef, JByteArray, JClass, JIntArray, JObject, JString, JValue};
@@ -56,14 +59,20 @@ pub fn cleanup_ble_manager() -> Result<(), BitCrapsError> {
             message: format!("Failed to create cleanup runtime: {}", e),
         })?;
 
-        rt.block_on(async {
-            if manager.is_advertising() {
-                let _ = manager.stop_advertising().await;
+        // Use async cleanup without blocking the calling thread
+        let manager_clone = manager.clone();
+        rt.spawn(async move {
+            if manager_clone.is_advertising() {
+                let _ = timeout(Duration::from_secs(3), manager_clone.stop_advertising()).await;
             }
-            if manager.is_scanning() {
-                let _ = manager.stop_scanning().await;
+            if manager_clone.is_scanning() {
+                let _ = timeout(Duration::from_secs(3), manager_clone.stop_scanning()).await;
             }
         });
+        
+        // Give async operations a brief moment to initiate without blocking executor
+        // Use non-blocking approach instead of thread::sleep in async context
+        std::mem::drop(rt); // Allow runtime to complete spawned tasks naturally
 
         log::info!("BLE manager cleanup completed");
     }
@@ -365,17 +374,24 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_startAdvertising(
         }
     };
 
-    match rt.block_on(manager.start_advertising()) {
-        Ok(()) => {
-            log::info!("BLE advertising started from JNI");
-            true as jboolean
+    // Start advertising asynchronously to prevent ANR
+    let manager_clone = manager.clone();
+    rt.spawn(async move {
+        match timeout(Duration::from_secs(5), manager_clone.start_advertising()).await {
+            Ok(Ok(())) => {
+                log::info!("BLE advertising started from JNI");
+            }
+            Ok(Err(e)) => {
+                log::error!("Failed to start BLE advertising: {}", e);
+            }
+            Err(_) => {
+                log::error!("BLE advertising start timed out");
+            }
         }
-        Err(e) => {
-            log::error!("Failed to start BLE advertising: {}", e);
-            jni_helpers::throw_exception(&env, &e);
-            false as jboolean
-        }
-    }
+    });
+    
+    // Return immediately - Android will poll isAdvertising() to check status
+    true as jboolean
 }
 
 /// Stop BLE advertising
@@ -404,17 +420,24 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_stopAdvertising(
         }
     };
 
-    match rt.block_on(manager.stop_advertising()) {
-        Ok(()) => {
-            log::info!("BLE advertising stopped from JNI");
-            true as jboolean
+    // Stop advertising asynchronously to prevent ANR
+    let manager_clone = manager.clone();
+    rt.spawn(async move {
+        match timeout(Duration::from_secs(5), manager_clone.stop_advertising()).await {
+            Ok(Ok(())) => {
+                log::info!("BLE advertising stopped from JNI");
+            }
+            Ok(Err(e)) => {
+                log::error!("Failed to stop BLE advertising: {}", e);
+            }
+            Err(_) => {
+                log::error!("BLE advertising stop timed out");
+            }
         }
-        Err(e) => {
-            log::error!("Failed to stop BLE advertising: {}", e);
-            jni_helpers::throw_exception(&env, &e);
-            false as jboolean
-        }
-    }
+    });
+    
+    // Return immediately - Android will poll isAdvertising() to check status
+    true as jboolean
 }
 
 /// Start BLE scanning
@@ -443,17 +466,24 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_startScanning(
         }
     };
 
-    match rt.block_on(manager.start_scanning()) {
-        Ok(()) => {
-            log::info!("BLE scanning started from JNI");
-            true as jboolean
+    // Start scanning asynchronously to prevent ANR
+    let manager_clone = manager.clone();
+    rt.spawn(async move {
+        match timeout(Duration::from_secs(5), manager_clone.start_scanning()).await {
+            Ok(Ok(())) => {
+                log::info!("BLE scanning started from JNI");
+            }
+            Ok(Err(e)) => {
+                log::error!("Failed to start BLE scanning: {}", e);
+            }
+            Err(_) => {
+                log::error!("BLE scanning start timed out");
+            }
         }
-        Err(e) => {
-            log::error!("Failed to start BLE scanning: {}", e);
-            jni_helpers::throw_exception(&env, &e);
-            false as jboolean
-        }
-    }
+    });
+    
+    // Return immediately - Android will poll isScanning() to check status
+    true as jboolean
 }
 
 /// Stop BLE scanning
@@ -482,17 +512,24 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_stopScanning(
         }
     };
 
-    match rt.block_on(manager.stop_scanning()) {
-        Ok(()) => {
-            log::info!("BLE scanning stopped from JNI");
-            true as jboolean
+    // Stop scanning asynchronously to prevent ANR
+    let manager_clone = manager.clone();
+    rt.spawn(async move {
+        match timeout(Duration::from_secs(5), manager_clone.stop_scanning()).await {
+            Ok(Ok(())) => {
+                log::info!("BLE scanning stopped from JNI");
+            }
+            Ok(Err(e)) => {
+                log::error!("Failed to stop BLE scanning: {}", e);
+            }
+            Err(_) => {
+                log::error!("BLE scanning stop timed out");
+            }
         }
-        Err(e) => {
-            log::error!("Failed to stop BLE scanning: {}", e);
-            jni_helpers::throw_exception(&env, &e);
-            false as jboolean
-        }
-    }
+    });
+    
+    // Return immediately - Android will poll isScanning() to check status
+    true as jboolean
 }
 
 /// Handle peer discovered callback from Android

@@ -473,7 +473,7 @@ impl GatewayNode {
         config: GatewayConfig,
         mesh_service: Arc<MeshService>,
     ) -> Result<Self> {
-        let (event_sender, event_receiver) = mpsc::unbounded_channel();
+        let (event_sender, event_receiver) = mpsc::channel(1000); // Bounded gateway events
         
         Ok(Self {
             identity,

@@ -186,8 +186,8 @@ pub struct TcpTransport {
     connections: Arc<RwLock<HashMap<PeerId, TcpConnection>>>,
     listener: Option<TcpListener>,
     local_address: Option<SocketAddr>,
-    event_sender: mpsc::UnboundedSender<TransportEvent>,
-    event_receiver: Arc<Mutex<mpsc::UnboundedReceiver<TransportEvent>>>,
+    event_sender: mpsc::Sender<TransportEvent>,
+    event_receiver: Arc<Mutex<mpsc::Receiver<TransportEvent>>>,
     connection_semaphore: Arc<Semaphore>,
     circuit_breakers: Arc<RwLock<HashMap<SocketAddr, CircuitBreaker>>>,
 
@@ -200,7 +200,7 @@ pub struct TcpTransport {
 impl TcpTransport {
     /// Create new TCP transport
     pub fn new(config: TcpTransportConfig) -> Self {
-        let (event_sender, event_receiver) = mpsc::unbounded_channel();
+        let (event_sender, event_receiver) = mpsc::channel(10000); // Critical path: high-capacity for network events
         let connection_semaphore = Arc::new(Semaphore::new(config.max_connections));
 
         Self {
@@ -591,10 +591,9 @@ impl Transport for TcpTransport {
             let listener = TcpListener::bind(addr).await?;
             self.local_address = Some(listener.local_addr()?);
 
-            println!(
-                "TCP transport listening on: {}",
-                self.local_address.unwrap()
-            );
+            if let Some(addr) = self.local_address {
+                println!("TCP transport listening on: {}", addr);
+            }
 
             // Start accept loop
             self.accept_loop(listener).await;

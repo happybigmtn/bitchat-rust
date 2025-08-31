@@ -14,12 +14,13 @@ use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tokio::time::interval;
 use uuid::Uuid;
 
-use super::consensus_game_manager::{ConsensusGameManager, GameEvent};
+use super::consensus_game_manager::{ConsensusGameManager, ConsensusGameConfig, GameEvent};
 use crate::crypto::BitchatIdentity;
 use crate::error::{Error, Result};
 use crate::mesh::MeshService;
 use crate::protocol::craps::{BetType, CrapTokens, DiceRoll};
 use crate::protocol::{GameId, PeerId};
+use crate::utils::LoopBudget;
 
 /// Game advertisement message broadcast over mesh network
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,7 +187,7 @@ pub struct GameOrchestrator {
 
     // Event channels
     event_tx: broadcast::Sender<OrchestratorEvent>,
-    command_rx: Arc<Mutex<mpsc::UnboundedReceiver<OrchestratorCommand>>>,
+    command_rx: Arc<Mutex<mpsc::Receiver<OrchestratorCommand>>>,
 
     // Configuration
     config: OrchestratorConfig,
@@ -353,11 +354,11 @@ impl GameOrchestrator {
         config: OrchestratorConfig,
     ) -> (
         Self,
-        mpsc::UnboundedSender<OrchestratorCommand>,
+        mpsc::Sender<OrchestratorCommand>,
         broadcast::Receiver<OrchestratorEvent>,
     ) {
         let (event_tx, event_rx) = broadcast::channel(1000);
-        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let (command_tx, command_rx) = mpsc::channel(5000); // High traffic game coordination channel
 
         let orchestrator = Self {
             identity,
@@ -622,9 +623,17 @@ impl GameOrchestrator {
 
         tokio::spawn(async move {
             let mut discovery_timer = interval(discovery_interval);
+            let mut budget = LoopBudget::for_discovery();
 
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 discovery_timer.tick().await;
+                budget.consume(1);
 
                 // Create discovery request
                 let discovery_request = GameDiscoveryRequest {
@@ -716,9 +725,17 @@ impl GameOrchestrator {
 
         tokio::spawn(async move {
             let mut timeout_timer = interval(Duration::from_secs(5));
+            let mut budget = LoopBudget::for_consensus();
 
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 timeout_timer.tick().await;
+                budget.consume(1);
 
                 let sessions = active_sessions.read().await;
                 let mut timeouts = Vec::new();
@@ -775,9 +792,17 @@ impl GameOrchestrator {
 
         tokio::spawn(async move {
             let mut sync_timer = interval(sync_interval);
+            let mut budget = LoopBudget::for_consensus();
 
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 sync_timer.tick().await;
+                budget.consume(1);
 
                 let sessions = active_sessions.read().await;
 
@@ -840,9 +865,17 @@ impl GameOrchestrator {
 
         tokio::spawn(async move {
             let mut conflict_timer = interval(Duration::from_secs(10));
+            let mut budget = LoopBudget::for_consensus();
 
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 conflict_timer.tick().await;
+                budget.consume(1);
 
                 let sessions = active_sessions.read().await;
 
@@ -1190,11 +1223,21 @@ mod tests {
             identity.clone(),
             Default::default(),
         ));
+        
+        // Create consensus config that allows single-player games for testing
+        let consensus_config = ConsensusGameConfig {
+            consensus_timeout: std::time::Duration::from_secs(30),
+            state_sync_interval: std::time::Duration::from_secs(5),
+            max_concurrent_games: 10,
+            min_participants: 1,
+            max_bet_amount: 10000,
+        };
+        
         let consensus_manager = Arc::new(ConsensusGameManager::new(
             identity.clone(),
             mesh_service.clone(),
             consensus_handler,
-            Default::default(),
+            consensus_config,
         ));
 
         let config = OrchestratorConfig::default();

@@ -337,7 +337,7 @@ pub struct KademliaNode {
     pending_queries: Arc<RwLock<HashMap<u64, oneshot::Sender<KademliaResponse>>>>,
     query_counter: Arc<RwLock<u64>>,
     network_handler: Arc<NetworkHandler>,
-    event_sender: mpsc::UnboundedSender<KademliaEvent>,
+    event_sender: mpsc::Sender<KademliaEvent>,
 }
 
 /// Stored value with metadata
@@ -444,7 +444,7 @@ impl KademliaNode {
         let network_handler =
             Arc::new(NetworkHandler::new(udp_socket, tcp_listener, local_address));
 
-        let (event_sender, _) = mpsc::unbounded_channel();
+        let (event_sender, _) = mpsc::channel(1000); // Moderate traffic for Kademlia events
 
         let node = Self {
             local_id: local_id.clone(),
@@ -667,9 +667,8 @@ impl KademliaNode {
         }
 
         let success = success_count > 0;
-        self.event_sender
-            .send(KademliaEvent::ValueStored { key, success })
-            .ok();
+        let _ = self.event_sender
+            .try_send(KademliaEvent::ValueStored { key, success });
 
         Ok(success)
     }
@@ -680,12 +679,11 @@ impl KademliaNode {
         if let Some(stored_value) = self.storage.read().await.get(&key) {
             // Check if value hasn't expired
             if stored_value.stored_at.elapsed() < stored_value.ttl {
-                self.event_sender
-                    .send(KademliaEvent::ValueFound {
+                let _ = self.event_sender
+                    .try_send(KademliaEvent::ValueFound {
                         key: key.clone(),
                         value: stored_value.data.clone(),
-                    })
-                    .ok();
+                    });
                 return Some(stored_value.data.clone());
             } else {
                 // Value expired, remove it
@@ -701,12 +699,11 @@ impl KademliaNode {
         // Use iterative lookup for FIND_VALUE
         match self.iterative_find_value(key_id, key.clone()).await {
             Some(value) => {
-                self.event_sender
-                    .send(KademliaEvent::ValueFound {
+                let _ = self.event_sender
+                    .try_send(KademliaEvent::ValueFound {
                         key,
                         value: value.clone(),
-                    })
-                    .ok();
+                    });
                 Some(value)
             }
             None => None,
@@ -1001,11 +998,10 @@ impl KademliaNode {
                         }
                     }
                     Err(e) => {
-                        event_sender
-                            .send(KademliaEvent::NetworkError {
+                        let _ = event_sender
+                            .try_send(KademliaEvent::NetworkError {
                                 error: format!("UDP receive error: {}", e),
-                            })
-                            .ok();
+                            });
                     }
                 }
             }
@@ -1025,7 +1021,7 @@ impl KademliaNode {
         storage: &Arc<RwLock<HashMap<Vec<u8>, StoredValue>>>,
         pending_queries: &Arc<RwLock<HashMap<u64, oneshot::Sender<KademliaResponse>>>>,
         udp_socket: &Arc<UdpSocket>,
-        event_sender: &mpsc::UnboundedSender<KademliaEvent>,
+        event_sender: &mpsc::Sender<KademliaEvent>,
     ) {
         match message {
             KademliaMessage::FindNode { target, requester } => {
@@ -1145,9 +1141,8 @@ impl KademliaNode {
                 // Add responder to routing table
                 let responder_arc = Arc::new(responder.clone());
                 routing_table.add_contact(responder_arc).await;
-                event_sender
-                    .send(KademliaEvent::NodeDiscovered { contact: responder })
-                    .ok();
+                let _ = event_sender
+                    .try_send(KademliaEvent::NodeDiscovered { contact: responder });
             }
 
             KademliaMessage::NatPing {
@@ -1273,8 +1268,8 @@ impl KademliaNode {
     }
 
     /// Get events receiver
-    pub fn subscribe_events(&self) -> mpsc::UnboundedReceiver<KademliaEvent> {
-        let (_tx, rx) = mpsc::unbounded_channel();
+    pub fn subscribe_events(&self) -> mpsc::Receiver<KademliaEvent> {
+        let (_tx, rx) = mpsc::channel(1000); // Moderate traffic for event subscription
         // In a real implementation, you'd want to manage multiple subscribers
         rx
     }

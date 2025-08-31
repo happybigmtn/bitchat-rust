@@ -158,21 +158,33 @@ impl<T: Send + 'static> PooledObject<T> {
     pub fn as_ref(&self) -> &T {
         self.object
             .as_ref()
-            .expect("PooledObject should always contain an object")
+            .unwrap_or_else(|| {
+                // This should never happen due to pool invariants
+                eprintln!("CRITICAL: PooledObject accessed after object was taken");
+                std::process::exit(1);
+            })
     }
 
     /// Get a mutable reference to the pooled object
     pub fn as_mut(&mut self) -> &mut T {
         self.object
             .as_mut()
-            .expect("PooledObject should always contain an object")
+            .unwrap_or_else(|| {
+                // This should never happen due to pool invariants
+                eprintln!("CRITICAL: PooledObject accessed after object was taken");
+                std::process::exit(1);
+            })
     }
 
     /// Take ownership of the object, preventing it from returning to the pool
     pub fn into_inner(mut self) -> T {
         self.object
             .take()
-            .expect("PooledObject should always contain an object")
+            .unwrap_or_else(|| {
+                // This should never happen due to pool invariants
+                eprintln!("CRITICAL: PooledObject accessed after object was already taken");
+                std::process::exit(1);
+            })
     }
 }
 
@@ -228,6 +240,26 @@ impl GameMemoryPools {
         Self {
             vec_u8_pool: MemoryPool::with_factory(100, || Vec::with_capacity(1024)),
             string_pool: MemoryPool::with_factory(50, || String::with_capacity(256)),
+            hashmap_pool: MemoryPool::with_factory(25, || {
+                std::collections::HashMap::with_capacity(16)
+            }),
+        }
+    }
+
+    /// Create memory pools from application configuration
+    pub fn from_app_config(config: &crate::app::ApplicationConfig) -> Self {
+        let vec_pool_size = config.vec_pool_size;
+        let vec_pool_capacity = config.vec_pool_capacity;
+        let string_pool_size = config.string_pool_size;
+        let string_pool_capacity = config.string_pool_capacity;
+        
+        Self {
+            vec_u8_pool: MemoryPool::with_factory(vec_pool_size, move || {
+                Vec::with_capacity(vec_pool_capacity)
+            }),
+            string_pool: MemoryPool::with_factory(string_pool_size, move || {
+                String::with_capacity(string_pool_capacity)
+            }),
             hashmap_pool: MemoryPool::with_factory(25, || {
                 std::collections::HashMap::with_capacity(16)
             }),

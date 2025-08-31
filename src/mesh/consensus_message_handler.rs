@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::interval;
 
+use crate::utils::{AdaptiveInterval, LoopBudget};
+
 use crate::crypto::BitchatIdentity;
 use crate::error::{Error, Result};
 use crate::mesh::MeshService;
@@ -244,16 +246,27 @@ impl ConsensusMessageHandler {
         let stats = self.stats.clone();
 
         tokio::spawn(async move {
-            // This is a simplified implementation - in practice, you'd hook into
-            // the mesh service's event system more directly
-            let mut check_interval = interval(Duration::from_millis(10));
+            // Use adaptive interval for battery-efficient packet checking
+            // Starts at 100ms, backs off to 2s when no consensus activity
+            let mut check_interval = AdaptiveInterval::for_consensus();
+            let mut budget = LoopBudget::for_consensus();
 
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 check_interval.tick().await;
+                budget.consume(1);
 
                 // In a real implementation, this would receive actual mesh events
                 // For now, we simulate by checking for consensus packets
                 // The actual integration would hook into MeshService's message processing
+                
+                // TODO: When real mesh events are integrated, signal activity with:
+                // check_interval.signal_activity();
             }
         });
     }
@@ -324,17 +337,32 @@ impl ConsensusMessageHandler {
         // In practice, you'd need a more sophisticated queue management system
 
         tokio::spawn(async move {
-            let mut process_interval = interval(Duration::from_millis(1));
+            // Use adaptive interval for battery-efficient message processing
+            // Starts at 100ms, backs off when no messages to process
+            let mut process_interval = AdaptiveInterval::for_consensus();
+            let mut budget = LoopBudget::for_consensus();
 
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 process_interval.tick().await;
+                budget.consume(1);
 
                 // Process messages from priority queues
                 // This is where we'd actually dequeue and process messages
                 // The implementation would vary based on the exact queue structure
-
-                // For now, we simulate processing
-                tokio::time::sleep(Duration::from_millis(1)).await;
+                
+                // When messages are actually processed, signal activity:
+                // if messages_were_processed {
+                //     process_interval.signal_activity();
+                // }
+                
+                // Battery-optimized processing - no busy waiting
+                // Removed: tokio::time::sleep(Duration::from_millis(1)).await;
             }
         });
     }
@@ -348,9 +376,17 @@ impl ConsensusMessageHandler {
 
         tokio::spawn(async move {
             let mut rate_check_interval = interval(Duration::from_secs(1));
+            let mut budget = LoopBudget::for_network();
 
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 rate_check_interval.tick().await;
+                budget.consume(1);
 
                 let now = Instant::now();
                 let last_check = {
@@ -375,9 +411,17 @@ impl ConsensusMessageHandler {
 
         tokio::spawn(async move {
             let mut stats_interval = interval(Duration::from_secs(60));
+            let mut budget = LoopBudget::for_maintenance();
 
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 stats_interval.tick().await;
+                budget.consume(1);
 
                 let current_stats = stats.read().await.clone();
                 log::info!(
@@ -487,15 +531,32 @@ impl MeshConsensusIntegration {
         let handler_clone = handler.clone();
 
         tokio::spawn(async move {
-            let mut integration_interval = interval(Duration::from_millis(10));
+            // Use adaptive interval for battery-efficient mesh integration
+            // Network operations can be slower than consensus operations
+            let mut integration_interval = AdaptiveInterval::for_network();
+            let mut budget = LoopBudget::for_network();
 
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 integration_interval.tick().await;
+                budget.consume(1);
 
                 // In practice, this would be driven by actual mesh events
                 // For now, we simulate by periodically checking for packets
                 // The real implementation would integrate more directly with MeshService
-                tokio::time::sleep(Duration::from_millis(1)).await;
+                
+                // When real mesh integration happens, signal activity:
+                // if mesh_activity_detected {
+                //     integration_interval.signal_activity();
+                // }
+                
+                // Battery-optimized - removed busy sleep
+                // Removed: tokio::time::sleep(Duration::from_millis(1)).await;
             }
         });
 

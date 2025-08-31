@@ -87,7 +87,7 @@ impl AsyncDatabasePool {
 
             // Enable WAL mode
             if enable_wal {
-                conn.execute("PRAGMA journal_mode = WAL", [])
+                let _: String = conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
                     .map_err(|e| Error::Database(e.to_string()))?;
             }
 
@@ -203,7 +203,7 @@ impl AsyncDatabasePool {
             let conn = Connection::open(&path).map_err(|e| Error::Database(e.to_string()))?;
 
             // Set pragmas
-            conn.execute("PRAGMA journal_mode = WAL", [])
+            let _: String = conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
                 .map_err(|e| Error::Database(e.to_string()))?;
             conn.busy_timeout(Duration::from_secs(5))
                 .map_err(|e| Error::Database(e.to_string()))?;
@@ -270,7 +270,7 @@ impl AsyncDatabasePool {
             let mut conn = Connection::open(&path).map_err(|e| Error::Database(e.to_string()))?;
 
             // Set pragmas
-            conn.execute("PRAGMA journal_mode = WAL", [])
+            let _: String = conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
                 .map_err(|e| Error::Database(e.to_string()))?;
             conn.busy_timeout(Duration::from_secs(5))
                 .map_err(|e| Error::Database(e.to_string()))?;
@@ -372,8 +372,10 @@ impl AsyncDatabasePool {
                     let conn = Connection::open(&checkpoint_path)
                         .map_err(|e| Error::Database(e.to_string()))?;
 
-                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)", [])
-                        .map_err(|e| Error::Database(e.to_string()))?;
+                    let _: (i64, i64) = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                        Ok((row.get(0)?, row.get(1)?))
+                    })
+                    .map_err(|e| Error::Database(e.to_string()))?;
 
                     Ok(())
                 })

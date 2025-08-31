@@ -463,7 +463,10 @@ use once_cell::sync::Lazy;
 use std::sync::RwLock;
 
 static CONFIG: Lazy<RwLock<Config>> =
-    Lazy::new(|| RwLock::new(Config::load().expect("Failed to load configuration")));
+    Lazy::new(|| RwLock::new(Config::load().unwrap_or_else(|e| {
+        eprintln!("WARNING: Failed to load configuration, using defaults: {}", e);
+        Config::default_for_environment(Environment::Production)
+    })));
 
 /// Get the global configuration instance
 pub fn get_config() -> Config {

@@ -15,6 +15,34 @@ use commands::commands as cmd;
 async fn main() -> Result<()> {
     use clap::Parser;
 
+    // Set up global panic handler for production graceful shutdown
+    std::panic::set_hook(Box::new(|panic_info| {
+        eprintln!("🚨 CRITICAL: Application panic detected!");
+        eprintln!("Location: {}", panic_info.location().map_or("unknown".to_string(), |l| l.to_string()));
+        eprintln!("Message: {}", panic_info.payload().downcast_ref::<&str>().unwrap_or(&"Unknown panic"));
+        eprintln!("Attempting graceful shutdown...");
+        
+        // Log to file if possible
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("bitcraps_panic.log") 
+        {
+            use std::io::Write;
+            let _ = writeln!(file, "[{}] PANIC: {} at {}", 
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                panic_info.payload().downcast_ref::<&str>().unwrap_or(&"Unknown panic"),
+                panic_info.location().map_or("unknown".to_string(), |l| l.to_string())
+            );
+        }
+        
+        // Exit with error code
+        std::process::exit(1);
+    }));
+
     let cli = Cli::parse();
 
     // Initialize logging

@@ -406,9 +406,11 @@ impl SparseMerkleTree {
     }
 
     /// Set a leaf value
-    pub fn set_leaf(&mut self, index: usize, value: Hash256) {
+    pub fn set_leaf(&mut self, index: usize, value: Hash256) -> Result<(), crate::error::Error> {
         if index >= (1 << self.depth) {
-            panic!("Index out of bounds for tree depth");
+            return Err(crate::error::Error::IndexOutOfBounds(
+                format!("Index {} exceeds tree depth capacity {}", index, 1 << self.depth)
+            ));
         }
 
         if value == self.empty_hash {
@@ -419,6 +421,7 @@ impl SparseMerkleTree {
 
         // Invalidate affected cache entries
         self.invalidate_path(index);
+        Ok(())
     }
 
     /// Get the root hash
@@ -529,11 +532,11 @@ mod tests {
         // Set some sparse values
         let mut hash1 = [0; 32];
         hash1[0] = 1;
-        tree.set_leaf(5, hash1);
+        tree.set_leaf(5, hash1).expect("Valid index for test");
 
         let mut hash2 = [0; 32];
         hash2[0] = 2;
-        tree.set_leaf(100, hash2);
+        tree.set_leaf(100, hash2).expect("Valid index for test");
 
         let root = tree.root();
         assert_ne!(root, [0; 32]);

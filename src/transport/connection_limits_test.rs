@@ -24,18 +24,19 @@ mod tests {
         let addr3 = TransportAddress::Bluetooth("device3".to_string());
 
         // Mock successful connections by directly updating internal state
-        coordinator
-            .connections
-            .write()
-            .await
-            .insert(peer1, addr1.clone());
+        let metadata1 = ConnectionMetadata {
+            address: addr1.clone(),
+            established_at: std::time::Instant::now(),
+        };
+        coordinator.connections.insert(peer1, metadata1);
         coordinator.increment_connection_count(&addr1).await;
 
+        let metadata2 = ConnectionMetadata {
+            address: addr2.clone(),
+            established_at: std::time::Instant::now(),
+        };
         coordinator
-            .connections
-            .write()
-            .await
-            .insert(peer2, addr2.clone());
+            .connections.insert(peer2, metadata2);
         coordinator.increment_connection_count(&addr2).await;
 
         // Now the third connection should be rejected due to total limit
@@ -63,11 +64,12 @@ mod tests {
         let addr = TransportAddress::Bluetooth("device1".to_string());
 
         // Mock first connection to this address
+        let metadata1 = ConnectionMetadata {
+            address: addr.clone(),
+            established_at: std::time::Instant::now(),
+        };
         coordinator
-            .connections
-            .write()
-            .await
-            .insert(peer1, addr.clone());
+            .connections.insert(peer1, metadata1);
         coordinator.increment_connection_count(&addr).await;
 
         // Second connection to the same address should be rejected
@@ -183,18 +185,20 @@ mod tests {
         let addr2 = TransportAddress::Bluetooth("device2".to_string());
 
         // Mock connections
+        let metadata1 = ConnectionMetadata {
+            address: addr1.clone(),
+            established_at: std::time::Instant::now(),
+        };
         coordinator
-            .connections
-            .write()
-            .await
-            .insert(peer1, addr1.clone());
+            .connections.insert(peer1, metadata1);
         coordinator.increment_connection_count(&addr1).await;
 
+        let metadata2 = ConnectionMetadata {
+            address: addr2.clone(),
+            established_at: std::time::Instant::now(),
+        };
         coordinator
-            .connections
-            .write()
-            .await
-            .insert(peer2, addr2.clone());
+            .connections.insert(peer2, metadata2);
         coordinator.increment_connection_count(&addr2).await;
 
         // Record some attempts

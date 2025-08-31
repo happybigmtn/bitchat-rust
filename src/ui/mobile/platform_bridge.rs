@@ -221,12 +221,30 @@ impl AndroidRenderer {
         if let Some(env_ptr) = self.jni_env {
             if let Some(activity) = self.activity {
                 unsafe {
-                    let env = JNIEnv::from_raw(env_ptr).unwrap();
+                    let env = match JNIEnv::from_raw(env_ptr) {
+                        Ok(env) => env,
+                        Err(e) => {
+                            tracing::error!("Failed to create JNI environment: {}", e);
+                            return;
+                        }
+                    };
                     
                     // Convert theme to Android values
-                    let theme_name = env.new_string(theme.name()).unwrap();
+                    let theme_name = match env.new_string(theme.name()) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::error!("Failed to create JNI string for theme name: {}", e);
+                            return;
+                        }
+                    };
                     let primary_color = theme.colors.primary.to_hex();
-                    let color_string = env.new_string(&primary_color).unwrap();
+                    let color_string = match env.new_string(&primary_color) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::error!("Failed to create JNI string for color: {}", e);
+                            return;
+                        }
+                    };
                     
                     // Call renderLoginScreen method on the activity
                     let _ = env.call_method(
@@ -250,13 +268,25 @@ impl AndroidRenderer {
         if let Some(env_ptr) = self.jni_env {
             if let Some(activity) = self.activity {
                 unsafe {
-                    let env = JNIEnv::from_raw(env_ptr).unwrap();
+                    let env = match JNIEnv::from_raw(env_ptr) {
+                        Ok(env) => env,
+                        Err(e) => {
+                            tracing::error!("Failed to create JNI environment: {}", e);
+                            return;
+                        }
+                    };
                     
                     // Get user data from state
                     let username = state.user_profile.as_ref()
                         .map(|p| p.username.as_str())
                         .unwrap_or("Guest");
-                    let username_jstring = env.new_string(username).unwrap();
+                    let username_jstring = match env.new_string(username) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::error!("Failed to create JNI string for username: {}", e);
+                            return;
+                        }
+                    };
                     
                     // Get balance
                     let balance = state.wallet_balance;
@@ -283,13 +313,25 @@ impl AndroidRenderer {
         if let Some(env_ptr) = self.jni_env {
             if let Some(activity) = self.activity {
                 unsafe {
-                    let env = JNIEnv::from_raw(env_ptr).unwrap();
+                    let env = match JNIEnv::from_raw(env_ptr) {
+                        Ok(env) => env,
+                        Err(e) => {
+                            tracing::error!("Failed to create JNI environment: {}", e);
+                            return;
+                        }
+                    };
                     
                     // Get game state
                     let game_id = state.active_game.as_ref()
                         .map(|g| format!("{:?}", g.id))
                         .unwrap_or_default();
-                    let game_id_jstring = env.new_string(&game_id).unwrap();
+                    let game_id_jstring = match env.new_string(&game_id) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::error!("Failed to create JNI string for game_id: {}", e);
+                            return;
+                        }
+                    };
                     
                     // Get current round
                     let round = state.active_game.as_ref()
@@ -394,8 +436,20 @@ impl IosRenderer {
         if let Some(vc) = self.view_controller {
             unsafe {
                 // Call Objective-C method to render login screen
-                let theme_name = std::ffi::CString::new(theme.name()).unwrap();
-                let primary_color = std::ffi::CString::new(theme.colors.primary.to_hex()).unwrap();
+                let theme_name = match std::ffi::CString::new(theme.name()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::error!("Failed to create CString for theme name: {}", e);
+                        return;
+                    }
+                };
+                let primary_color = match std::ffi::CString::new(theme.colors.primary.to_hex()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::error!("Failed to create CString for primary color: {}", e);
+                        return;
+                    }
+                };
                 
                 extern "C" {
                     fn ios_render_login_screen(
@@ -420,7 +474,13 @@ impl IosRenderer {
                 let username = state.user_profile.as_ref()
                     .map(|p| p.username.as_str())
                     .unwrap_or("Guest");
-                let username_cstr = std::ffi::CString::new(username).unwrap();
+                let username_cstr = match std::ffi::CString::new(username) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::error!("Failed to create CString for username: {}", e);
+                        return;
+                    }
+                };
                 let balance = state.wallet_balance;
                 
                 extern "C" {
@@ -446,7 +506,13 @@ impl IosRenderer {
                 let game_id = state.active_game.as_ref()
                     .map(|g| format!("{:?}", g.id))
                     .unwrap_or_default();
-                let game_id_cstr = std::ffi::CString::new(game_id).unwrap();
+                let game_id_cstr = match std::ffi::CString::new(game_id) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::error!("Failed to create CString for game_id: {}", e);
+                        return;
+                    }
+                };
                 let round = state.active_game.as_ref()
                     .map(|g| g.current_round)
                     .unwrap_or(0);

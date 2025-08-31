@@ -28,7 +28,7 @@ pub struct NetworkResilience {
     /// Configuration
     config: ResilienceConfig,
     /// Event channel for notifications
-    event_sender: mpsc::UnboundedSender<ResilienceEvent>,
+    event_sender: mpsc::Sender<ResilienceEvent>,
     /// Monitoring state
     is_monitoring: Arc<RwLock<bool>>,
 }
@@ -322,7 +322,7 @@ pub enum ResilienceEvent {
 impl NetworkResilience {
     /// Create new network resilience manager
     pub fn new(config: ResilienceConfig) -> Self {
-        let (event_sender, _) = mpsc::unbounded_channel();
+        let (event_sender, _) = mpsc::channel(1000); // Moderate traffic for resilience events
 
         Self {
             failure_detector: Arc::new(RwLock::new(FailureDetector::new(config.clone()))),

@@ -10,6 +10,7 @@ use btleplug::platform::{Adapter, Manager};
 
 use crate::crypto::BitchatIdentity;
 use crate::protocol::PeerId;
+use crate::utils::LoopBudget;
 
 /// Bluetooth mesh discovery service
 ///
@@ -23,7 +24,7 @@ pub struct BluetoothDiscovery {
     adapter: Arc<Adapter>,
     discovered_peers: Arc<RwLock<HashMap<PeerId, DiscoveredPeer>>>,
     active_connections: Arc<RwLock<HashSet<PeerId>>>,
-    discovery_events: mpsc::UnboundedSender<DiscoveryEvent>,
+    discovery_events: mpsc::Sender<DiscoveryEvent>,
     _scan_interval: Duration,
     _connection_timeout: Duration,
     // New fields for improved discovery
@@ -114,7 +115,7 @@ impl BluetoothDiscovery {
             .next()
             .ok_or("No Bluetooth adapter found")?;
 
-        let (discovery_events, _) = mpsc::unbounded_channel();
+        let (discovery_events, _) = mpsc::channel(1000); // Moderate traffic for discovery events
 
         let peer_registry = PeerRegistry::new(
             Duration::from_secs(300), // 5 minute TTL
@@ -166,9 +167,17 @@ impl BluetoothDiscovery {
 
         tokio::spawn(async move {
             let mut announcement_interval = interval(Duration::from_secs(15));
+            let mut budget = LoopBudget::for_discovery();
 
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 announcement_interval.tick().await;
+                budget.consume(1);
 
                 // Create announcement with current capabilities
                 let capabilities = PeerCapabilities {
@@ -216,9 +225,17 @@ impl BluetoothDiscovery {
 
         tokio::spawn(async move {
             let mut scan_interval = interval(Duration::from_secs(5));
+            let mut budget = LoopBudget::for_discovery();
 
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 scan_interval.tick().await;
+                budget.consume(1);
 
                 // Start scan with filter for BitCraps service
                 if let Err(e) = adapter.start_scan(ScanFilter::default()).await {
@@ -264,11 +281,10 @@ impl BluetoothDiscovery {
                                     peers.insert(peer_id, discovered_peer.clone());
 
                                     if is_new {
-                                        discovery_events
-                                            .send(DiscoveryEvent::PeerDiscovered {
+                                        let _ = discovery_events
+                                            .try_send(DiscoveryEvent::PeerDiscovered {
                                                 peer: discovered_peer,
-                                            })
-                                            .ok();
+                                            });
                                     }
                                 }
                             }
@@ -293,9 +309,17 @@ impl BluetoothDiscovery {
 
         tokio::spawn(async move {
             let mut check_interval = interval(Duration::from_secs(10));
+            let mut budget = LoopBudget::for_network();
 
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 check_interval.tick().await;
+                budget.consume(1);
 
                 let peers = discovered_peers.read().await;
                 let connections = active_connections.read().await;
@@ -313,9 +337,8 @@ impl BluetoothDiscovery {
                             // Attempt connection
                             // In production, would implement actual BLE connection
 
-                            discovery_events
-                                .send(DiscoveryEvent::PeerConnected { peer_id: *peer_id })
-                                .ok();
+                            let _ = discovery_events
+                                .try_send(DiscoveryEvent::PeerConnected { peer_id: *peer_id });
                         }
                     }
                 }
@@ -326,9 +349,8 @@ impl BluetoothDiscovery {
                     if peer.is_connected
                         && now.duration_since(peer.last_seen) > Duration::from_secs(30)
                     {
-                        discovery_events
-                            .send(DiscoveryEvent::PeerDisconnected { peer_id: *peer_id })
-                            .ok();
+                        let _ = discovery_events
+                            .try_send(DiscoveryEvent::PeerDisconnected { peer_id: *peer_id });
                     }
                 }
             }
@@ -416,9 +438,17 @@ impl BluetoothDiscovery {
 
         tokio::spawn(async move {
             let mut cleanup_interval = interval(Duration::from_secs(60));
+            let mut budget = LoopBudget::for_maintenance();
 
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 cleanup_interval.tick().await;
+                budget.consume(1);
 
                 let now = Instant::now();
                 let mut registry = peer_registry.write().await;
@@ -439,17 +469,15 @@ impl BluetoothDiscovery {
                 // Remove expired peers from discovered_peers and notify
                 for peer_id in expired_peers {
                     peers.remove(&peer_id);
-                    discovery_events
-                        .send(DiscoveryEvent::PeerExpired { peer_id })
-                        .ok();
+                    let _ = discovery_events
+                        .try_send(DiscoveryEvent::PeerExpired { peer_id });
                 }
 
                 if !registry.peers.is_empty() {
-                    discovery_events
-                        .send(DiscoveryEvent::PeerListUpdated {
+                    let _ = discovery_events
+                        .try_send(DiscoveryEvent::PeerListUpdated {
                             peer_count: registry.peers.len(),
-                        })
-                        .ok();
+                        });
                 }
             }
         });
@@ -466,9 +494,17 @@ impl BluetoothDiscovery {
 
         tokio::spawn(async move {
             let mut exchange_interval = interval(exchange_interval);
+            let mut budget = LoopBudget::for_network();
 
             loop {
+                // Check budget before processing
+                if !budget.can_proceed() {
+                    budget.backoff().await;
+                    continue;
+                }
+                
                 exchange_interval.tick().await;
+                budget.consume(1);
 
                 let registry = peer_registry.read().await;
 
@@ -498,7 +534,7 @@ impl BluetoothDiscovery {
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_secs(),
-                    };
+                        };
 
                     // In production, would broadcast this to connected peers
                     println!(
@@ -506,11 +542,10 @@ impl BluetoothDiscovery {
                         exchange_message.peer_list.len()
                     );
 
-                    discovery_events
-                        .send(DiscoveryEvent::PeerListUpdated {
+                    let _ = discovery_events
+                        .try_send(DiscoveryEvent::PeerListUpdated {
                             peer_count: registry.peers.len(),
-                        })
-                        .ok();
+                        });
                 }
             }
         });
@@ -561,20 +596,18 @@ impl BluetoothDiscovery {
             discovered_peers.insert(announcement.peer_id, discovered_peer.clone());
 
             if is_new {
-                self.discovery_events
-                    .send(DiscoveryEvent::PeerDiscovered {
+                let _ = self.discovery_events
+                    .try_send(DiscoveryEvent::PeerDiscovered {
                         peer: discovered_peer,
-                    })
-                    .ok();
+                    });
             }
         }
 
-        self.discovery_events
-            .send(DiscoveryEvent::PeerExchangeReceived {
+        let _ = self.discovery_events
+            .try_send(DiscoveryEvent::PeerExchangeReceived {
                 from: message.sender_id,
                 peer_count,
-            })
-            .ok();
+            });
 
         Ok(())
     }

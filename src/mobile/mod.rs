@@ -70,7 +70,7 @@ uniffi::include_scaffolding!("bitcraps");
 pub struct BitCrapsNode {
     inner: Arc<crate::mesh::MeshService>,
     event_queue: Arc<Mutex<VecDeque<GameEvent>>>,
-    event_sender: mpsc::UnboundedSender<GameEvent>,
+    event_sender: mpsc::Sender<GameEvent>,
     power_manager: Arc<PowerManager>,
     config: BitCrapsConfig,
     status: Arc<Mutex<NodeStatus>>,
@@ -360,8 +360,8 @@ pub fn create_node(config: BitCrapsConfig) -> Result<Arc<BitCrapsNode>, BitCraps
         }
     }
 
-    // Create event channel
-    let (event_sender, mut event_receiver) = mpsc::unbounded_channel();
+    // Create event channel with bounded size to prevent memory exhaustion
+    let (event_sender, mut event_receiver) = mpsc::channel(1000); // Moderate traffic for mobile events
     let event_queue = Arc::new(Mutex::new(VecDeque::new()));
 
     // Clone for the receiver task

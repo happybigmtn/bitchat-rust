@@ -64,8 +64,8 @@ pub struct AndroidBlePeripheral {
     local_peer_id: PeerId,
     is_advertising: Arc<RwLock<bool>>,
     connected_centrals: Arc<RwLock<HashMap<PeerId, String>>>,
-    event_sender: mpsc::UnboundedSender<PeripheralEvent>,
-    event_receiver: Mutex<mpsc::UnboundedReceiver<PeripheralEvent>>,
+    event_sender: mpsc::Sender<PeripheralEvent>,
+    event_receiver: Mutex<mpsc::Receiver<PeripheralEvent>>,
     config: Arc<RwLock<AdvertisingConfig>>,
     stats: Arc<RwLock<PeripheralStats>>,
     advertising_start_time: Arc<RwLock<Option<Instant>>>,
@@ -87,7 +87,7 @@ pub struct AndroidBlePeripheral {
 #[cfg(target_os = "android")]
 impl AndroidBlePeripheral {
     pub async fn new(local_peer_id: PeerId) -> Result<Self> {
-        let (event_sender, event_receiver) = mpsc::unbounded_channel();
+        let (event_sender, event_receiver) = mpsc::channel(1000); // Bounded channel for backpressure
 
         Ok(Self {
             local_peer_id,
@@ -1202,6 +1202,56 @@ impl BlePeripheral for AndroidBlePeripheral {
         *self.stats.write().await = PeripheralStats::default();
 
         Ok(())
+    }
+}
+
+/// Proper cleanup of JNI resources to prevent memory leaks
+#[cfg(target_os = "android")]
+impl Drop for AndroidBlePeripheral {
+    fn drop(&mut self) {
+        log::info!("Cleaning up Android BLE peripheral resources");
+        
+        // Stop advertising if running
+        if let Ok(is_advertising) = self.is_advertising.try_read() {
+            if *is_advertising {
+                log::warn!("BLE peripheral dropped while advertising - attempting cleanup");
+            }
+        }
+
+        // Clean up JNI global references to prevent memory leaks
+        if let Some(java_vm) = &self.java_vm {
+            if let Ok(mut env) = java_vm.attach_current_thread() {
+                // Clean up global references in reverse order of creation
+                if let Some(rx_char) = &self.rx_characteristic {
+                    let _ = env.delete_global_ref(rx_char.clone());
+                }
+                if let Some(tx_char) = &self.tx_characteristic {
+                    let _ = env.delete_global_ref(tx_char.clone());
+                }
+                if let Some(service) = &self.bitcraps_service {
+                    let _ = env.delete_global_ref(service.clone());
+                }
+                if let Some(callback) = &self.gatt_server_callback {
+                    let _ = env.delete_global_ref(callback.clone());
+                }
+                if let Some(callback) = &self.advertise_callback {
+                    let _ = env.delete_global_ref(callback.clone());
+                }
+                if let Some(server) = &self.gatt_server {
+                    let _ = env.delete_global_ref(server.clone());
+                }
+                if let Some(advertiser) = &self.bluetooth_le_advertiser {
+                    let _ = env.delete_global_ref(advertiser.clone());
+                }
+                if let Some(adapter) = &self.bluetooth_adapter {
+                    let _ = env.delete_global_ref(adapter.clone());
+                }
+                
+                log::debug!("Android BLE JNI global references cleaned up");
+            } else {
+                log::error!("Failed to attach to Java thread for cleanup");
+            }
+        }
     }
 }
 

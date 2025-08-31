@@ -121,6 +121,9 @@ impl WindowsSystemMonitor {
 
             // Collect first sample (required for percentage counters)
             PdhCollectQueryData(query);
+            // Note: This is in a non-async context but called from SystemMonitor::collect_metrics
+            // which is sync. For Windows PDH API, we need the delay between samples for accurate CPU %.
+            // This blocking sleep is intentional for timing accuracy in CPU measurement.
             std::thread::sleep(std::time::Duration::from_millis(100));
 
             // Collect second sample

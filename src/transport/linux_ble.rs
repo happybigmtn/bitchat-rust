@@ -167,8 +167,8 @@ pub struct LinuxBlePeripheral {
     local_peer_id: PeerId,
     is_advertising: Arc<RwLock<bool>>,
     connected_centrals: Arc<RwLock<HashMap<PeerId, String>>>,
-    event_sender: mpsc::UnboundedSender<PeripheralEvent>,
-    event_receiver: Mutex<mpsc::UnboundedReceiver<PeripheralEvent>>,
+    event_sender: mpsc::Sender<PeripheralEvent>,
+    event_receiver: Mutex<mpsc::Receiver<PeripheralEvent>>,
     config: Arc<RwLock<AdvertisingConfig>>,
     stats: Arc<RwLock<PeripheralStats>>,
     advertising_start_time: Arc<RwLock<Option<Instant>>>,
@@ -186,7 +186,7 @@ pub struct LinuxBlePeripheral {
 #[cfg(target_os = "linux")]
 impl LinuxBlePeripheral {
     pub async fn new(local_peer_id: PeerId) -> Result<Self> {
-        let (event_sender, event_receiver) = mpsc::unbounded_channel();
+        let (event_sender, event_receiver) = mpsc::channel(1000); // Moderate traffic for BLE events
 
         Ok(Self {
             local_peer_id,

@@ -281,23 +281,30 @@ impl LatencyTracker {
     }
 
     pub fn record_latency(&mut self, peer_id: PeerId, latency: Duration) {
-        // Record per-peer latency
-        let peer_latencies = self.peer_latencies.entry(peer_id).or_insert_with(Vec::new);
+        // Record per-peer latency with memory limit
+        let peer_latencies = self.peer_latencies.entry(peer_id).or_insert_with(|| Vec::with_capacity(100));
         peer_latencies.push(latency);
 
-        // Keep only recent latencies (last 1000 per peer)
-        if peer_latencies.len() > 1000 {
-            peer_latencies.remove(0);
+        // Keep only last 100 entries per peer (was 1000)
+        if peer_latencies.len() > 100 {
+            // More efficient: use drain to remove first half instead of single element
+            peer_latencies.drain(..50);
         }
 
-        // Record global latency
+        // Record global latency with reduced memory footprint
         self.global_latencies.push(latency);
-        if self.global_latencies.len() > 10000 {
-            self.global_latencies.remove(0);
+        if self.global_latencies.len() > 5000 { // Reduced from 10000
+            // More efficient batch removal
+            self.global_latencies.drain(..2500);
         }
 
         // Update activity timestamp
         self.peer_last_activity.insert(peer_id, Instant::now());
+        
+        // Cleanup inactive peers periodically (every 1000 entries)
+        if self.global_latencies.len() % 1000 == 0 {
+            self.cleanup_inactive_peers();
+        }
     }
 
     pub fn record_timeout(&mut self, peer_id: PeerId) {
@@ -384,6 +391,26 @@ impl LatencyTracker {
         self.peer_last_activity.clear();
         self.global_latencies.clear();
     }
+
+    /// Cleanup inactive peers to prevent memory leaks
+    fn cleanup_inactive_peers(&mut self) {
+        let cutoff = Instant::now() - Duration::from_secs(300); // 5 minutes
+        let mut inactive_peers = Vec::new();
+
+        // Find inactive peers
+        for (peer_id, last_activity) in &self.peer_last_activity {
+            if *last_activity < cutoff {
+                inactive_peers.push(*peer_id);
+            }
+        }
+
+        // Remove inactive peer data
+        for peer_id in inactive_peers {
+            self.peer_latencies.remove(&peer_id);
+            self.peer_timeouts.remove(&peer_id);
+            self.peer_last_activity.remove(&peer_id);
+        }
+    }
 }
 
 /// Throughput tracking and analysis
@@ -426,9 +453,10 @@ impl ThroughputTracker {
             timestamp: Instant::now(),
         });
 
-        // Keep only recent samples
-        if self.throughput_samples.len() > 5000 {
-            self.throughput_samples.remove(0);
+        // Keep only recent samples with efficient memory management
+        if self.throughput_samples.len() > 1000 { // Reduced from 5000
+            // More efficient batch removal
+            self.throughput_samples.drain(..500);
         }
     }
 
@@ -442,6 +470,11 @@ impl ThroughputTracker {
             success: true,
             timestamp: Instant::now(),
         });
+
+        // Also apply memory management for received samples
+        if self.throughput_samples.len() > 1000 {
+            self.throughput_samples.drain(..500);
+        }
     }
 
     pub fn get_statistics(&self) -> ThroughputStatistics {

@@ -617,17 +617,16 @@ pub struct UserQueries;
 
 impl UserQueries {
     /// Find user by ID
-    pub fn find_by_id(id: &str) -> CompiledQuery {
+    pub fn find_by_id(id: &str) -> Result<CompiledQuery> {
         QueryBuilder::select()
             .all_columns()
             .from("users")
             .where_eq("id", id)
             .build()
-            .expect("Valid user query")
     }
 
     /// Find users by reputation range
-    pub fn find_by_reputation_range(min_rep: f64, max_rep: f64) -> CompiledQuery {
+    pub fn find_by_reputation_range(min_rep: f64, max_rep: f64) -> Result<CompiledQuery> {
         QueryBuilder::select()
             .all_columns()
             .from("users")
@@ -639,11 +638,10 @@ impl UserQueries {
             .where_op("reputation", ComparisonOperator::LessThanOrEqual, max_rep)
             .order_by_desc("reputation")
             .build()
-            .expect("Valid reputation query")
     }
 
     /// Search users by username pattern
-    pub fn search_by_username(pattern: &str) -> CompiledQuery {
+    pub fn search_by_username(pattern: &str) -> Result<CompiledQuery> {
         let search_pattern = format!("%{}%", pattern);
         QueryBuilder::select()
             .all_columns()
@@ -652,7 +650,6 @@ impl UserQueries {
             .where_eq("is_active", true)
             .order_by_asc("username")
             .build()
-            .expect("Valid username search query")
     }
 }
 
@@ -660,7 +657,7 @@ pub struct GameQueries;
 
 impl GameQueries {
     /// Find active games
-    pub fn find_active_games(limit: usize) -> CompiledQuery {
+    pub fn find_active_games(limit: usize) -> Result<CompiledQuery> {
         QueryBuilder::select()
             .all_columns()
             .from("games")
@@ -668,11 +665,10 @@ impl GameQueries {
             .order_by_desc("created_at")
             .limit(limit)
             .build()
-            .expect("Valid active games query")
     }
 
     /// Find games with statistics
-    pub fn find_with_stats(game_id: &str) -> CompiledQuery {
+    pub fn find_with_stats(game_id: &str) -> Result<CompiledQuery> {
         QueryBuilder::select()
             .columns(&[
                 "g.id",
@@ -687,7 +683,6 @@ impl GameQueries {
             .left_join("game_statistics gs", "g.id = gs.game_id")
             .where_eq("g.id", game_id)
             .build()
-            .expect("Valid games with stats query")
     }
 }
 
@@ -750,11 +745,11 @@ mod tests {
 
     #[test]
     fn test_user_queries() {
-        let query = UserQueries::find_by_id("user123");
+        let query = UserQueries::find_by_id("user123").expect("Valid query");
         assert!(query.sql.contains("SELECT * FROM users WHERE id = ?"));
         assert_eq!(query.parameters.len(), 1);
 
-        let query = UserQueries::search_by_username("alice");
+        let query = UserQueries::search_by_username("alice").expect("Valid query");
         assert!(query.sql.contains("LIKE"));
         assert!(query.sql.contains("is_active"));
     }

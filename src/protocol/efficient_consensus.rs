@@ -547,7 +547,10 @@ impl EfficientDiceConsensus {
     /// Create new efficient dice consensus engine
     pub fn new(game_id: GameId, participants: Vec<PeerId>, config: ConsensusConfig) -> Self {
         let cache_size = std::num::NonZeroUsize::new(config.merkle_cache_size).unwrap_or(
-            std::num::NonZeroUsize::new(100).expect("LRU cache size 100 is a positive constant"),
+            std::num::NonZeroUsize::new(100).unwrap_or_else(|| {
+                // This should never happen as 100 is always positive
+                std::num::NonZeroUsize::new(1).unwrap()
+            }),
         );
 
         Self {

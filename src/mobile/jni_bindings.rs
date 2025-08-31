@@ -13,6 +13,9 @@ use jni::sys::{jboolean, jint, jlong, jobjectArray, jstring};
 use jni::JNIEnv;
 
 use super::*;
+use std::time::Duration;
+use tokio::time::timeout;
+use tokio::sync::oneshot;
 
 /// Android-specific JNI interface for BitCraps
 #[cfg(target_os = "android")]
@@ -187,15 +190,25 @@ pub extern "C" fn Java_com_bitcraps_BitCrapsNative_startDiscovery(
         }
     };
 
-    // Use the current runtime to block on async function
+    // Start discovery asynchronously to prevent ANR
     let rt = tokio::runtime::Runtime::new().unwrap();
-    match rt.block_on(node.start_discovery()) {
-        Ok(()) => true as jboolean,
-        Err(e) => {
-            jni_helpers::throw_exception(&env, &e);
-            false as jboolean
+    let node_clone = node.clone();
+    rt.spawn(async move {
+        match timeout(Duration::from_secs(5), node_clone.start_discovery()).await {
+            Ok(Ok(())) => {
+                log::info!("Discovery started successfully");
+            }
+            Ok(Err(e)) => {
+                log::error!("Failed to start discovery: {}", e);
+            }
+            Err(_) => {
+                log::error!("Discovery start timed out");
+            }
         }
-    }
+    });
+    
+    // Return immediately - Android should poll node status for confirmation
+    true as jboolean
 }
 
 /// Stop discovery on a BitCraps node
@@ -220,13 +233,23 @@ pub extern "C" fn Java_com_bitcraps_BitCrapsNative_stopDiscovery(
     };
 
     let rt = tokio::runtime::Runtime::new().unwrap();
-    match rt.block_on(node.stop_discovery()) {
-        Ok(()) => true as jboolean,
-        Err(e) => {
-            jni_helpers::throw_exception(&env, &e);
-            false as jboolean
+    let node_clone = node.clone();
+    rt.spawn(async move {
+        match timeout(Duration::from_secs(5), node_clone.stop_discovery()).await {
+            Ok(Ok(())) => {
+                log::info!("Discovery stopped successfully");
+            }
+            Ok(Err(e)) => {
+                log::error!("Failed to stop discovery: {}", e);
+            }
+            Err(_) => {
+                log::error!("Discovery stop timed out");
+            }
         }
-    }
+    });
+    
+    // Return immediately - Android should poll node status for confirmation
+    true as jboolean
 }
 
 /// Poll for the next event
@@ -250,9 +273,20 @@ pub extern "C" fn Java_com_bitcraps_BitCrapsNative_pollEvent(
         }
     };
 
+    // Poll events without blocking using a very short timeout
     let rt = tokio::runtime::Runtime::new().unwrap();
-    match rt.block_on(node.poll_event()) {
-        Some(event) => {
+    let node_clone = node.clone();
+    let (tx, rx) = oneshot::channel();
+    
+    rt.spawn(async move {
+        // Use very short timeout for polling to prevent ANR
+        let result = timeout(Duration::from_millis(50), node_clone.poll_event()).await;
+        let _ = tx.send(result);
+    });
+    
+    // Try to get result immediately, return null if not ready
+    match rx.try_recv() {
+        Ok(Ok(Some(event))) => {
             // Serialize event to JSON
             match serde_json::to_string(&event) {
                 Ok(json) => match jni_helpers::string_to_jstring(&env, &json) {
@@ -273,7 +307,7 @@ pub extern "C" fn Java_com_bitcraps_BitCrapsNative_pollEvent(
                 }
             }
         }
-        None => std::ptr::null_mut(),
+        _ => std::ptr::null_mut(), // No event available or not ready yet
     }
 }
 

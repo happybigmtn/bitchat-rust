@@ -327,14 +327,14 @@ impl ConsensusGameManager {
                 requester: self.identity.peer_id,
                 timestamp: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs(),
             })?,
             sender: self.identity.peer_id,
             recipient: None, // Broadcast to all peers
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             signature: vec![],
         };
@@ -377,7 +377,7 @@ impl ConsensusGameManager {
                     state: format!("{:?}", session.consensus_state.game_state.phase),
                     created_at: SystemTime::now()
                         .duration_since(UNIX_EPOCH)
-                        .unwrap()
+                        .unwrap_or_default()
                         .as_secs()
                         - start_time.elapsed().as_secs(),
                     is_joinable: session.participants.len() < 8, // Max 8 players
@@ -456,7 +456,7 @@ impl ConsensusGameManager {
             recipient: Some(game_info.host),
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             signature: vec![],
         };
@@ -490,7 +490,7 @@ impl ConsensusGameManager {
                     state: format!("{:?}", session.consensus_state.game_state.phase),
                     created_at: SystemTime::now()
                         .duration_since(UNIX_EPOCH)
-                        .unwrap()
+                        .unwrap_or_default()
                         .as_secs(),
                     is_joinable: true,
                 };
@@ -502,7 +502,7 @@ impl ConsensusGameManager {
                     recipient: Some(requester),
                     timestamp: SystemTime::now()
                         .duration_since(UNIX_EPOCH)
-                        .unwrap()
+                        .unwrap_or_default()
                         .as_secs(),
                     signature: vec![],
                 };
@@ -936,7 +936,7 @@ impl ConsensusGameManager {
             requester: self.identity.peer_id,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
         };
 
@@ -947,7 +947,7 @@ impl ConsensusGameManager {
             recipient: Some(host),
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             signature: vec![],
         };
@@ -1059,7 +1059,7 @@ impl ConsensusGameManager {
             pending_operations,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
         };
 
@@ -1071,7 +1071,7 @@ impl ConsensusGameManager {
             recipient: Some(request.requester),
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             signature: vec![],
         };

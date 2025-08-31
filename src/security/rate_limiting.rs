@@ -365,8 +365,8 @@ mod tests {
         let result = bucket.check_and_consume(1);
         assert!(result.is_blocked());
 
-        // Wait for refill and try again
-        thread::sleep(Duration::from_secs(2));
+        // Wait for refill and try again - use blocking sleep in test since this is synchronous test
+        std::thread::sleep(Duration::from_secs(2));
         let result = bucket.check_and_consume(1);
         assert!(result.is_allowed());
     }

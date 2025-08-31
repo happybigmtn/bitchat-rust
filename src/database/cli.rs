@@ -564,18 +564,22 @@ impl DbCli {
             .map_err(|e| Error::Database(e.to_string()))?;
 
         for table_name in table_names {
-            // Get column count
+            // Get column count - Use parameter binding to prevent SQL injection
             let col_count: usize = conn
                 .query_row(
-                    &format!("SELECT COUNT(*) FROM pragma_table_info('{}')", table_name),
-                    [],
+                    "SELECT COUNT(*) FROM pragma_table_info(?)",
+                    [&table_name],
                     |row| row.get(0),
                 )
                 .map_err(|e| Error::Database(e.to_string()))?;
 
-            // Get row count
+            // Get row count - Use proper table name validation and quoting
+            // Note: Table names cannot be parameterized in SQLite, so we validate the name first
+            if !table_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                return Err(Error::Database(format!("Invalid table name: {}", table_name)));
+            }
             let row_count: usize = conn
-                .query_row(&format!("SELECT COUNT(*) FROM {}", table_name), [], |row| {
+                .query_row(&format!("SELECT COUNT(*) FROM \"{}\"", table_name), [], |row| {
                     row.get(0)
                 })
                 .map_err(|e| Error::Database(e.to_string()))?;

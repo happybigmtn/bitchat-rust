@@ -138,8 +138,8 @@ pub struct IntelligentTransportCoordinator {
     transports: Arc<RwLock<HashMap<String, ManagedTransport>>>,
     peer_connections: Arc<RwLock<HashMap<PeerId, Vec<String>>>>, // peer_id -> transport_ids
     nat_handler: Arc<NetworkHandler>,
-    event_sender: mpsc::UnboundedSender<TransportEvent>,
-    event_receiver: Arc<Mutex<mpsc::UnboundedReceiver<TransportEvent>>>,
+    event_sender: mpsc::Sender<TransportEvent>,
+    event_receiver: Arc<Mutex<mpsc::Receiver<TransportEvent>>>,
     routing_table: Arc<RwLock<HashMap<PeerId, String>>>, // peer_id -> preferred_transport_id
     performance_history: Arc<RwLock<HashMap<String, Vec<TransportMetrics>>>>,
 }
@@ -147,7 +147,7 @@ pub struct IntelligentTransportCoordinator {
 impl IntelligentTransportCoordinator {
     /// Create new intelligent transport coordinator
     pub fn new(config: IntelligentCoordinatorConfig, nat_handler: NetworkHandler) -> Self {
-        let (event_sender, event_receiver) = mpsc::unbounded_channel();
+        let (event_sender, event_receiver) = mpsc::channel(10000); // Critical path: high-capacity for coordination events
 
         Self {
             config,

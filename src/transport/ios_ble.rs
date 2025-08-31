@@ -163,8 +163,8 @@ pub struct IosBlePeripheral {
     local_peer_id: PeerId,
     is_advertising: Arc<RwLock<bool>>,
     connected_centrals: Arc<RwLock<HashMap<PeerId, (*mut core_bluetooth_ffi::CBCentral, String)>>>,
-    event_sender: mpsc::UnboundedSender<PeripheralEvent>,
-    event_receiver: Mutex<mpsc::UnboundedReceiver<PeripheralEvent>>,
+    event_sender: mpsc::Sender<PeripheralEvent>,
+    event_receiver: Mutex<mpsc::Receiver<PeripheralEvent>>,
     config: Arc<RwLock<AdvertisingConfig>>,
     stats: Arc<RwLock<PeripheralStats>>,
     advertising_start_time: Arc<RwLock<Option<Instant>>>,
@@ -183,7 +183,7 @@ pub struct IosBlePeripheral {
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 impl IosBlePeripheral {
     pub async fn new(local_peer_id: PeerId) -> Result<Self> {
-        let (event_sender, event_receiver) = mpsc::unbounded_channel();
+        let (event_sender, event_receiver) = mpsc::channel(1000); // Bounded channel for backpressure
 
         Ok(Self {
             local_peer_id,

@@ -9,7 +9,6 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::*;
     use crate::protocol::{PeerId, PeerIdExt};
     use crate::transport::{
         intelligent_coordinator::{
@@ -19,7 +18,6 @@ mod tests {
         nat_traversal::{NatType, NetworkHandler, TransportMode},
         tcp_transport::{TcpTransport, TcpTransportConfig},
     };
-    use std::collections::HashMap;
     use std::time::Duration;
     use tokio::net::UdpSocket;
 
