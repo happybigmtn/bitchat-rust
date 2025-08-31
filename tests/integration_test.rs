@@ -23,5 +23,8 @@ fn test_string_operations() {
     assert_eq!(s2, "hello world");
 }
 
-// Add more tests as APIs stabilize
+// TODO: [Testing] Implement comprehensive integration tests
+//       Current tests are placeholders only
+//       Priority: High - Required for production confidence
+//       Need: Consensus tests, networking tests, game logic tests, mobile platform tests
 // For now, we're ensuring the test framework itself works

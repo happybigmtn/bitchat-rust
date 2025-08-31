@@ -1175,6 +1175,12 @@ impl NetworkHandler {
     }
 
     /// Send TURN request with authentication
+    // TODO: [Network] Complete TURN relay implementation (RFC 5766)
+    //       Current implementation only has basic structure, missing:
+    //       - Channel binding for efficient data transfer
+    //       - Refresh mechanism to maintain allocations
+    //       - Error handling for 438 (Stale Nonce) responses
+    //       Priority: Medium - Required for symmetric NAT traversal
     async fn send_turn_request_with_auth(
         &self,
         turn_server: &TurnServer,

@@ -48,6 +48,9 @@ pub struct LockFreeConsensusEngine {
     local_peer_id: PeerId,
 
     /// Pending proposals (using crossbeam's lock-free map would be better)
+    // TODO: [Performance] Replace FxHashMap with crossbeam::SkipList for true lock-free operations
+    //       Current implementation uses parking_lot::RwLock which can cause contention under high load
+    //       See: feynman/bugs.md - Lock-free data structures partially implemented
     pending_proposals: Arc<parking_lot::RwLock<FxHashMap<ProposalId, GameProposal>>>,
 
     /// Consensus participants

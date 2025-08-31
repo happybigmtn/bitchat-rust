@@ -135,6 +135,10 @@ impl MultiGameFramework {
 
         // Initialize game-specific state
         engine.initialize_session(&session).await?;
+        
+        // TODO: [Gaming] Implement persistent game state storage
+        //       Games are currently memory-only, lost on restart
+        //       Priority: High - Required for production gaming
 
         // Add to active sessions
         self.active_sessions

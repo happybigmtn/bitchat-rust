@@ -36,6 +36,10 @@ pub struct BitCrapsClient {
 
 impl BitCrapsClient {
     /// Create new BitCraps client
+    // TODO: [SDK] Complete client implementation with full API coverage
+    //       Current implementation is architectural stub only (see feynman/bugs.md)
+    //       Priority: High - Required for external integrations
+    //       Missing: Authentication, session management, error recovery
     pub async fn new(config: ClientConfig) -> Result<Self, ClientError> {
         let mesh_service = Arc::new(
             MeshService::new().await

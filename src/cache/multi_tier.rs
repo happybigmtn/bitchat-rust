@@ -48,6 +48,9 @@ pub struct CacheStats {
     pub l2_hits: u64,
     pub l2_misses: u64,
     pub l3_hits: u64,
+    // TODO: [Performance] Add cache warming and prefetching strategies
+    //       Current implementation is reactive only, no predictive loading
+    //       Priority: Low - Nice to have for latency optimization
     pub l3_misses: u64,
     pub total_evictions: u64,
     pub promotions: u64,

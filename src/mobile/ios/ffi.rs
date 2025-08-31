@@ -34,6 +34,9 @@ pub struct IosBleManager {
     event_callback: Option<extern "C" fn(*const c_char, *const c_void, c_uint)>,
     /// Error callback handler  
     error_callback: Option<extern "C" fn(*const c_char)>,
+    // TODO: [Mobile] Implement iOS background mode handling for BLE
+    //       Background BLE has severe restrictions on iOS (see feynman/bugs.md)
+    //       Need: Background task scheduling, state restoration, limited advertising
     /// Is currently advertising
     is_advertising: bool,
     /// Is currently scanning
