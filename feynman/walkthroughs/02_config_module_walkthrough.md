@@ -1,84 +1,81 @@
 # Chapter 2: Configuration Module - Complete Implementation Analysis
-## Deep Dive into `src/app_config.rs` - Computer Science Concepts in Production Code
+## Deep Dive into `src/config/mod.rs` - Computer Science Concepts in Production Code
 
 ---
 
-## Complete Implementation Analysis: 356 Lines of Production Code
+## Complete Implementation Analysis: 512 Lines of Production Code
 
-This chapter provides comprehensive coverage of the entire configuration and CLI parsing implementation. We'll examine every significant line of code, understanding not just what it does but why it was implemented this way, with particular focus on command pattern implementation, type-safe configuration, and parser design patterns.
+This chapter provides comprehensive coverage of the entire configuration management system. We'll examine every significant line of code, understanding not just what it does but why it was implemented this way, with particular focus on environment-based configuration, validation patterns, and production-grade settings management.
+
+## Implementation Status
+✅ **Currently Implemented**: Full production configuration system with environment loading, validation, and hot reloading support  
+⚠️ **CLI System**: Analyzed separately in `/src/app_config.rs` - basic command parsing (356 lines)  
+🔄 **Integration**: Config system used throughout application for runtime settings
 
 ### Module Overview: The Complete Configuration Stack
 
 ```
 ┌─────────────────────────────────────────────────┐
-│           User Input Layer                       │
+│         Production Configuration System          │
 │  ┌────────────────────────────────────────────┐ │
-│  │     Command Line Arguments                  │ │
-│  │  bitcraps start --nickname alice -v         │ │
+│  │     Environment Detection                   │ │
+│  │  BITCRAPS_ENV → dev/test/stage/prod        │ │
 │  └─────────────┬─────────────────────────────┘ │
 │                │                                 │
 │                ▼                                 │
 │  ┌────────────────────────────────────────────┐ │
-│  │    Clap Parser (Declarative Parsing)        │ │
-│  │    Compile-time validation & generation     │ │
+│  │    TOML File Loading (Environment-based)    │ │
+│  │    development.toml / production.toml       │ │
 │  └─────────────┬─────────────────────────────┘ │
 │                │                                 │
 │                ▼                                 │
 │  ┌────────────────────────────────────────────┐ │
-│  │         CLI Structure (27 lines)             │ │
-│  │    Global args + Subcommand routing         │ │
+│  │      Environment Variable Override          │ │
+│  │  BITCRAPS_* variables override config      │ │
 │  └─────────────┬─────────────────────────────┘ │
 │                │                                 │
 │                ▼                                 │
 │  ┌────────────────────────────────────────────┐ │
-│  │       Commands Enum (67 lines)              │ │
-│  │    10 distinct commands with parameters     │ │
+│  │    Validation & Type Safety                 │ │
+│  │  8 major config sections validated         │ │
 │  └─────────────┬─────────────────────────────┘ │
 │                │                                 │
 │                ▼                                 │
 │  ┌────────────────────────────────────────────┐ │
-│  │    Parsing Functions (167 lines)            │ │
-│  │  Bet type parser (82 unique mappings)       │ │
-│  │  Game ID validation & Path resolution       │ │
+│  │    Global Configuration Instance            │ │
+│  │  Arc<RwLock> for thread-safe access        │ │
 │  └────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────┘
 ```
 
-**Total Implementation**: 356 lines of production configuration code
+**Total Implementation**: 512 lines of production configuration code
 
 ## Part I: Complete Code Analysis - Computer Science Concepts in Practice
 
-### Command Pattern Implementation (Lines 8-27)
+### Configuration Structure Implementation (Lines 20-32)
 
 ```rust
-#[derive(Parser)]
-#[command(name = "bitcraps")]
-#[command(about = "Decentralized craps casino over Bluetooth mesh")]
-pub struct Cli {
-    #[command(subcommand)]
-    pub command: Commands,
-    
-    #[arg(short, long, default_value = "~/.bitcraps")]
-    pub data_dir: String,
-    
-    #[arg(short, long)]
-    pub nickname: Option<String>,
-    
-    #[arg(long, default_value = "16")]
-    pub pow_difficulty: u32,
-    
-    #[arg(short, long)]
-    pub verbose: bool,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Config {
+    pub app: AppConfig,
+    pub network: NetworkConfig,
+    pub consensus: ConsensusConfig,
+    pub database: DatabaseConfig,
+    pub security: SecurityConfig,
+    pub monitoring: MonitoringConfig,
+    pub game: GameConfig,
+    pub treasury: TreasuryConfig,
+    pub performance: PerformanceProfile,
 }
 ```
 
 **Computer Science Foundation:**
 
 **What Design Pattern Is This?**
-This implements the **Command Pattern** - a behavioral design pattern that encapsulates requests as objects. Each command becomes a distinct variant that can be:
-1. Parameterized with different requests
-2. Queued or logged
-3. Support undo operations
+This implements the **Configuration Pattern** - a structural design pattern that centralizes application settings. The hierarchical config structure enables:
+1. Environment-specific configurations (dev/test/prod)
+2. Runtime validation and type safety
+3. Hot reloading and dynamic updates
 
 **Theoretical Properties:**
 - **Time Complexity**: O(1) command dispatch via enum discrimination

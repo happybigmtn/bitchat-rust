@@ -8,195 +8,173 @@
 
 ## Executive Summary
 
-This chapter analyzes the anti-cheat implementation in `/src/protocol/anti_cheat.rs` - a sophisticated security system protecting decentralized casino operations from various forms of cheating. The module implements multi-layered validation including statistical randomness tests, timing analysis, consensus integrity checks, and behavioral profiling. With 750+ lines of production code, it demonstrates state-of-the-art techniques for maintaining fairness in trustless gaming environments.
+This chapter analyzes the anti-cheat implementation in `/src/mesh/anti_cheat.rs` - a foundational security system protecting mesh network operations from basic forms of abuse. The module implements core validation including rate limiting, token bucket algorithms, and peer behavior tracking. With 133 lines of production code, it demonstrates essential techniques for maintaining network integrity in peer-to-peer environments.
 
-**Key Technical Achievement**: Implementation of comprehensive anti-cheat system with chi-square statistical tests, timing validation, signature verification, and peer trust scoring achieving 99.9% cheat detection accuracy while maintaining sub-millisecond validation latency.
+**Key Technical Achievement**: Implementation of basic anti-cheat monitoring with token bucket rate limiting, peer behavior tracking, and ban management providing fundamental protection against network abuse.
+
+## Implementation Status
+✅ **Core Implementation**: Basic rate limiting and peer monitoring (133 lines)  
+⚠️ **Advanced Features**: Statistical analysis, chi-square tests marked as future implementation  
+🚀 **Sophisticated Version**: More advanced system exists in `/src/protocol/anti_cheat.rs`
 
 ---
 
 ## Architecture Deep Dive
 
-### Multi-Layer Anti-Cheat Architecture
+### Basic Anti-Cheat Architecture
 
-The module implements a **comprehensive security validation system**:
+The module implements a **foundational network security system**:
 
 ```rust
-pub struct AntiCheatValidator {
-    // Evidence collection
-    cheat_evidence: Arc<RwLock<HashMap<[u8; 32], CheatEvidence>>>,
-    
-    // Peer behavior tracking
-    peer_profiles: Arc<RwLock<HashMap<PeerId, PeerBehaviorProfile>>>,
-    
-    // Statistical analysis
-    randomness_stats: Arc<RwLock<HashMap<PeerId, RandomnessStats>>>,
-    global_randomness_stats: Arc<RwLock<RandomnessStats>>,
-    
-    // Operation validation
-    recent_operations: Arc<RwLock<HashMap<PeerId, VecDeque<(Instant, GameOperation)>>>>,
-    
-    // Consensus validation
-    proposal_signatures: Arc<RwLock<HashMap<ProposalId, HashMap<PeerId, Signature>>>>,
+pub struct AntiCheatMonitor {
+    enabled: bool,
+    peer_behavior: Arc<RwLock<HashMap<PeerId, PeerBehavior>>>,
+    ban_list: Arc<RwLock<HashMap<PeerId, Instant>>>,
+}
+
+struct PeerBehavior {
+    packet_count: u64,
+    last_packet_time: Option<Instant>,
+    suspicious_patterns: u32,
+    token_bucket: TokenBucket,
 }
 ```
 
-This represents **defense-in-depth security** with:
+This represents **basic network security** with:
 
-1. **Evidence Collection**: Forensic data for violations
-2. **Behavioral Analysis**: Pattern recognition and profiling
-3. **Statistical Testing**: Chi-square tests for randomness
-4. **Timing Analysis**: Rate limiting and timestamp validation
-5. **Consensus Integrity**: Signature and state validation
+1. **Rate Limiting**: Token bucket algorithm for packet flooding prevention
+2. **Peer Tracking**: Basic behavior monitoring and statistics
+3. **Ban Management**: Temporary bans with expiration handling
+4. **Packet Analysis**: Simple pattern detection for suspicious activity
 
-### Cheat Detection Categories
+### Network Protection Categories
+
+The system detects basic network abuse patterns:
 
 ```rust
-pub enum CheatType {
-    BalanceViolation,        // Manipulating token balances
-    InvalidStateTransition,   // Impossible game state changes
-    SignatureForgery,        // Fake cryptographic signatures
-    DoubleVoting,           // Voting multiple times in consensus
-    InvalidRoll,            // Impossible dice values
-    TimestampManipulation,  // Clock manipulation
-    ConsensusViolation,     // Breaking consensus rules
+pub async fn analyze_packet(&self, packet: &BitchatPacket, peer_id: PeerId) -> Option<String> {
+    // Rate limit checking
+    if !behavior.token_bucket.try_consume(1.0) {
+        return Some("Rate limit exceeded - packet flooding detected".to_string());
+    }
+    
+    // Basic game packet inspection
+    if packet.packet_type >= 0x20 && packet.packet_type <= 0x27 {
+        // Future: Game-specific validation
+    }
 }
 ```
 
-This demonstrates **comprehensive threat coverage**:
-- **Economic Attacks**: Balance and state manipulation
-- **Cryptographic Attacks**: Signature forgery
-- **Protocol Attacks**: Consensus violations
-- **Game Logic Attacks**: Invalid operations
-- **Timing Attacks**: Timestamp manipulation
+This demonstrates **basic threat coverage**:
+- **Network Flooding**: Packet rate limiting with token buckets
+- **Peer Abuse**: Basic behavioral tracking and banning
+- **Future Extensions**: Game-specific validation hooks prepared
 
 ---
 
 ## Computer Science Concepts Analysis
 
-### 1. Chi-Square Statistical Testing
+### 1. Token Bucket Rate Limiting
 
 ```rust
-fn calculate_chi_square(&self, outcomes: &HashMap<u8, u64>, total_rolls: u64) -> f64 {
-    let expected_per_outcome = total_rolls as f64 / 6.0; // Expected frequency for fair die
-    let mut chi_square = 0.0;
-    
-    for face in 1..=6 {
-        let observed = *outcomes.get(&face).unwrap_or(&0) as f64;
-        let expected = expected_per_outcome;
-        chi_square += (observed - expected).powi(2) / expected;
-    }
-    
-    chi_square
+struct TokenBucket {
+    tokens: f64,
+    capacity: f64,
+    refill_rate: f64, // tokens per second
+    last_refill: Instant,
 }
 
-async fn detect_statistical_anomaly(&self, peer_id: PeerId) -> Result<bool> {
-    let stats_map = self.randomness_stats.read().await;
-    
-    if let Some(stats) = stats_map.get(&peer_id) {
-        if stats.total_rolls >= 30 { // Minimum sample size
-            // Chi-square test with 5 degrees of freedom (6 outcomes - 1)
-            // Critical value at 0.001 significance level is approximately 20.515
-            let critical_value = 20.515;
-            
-            if stats.chi_square_value > critical_value {
-                return Ok(true);
-            }
+impl TokenBucket {
+    fn try_consume(&mut self, tokens: f64) -> bool {
+        self.refill();
+        if self.tokens >= tokens {
+            self.tokens -= tokens;
+            true
+        } else {
+            false
         }
     }
     
-    Ok(false)
+    fn refill(&mut self) {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
+        self.tokens = (self.tokens + elapsed * self.refill_rate).min(self.capacity);
+        self.last_refill = now;
+    }
 }
 ```
 
-**Computer Science Principle**: **Goodness-of-fit testing**:
-1. **Null Hypothesis**: Dice rolls follow uniform distribution
-2. **Test Statistic**: Chi-square measures deviation from expected
-3. **Degrees of Freedom**: k-1 where k is number of outcomes
-4. **Significance Level**: 0.001 for high confidence
+**Computer Science Principle**: **Rate limiting algorithms**:
+1. **Token Bucket**: Allows burst traffic while maintaining average rate
+2. **Capacity**: Maximum tokens (burst size)
+3. **Refill Rate**: Sustainable throughput
+4. **Consume**: Deduct tokens for requests
 
-**Real-world Application**: Similar to casino fairness testing and RNG validation.
+**Real-world Application**: Similar to API rate limiting and network traffic shaping.
 
-### 2. Timing Attack Prevention
+### 2. Ban Management
 
 ```rust
-async fn validate_timing(
-    &self,
-    peer_id: PeerId,
-    operation: &GameOperation,
-) -> Result<Vec<CheatType>> {
-    let mut violations = Vec::new();
+pub async fn ban_peer(&self, peer_id: PeerId, duration: Duration) {
+    let ban_until = Instant::now() + duration;
+    self.ban_list.write().await.insert(peer_id, ban_until);
+}
+
+async fn is_banned(&self, peer_id: PeerId) -> bool {
+    let mut ban_list = self.ban_list.write().await;
+    
+    if let Some(&ban_until) = ban_list.get(&peer_id) {
+        if Instant::now() < ban_until {
+            return true;
+        } else {
+            ban_list.remove(&peer_id);
+        }
+    }
+    
+    false
+}
+```
+
+**Computer Science Principle**: **Time-based access control**:
+1. **Expiring Bans**: Temporary restrictions with automatic cleanup
+2. **Lazy Cleanup**: Remove expired bans during lookup
+3. **Duration Management**: Configurable ban periods
+4. **State Management**: Thread-safe ban list updates
+
+### 3. Basic Peer Behavior Tracking
+
+```rust
+struct PeerBehavior {
+    packet_count: u64,
+    last_packet_time: Option<Instant>,
+    suspicious_patterns: u32,
+    token_bucket: TokenBucket,
+}
+
+pub async fn analyze_packet(&self, packet: &BitchatPacket, peer_id: PeerId) -> Option<String> {
+    let mut behaviors = self.peer_behavior.write().await;
+    let behavior = behaviors
+        .entry(peer_id)
+        .or_insert_with(PeerBehavior::default);
+    
     let now = Instant::now();
+    behavior.packet_count += 1;
+    behavior.last_packet_time = Some(now);
     
-    // Check minimum interval between operations
-    let mut recent_ops = self.recent_operations.write().await;
-    if let Some(peer_ops) = recent_ops.get_mut(&peer_id) {
-        if let Some((last_time, _)) = peer_ops.back() {
-            if now.duration_since(*last_time) < self.config.min_operation_interval {
-                violations.push(CheatType::TimestampManipulation);
-            }
-        }
+    // Rate limiting check
+    if !behavior.token_bucket.try_consume(1.0) {
+        return Some("Rate limit exceeded - packet flooding detected".to_string());
     }
     
-    // Check for future timestamps
-    let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    if operation_timestamp > current_time + self.config.max_time_skew.as_secs() {
-        violations.push(CheatType::TimestampManipulation);
-    }
-    
-    Ok(violations)
+    None
 }
 ```
 
-**Computer Science Principle**: **Rate limiting and clock synchronization**:
-1. **Rate Limiting**: Minimum interval between operations
-2. **Clock Skew Tolerance**: Allow small time differences
-3. **Future Timestamp Detection**: Reject impossible times
-4. **Operation Ordering**: Maintain causal consistency
-
-### 3. Behavioral Profiling
-
-```rust
-struct PeerBehaviorProfile {
-    peer_id: PeerId,
-    operations_count: u64,
-    last_operation_time: Instant,
-    total_bets_placed: CrapTokens,
-    total_winnings: CrapTokens,
-    dice_rolls_witnessed: Vec<DiceRoll>,
-    suspicious_activities: Vec<CheatType>,
-    trust_score: f64, // 0.0 to 1.0
-    statistical_anomalies: u32,
-}
-
-async fn update_peer_profile(&self, peer_id: PeerId, operation: GameOperation) {
-    let mut profiles = self.peer_profiles.write().await;
-    let profile = profiles.entry(peer_id).or_insert_with(|| PeerBehaviorProfile {
-        trust_score: 1.0, // Start with full trust
-        // ...
-    });
-    
-    profile.operations_count += 1;
-    
-    match operation {
-        GameOperation::PlaceBet { bet, .. } => {
-            profile.total_bets_placed = profile.total_bets_placed.saturating_add(bet.amount);
-        }
-        GameOperation::ProcessRoll { dice_roll, .. } => {
-            profile.dice_rolls_witnessed.push(dice_roll);
-            if profile.dice_rolls_witnessed.len() > 100 {
-                profile.dice_rolls_witnessed.remove(0); // Sliding window
-            }
-        }
-        _ => {}
-    }
-}
-```
-
-**Computer Science Principle**: **Anomaly detection through profiling**:
-1. **Baseline Establishment**: Normal behavior patterns
-2. **Sliding Window**: Recent activity tracking
-3. **Trust Scoring**: Reputation-based validation
-4. **Pattern Recognition**: Identify suspicious sequences
+**Computer Science Principle**: **Simple behavior monitoring**:
+1. **Packet Counting**: Track activity levels per peer
+2. **Timestamp Tracking**: Last activity time
+3. **Rate Limiting**: Token bucket per peer
+4. **Future Extension**: Hooks for game-specific patterns
 
 ### 4. Consensus Integrity Validation
 
@@ -395,57 +373,51 @@ pub async fn get_anti_cheat_stats(&self) -> AntiCheatStats {
 
 ## Senior Engineering Code Review
 
-### Rating: 9.5/10
+### Rating: 7.5/10
 
-**Exceptional Strengths:**
+**Good Foundation:**
 
-1. **Security Coverage** (10/10): Comprehensive threat detection
-2. **Statistical Rigor** (9/10): Proper chi-square implementation
-3. **Performance Design** (9/10): Efficient concurrent access
-4. **Evidence Management** (10/10): Complete forensic trail
+1. **Rate Limiting** (8/10): Solid token bucket implementation
+2. **Basic Monitoring** (7/10): Simple peer behavior tracking
+3. **Performance Design** (8/10): Efficient concurrent access
+4. **Extensibility** (7/10): Clear hooks for future enhancements
 
 **Areas for Enhancement:**
 
-### 1. Machine Learning Integration (Priority: Medium)
+### 1. Statistical Analysis Integration (Priority: High)
 
-**Enhancement**: Add ML-based anomaly detection:
+**Enhancement**: Add statistical validation:
 ```rust
-pub struct MLAnomalyDetector {
-    model: IsolationForest,
-    feature_extractor: FeatureExtractor,
+struct StatisticalValidator {
+    chi_square_threshold: f64,
+    sample_size_minimum: usize,
 }
 
-impl MLAnomalyDetector {
-    pub async fn detect_anomaly(&self, profile: &PeerBehaviorProfile) -> f64 {
-        let features = self.feature_extractor.extract(profile);
-        self.model.anomaly_score(&features)
+impl StatisticalValidator {
+    pub fn validate_randomness(&self, outcomes: &[u8]) -> bool {
+        if outcomes.len() < self.sample_size_minimum {
+            return true; // Insufficient data
+        }
+        self.chi_square_test(outcomes) < self.chi_square_threshold
     }
 }
 ```
 
-### 2. Distributed Evidence Consensus (Priority: High)
+### 2. Game-Specific Validation (Priority: High)
 
-**Enhancement**: Consensus on cheat detection:
+**Enhancement**: Add game logic validation:
 ```rust
-pub struct DistributedEvidenceConsensus {
-    evidence_votes: HashMap<[u8; 32], HashMap<PeerId, bool>>,
-    conviction_threshold: f64, // e.g., 66% agreement
+struct GameValidator {
+    max_bet_amount: u64,
+    valid_dice_outcomes: HashSet<u8>,
 }
 
-impl DistributedEvidenceConsensus {
-    pub async fn submit_evidence_vote(
-        &mut self,
-        evidence_id: [u8; 32],
-        voter: PeerId,
-        is_valid: bool,
-    ) -> Option<ConvictionResult> {
-        let votes = self.evidence_votes.entry(evidence_id).or_default();
-        votes.insert(voter, is_valid);
-        
-        if self.has_consensus(votes) {
-            Some(self.determine_conviction(votes))
-        } else {
-            None
+impl GameValidator {
+    pub fn validate_game_packet(&self, packet: &BitchatPacket) -> ValidationResult {
+        match packet.packet_type {
+            0x20 => self.validate_bet_packet(packet),
+            0x21 => self.validate_dice_packet(packet),
+            _ => ValidationResult::Valid,
         }
     }
 }
@@ -479,23 +451,23 @@ impl AdaptiveThresholds {
 
 ## Production Readiness Assessment
 
-### Security Analysis (Rating: 9.5/10)
-- **Excellent**: Multi-layer validation approach
-- **Strong**: Statistical anomaly detection
-- **Strong**: Evidence collection and retention
-- **Minor**: Add homomorphic validation for privacy
+### Security Analysis (Rating: 7/10)
+- **Good**: Basic rate limiting prevents flooding
+- **Adequate**: Simple peer tracking and banning
+- **Missing**: Statistical analysis and game validation
+- **Future**: Advanced threat detection capabilities
 
-### Performance Analysis (Rating: 9/10)
-- **Excellent**: Sub-millisecond validation
-- **Strong**: Efficient sliding windows
-- **Good**: Concurrent read optimization
-- **Minor**: Consider bloom filters for large datasets
+### Performance Analysis (Rating: 8/10)
+- **Good**: Efficient token bucket rate limiting
+- **Good**: Concurrent access with RwLock
+- **Adequate**: Simple packet analysis
+- **Future**: Optimize for high-throughput scenarios
 
-### Reliability Analysis (Rating: 9/10)
-- **Excellent**: Comprehensive error handling
-- **Strong**: Evidence persistence
-- **Strong**: Graceful degradation
-- **Missing**: Circuit breakers for external validators
+### Reliability Analysis (Rating: 7/10)
+- **Good**: Basic error handling
+- **Good**: Automatic ban expiration
+- **Adequate**: Simple state management
+- **Missing**: Persistent state and configuration
 
 ---
 
@@ -551,23 +523,23 @@ This anti-cheat system integrates with:
 
 ## Conclusion
 
-The anti-cheat system represents **state-of-the-art security engineering** for decentralized gaming with comprehensive threat detection, statistical validation, and behavioral analysis. The implementation demonstrates mastery of security principles, statistical methods, and distributed system integrity.
+The anti-cheat system represents **foundational security engineering** for mesh network protection with basic threat detection, rate limiting, and peer management. The implementation demonstrates core security principles and provides a solid foundation for future enhancements.
 
 **Key Technical Achievements:**
-1. **Multi-layer validation architecture** covering all threat vectors
-2. **Statistical rigor** with proper chi-square testing
-3. **Forensic evidence system** for accountability
-4. **Real-time performance** with concurrent optimization
+1. **Token bucket rate limiting** preventing network flooding
+2. **Basic peer behavior tracking** with statistics
+3. **Temporary ban system** with automatic expiration
+4. **Extensible architecture** ready for game-specific validation
 
 **Critical Next Steps:**
-1. **Add ML anomaly detection** - catch novel patterns
-2. **Implement distributed consensus** - decentralize decisions
-3. **Build adaptive thresholds** - handle network variations
+1. **Add statistical validation** - detect pattern anomalies
+2. **Implement game-specific rules** - validate game operations
+3. **Build evidence collection** - create audit trails
 
-This module provides critical security infrastructure ensuring fair play in trustless gaming environments, essential for maintaining player confidence and system integrity.
+This module provides essential network security infrastructure as the foundation for more sophisticated anti-cheat mechanisms in decentralized gaming environments.
 
 ---
 
-**Technical Depth**: Security engineering and statistical analysis
-**Production Readiness**: 95% - Comprehensive coverage, minor enhancements possible
-**Recommended Study Path**: Statistics → Security patterns → Game theory → ML for security
+**Technical Depth**: Network security and rate limiting algorithms
+**Production Readiness**: 70% - Basic functionality complete, needs game-specific enhancements
+**Recommended Study Path**: Rate limiting → Token buckets → Statistical validation → Game security patterns
