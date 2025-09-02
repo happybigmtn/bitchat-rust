@@ -18,7 +18,7 @@ use tokio::sync::{mpsc, oneshot, RwLock};
 /// This creates a natural "neighborhood" structure in the network.
 ///
 /// Security Enhancement: NodeIDs now require cryptographic proof to prevent poisoning
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct NodeId {
     id: [u8; 32],
     proof_of_work: Option<ProofOfWork>,
@@ -143,6 +143,29 @@ pub struct Contact {
     pub validation_attempts: u32, // Track validation failures
 }
 
+impl PartialEq for Contact {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare by node ID (primary identifier)
+        self.id == other.id && self.peer_id == other.peer_id
+    }
+}
+
+impl Eq for Contact {}
+
+impl PartialOrd for Contact {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Contact {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Compare by node ID for ordering in data structures
+        self.id.cmp(&other.id)
+            .then_with(|| self.peer_id.cmp(&other.peer_id))
+    }
+}
+
 /// Type alias for shared contact to enable zero-copy sharing
 pub type SharedContact = Arc<Contact>;
 
@@ -229,7 +252,7 @@ impl KBucket {
         use std::collections::BinaryHeap;
         use std::cmp::Reverse;
         
-        let mut heap: BinaryHeap<(Reverse<[u8; 32]>, SharedContact)> = BinaryHeap::with_capacity(k);
+        let mut heap: BinaryHeap<(Reverse<Distance>, SharedContact)> = BinaryHeap::with_capacity(k);
         
         for contact in &self.contacts {
             let distance = contact.id.distance(target);
@@ -451,7 +474,7 @@ impl KademliaNode {
         k: usize,
         alpha: usize,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let local_id = NodeId::from_peer_id(&peer_id);
+        let local_id = NodeId::from_peer_id(&peer_id)?;
 
         // Bind UDP socket for DHT communication
         let udp_socket = UdpSocket::bind(listen_address).await?;
@@ -468,10 +491,11 @@ impl KademliaNode {
 
         let (event_sender, _) = mpsc::channel(1000); // Moderate traffic for Kademlia events
 
+        let routing_table = Arc::new(RoutingTable::new(local_id.clone(), k, alpha));
         let node = Self {
-            local_id: local_id.clone(),
+            local_id,
             local_address,
-            routing_table: Arc::new(RoutingTable::new(local_id, k, alpha)),
+            routing_table,
             storage: Arc::new(RwLock::new(HashMap::new())),
             pending_queries: Arc::new(RwLock::new(HashMap::new())),
             query_counter: Arc::new(RwLock::new(0)),

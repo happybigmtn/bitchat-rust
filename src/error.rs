@@ -89,6 +89,9 @@ pub enum Error {
     #[error("Database error: {0}")]
     Database(String),
 
+    #[error("SQLite error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+
     #[error("Cache error: {0}")]
     Cache(String),
 

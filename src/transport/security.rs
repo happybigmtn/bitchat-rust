@@ -683,7 +683,7 @@ impl EnhancedTransportSecurity {
         let message_data = &ciphertext[AuthenticatedHeader::SIZE..];
 
         if enable_hmac {
-            let mut hmac_input = Vec::with_capacity(data.len() + 32); // data + extra
+            let mut hmac_input = Vec::with_capacity(message_data.len() + 32); // data + extra
             hmac_input.extend_from_slice(&header.sequence.to_be_bytes());
             hmac_input.extend_from_slice(&header.timestamp.to_be_bytes());
             hmac_input.push(header.message_type);

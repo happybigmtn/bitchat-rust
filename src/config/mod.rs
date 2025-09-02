@@ -417,6 +417,8 @@ impl Config {
                 rebalance_interval: Duration::from_secs(3600),
             },
             performance: PerformanceProfile::Balanced,
+            version: 1,
+            last_reload: Some(std::time::SystemTime::now()),
         }
     }
 

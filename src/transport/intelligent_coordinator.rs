@@ -542,7 +542,7 @@ impl IntelligentTransportCoordinator {
     /// Start monitoring a transport
     async fn start_transport_monitoring(&self, transport_id: String) {
         let transports = Arc::clone(&self.transports);
-        let config = Arc::clone(&self.config);
+        let config = self.config.clone();
         let performance_history = Arc::clone(&self.performance_history);
 
         tokio::spawn(async move {
