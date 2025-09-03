@@ -195,6 +195,32 @@ impl BitCrapsApp {
     fn bet_type_to_u8(bet_type: &BetType) -> u8 {
         bet_type.to_u8()
     }
+    
+    /// Add treasury to game if enabled in configuration
+    async fn add_treasury_if_enabled(&self, game: &mut CrapsGame) {
+        if self.config.enable_treasury {
+            game.add_player(TREASURY_ADDRESS);
+            info!("🏦 Treasury automatically joined game");
+        }
+    }
+    
+    /// Store game in active games collection
+    async fn store_game(&self, game_id: GameId, game: CrapsGame) {
+        self.active_games.write().await.insert(game_id, game);
+    }
+    
+    /// Broadcast game creation to network
+    async fn broadcast_game_creation(&self, game_id: GameId, buy_in_crap: u64) -> Result<()> {
+        let packet = bitcraps::protocol::create_game_packet(
+            self.identity.peer_id,
+            game_id,
+            8, // max players
+            buy_in_crap,
+        );
+        self.mesh_service.broadcast_packet(packet).await?;
+        info!("📡 Game creation packet broadcast to network");
+        Ok(())
+    }
 }
 
 /// High-level command processing functions

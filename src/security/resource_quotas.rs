@@ -33,6 +33,12 @@ pub enum ResourceType {
 /// Resource quota configuration per peer
 #[derive(Debug, Clone)]
 pub struct QuotaConfig {
+    // TODO: [Security] Implement dynamic quota adjustment based on peer reputation
+    //       - Track peer behavior history for trust scoring
+    //       - Increase quotas for well-behaved peers
+    //       - Implement gradual quota recovery after violations
+    //       - Add emergency circuit breakers for system protection
+    //       Priority: MEDIUM - Important for production scalability
     /// Maximum bandwidth in bytes/second
     pub max_bandwidth: u64,
     /// Maximum concurrent connections

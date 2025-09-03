@@ -221,6 +221,11 @@ pub fn create_game_discovery_packet(
 
 /// Utility function to parse game creation data from a packet
 pub fn parse_game_creation_data(packet: &BitchatPacket) -> Option<GameCreationData> {
+    // TODO: [Protocol] Add validation for packet data before parsing
+    //       - Verify packet signature/authenticity
+    //       - Check sender permissions for game creation
+    //       - Validate game parameters (buy-in limits, player count)
+    //       Priority: HIGH - Security concern for malicious game creation
     for tlv in &packet.tlv_data {
         if tlv.field_type == TLV_GAME_CREATION {
             return GameCreationData::deserialize(&tlv.value).ok();
@@ -231,6 +236,10 @@ pub fn parse_game_creation_data(packet: &BitchatPacket) -> Option<GameCreationDa
 
 /// Utility function to parse game discovery data from a packet
 pub fn parse_game_discovery_data(packet: &BitchatPacket) -> Option<GameDiscoveryData> {
+    // TODO: [Protocol] Rate limit discovery requests per peer
+    //       - Prevent discovery flooding attacks
+    //       - Add caching layer for recent discoveries
+    //       Priority: MEDIUM - DOS prevention
     for tlv in &packet.tlv_data {
         if tlv.field_type == TLV_GAME_DISCOVERY {
             return GameDiscoveryData::deserialize(&tlv.value).ok();

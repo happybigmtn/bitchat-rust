@@ -26,6 +26,11 @@ pub struct PoolStats {
     pub current_size: usize,
     pub max_size_reached: usize,
     pub last_reset: Instant,
+    // TODO: [Performance] Add metrics for pool efficiency
+    //       - Track average object lifetime to tune pool size
+    //       - Measure allocation latency (pool vs fresh allocation)
+    //       - Add watermark tracking for pool size optimization
+    //       Priority: MEDIUM - Needed for production tuning
 }
 
 impl Default for PoolStats {

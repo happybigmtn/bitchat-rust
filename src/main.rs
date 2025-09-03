@@ -16,67 +16,16 @@ use commands::commands as cmd;
 async fn main() -> Result<()> {
     use clap::Parser;
 
-    // Set up global panic handler for production graceful shutdown
-    std::panic::set_hook(Box::new(|panic_info| {
-        eprintln!("🚨 CRITICAL: Application panic detected!");
-        eprintln!(
-            "Location: {}",
-            panic_info
-                .location()
-                .map_or("unknown".to_string(), |l| l.to_string())
-        );
-        eprintln!(
-            "Message: {}",
-            panic_info
-                .payload()
-                .downcast_ref::<&str>()
-                .unwrap_or(&"Unknown panic")
-        );
-        eprintln!("Attempting graceful shutdown...");
-
-        // Log to file if possible
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("bitcraps_panic.log")
-        {
-            use std::io::Write;
-            let _ = writeln!(
-                file,
-                "[{}] PANIC: {} at {}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-                panic_info
-                    .payload()
-                    .downcast_ref::<&str>()
-                    .unwrap_or(&"Unknown panic"),
-                panic_info
-                    .location()
-                    .map_or("unknown".to_string(), |l| l.to_string())
-            );
-        }
-
-        // Exit with error code
-        std::process::exit(1);
-    }));
+    install_panic_handler();
 
     let cli = Cli::parse();
 
-    // Initialize logging
-    if cli.verbose {
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
-    } else {
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    }
+    initialize_logging(cli.verbose);
 
-    println!("🎲 BitCraps - Decentralized Casino Protocol");
-    println!("⚡ Real-time craps over Bluetooth mesh with CRAP tokens");
-    println!();
+    print_banner();
 
-    // Resolve data directory path
-    let data_dir = resolve_data_dir(&cli.data_dir).map_err(|e| Error::Protocol(e))?;
+    let data_dir = resolve_data_dir(&cli.data_dir)
+        .map_err(|e| Error::Protocol(e))?;
 
     let config = AppConfig {
         data_dir,
@@ -91,17 +40,16 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Start => {
             info!("Starting BitCraps node...");
-            let mut app = BitCrapsApp::new(config.clone()).await?;
-            
-            // Start monitoring services (no-op under `mvp` feature)
+            let app = BitCrapsApp::new(config.clone()).await?;
             let app_arc = Arc::new(app);
             start_monitoring_services(app_arc.clone(), &config).await?;
             
-            // Now start the main app loop (need to get mutable reference back)
-            let app_mut = Arc::try_unwrap(app_arc)
-                .map_err(|_| Error::Protocol("Failed to unwrap app Arc".to_string()))?;
-            let mut app = app_mut;
-            app.start().await?;
+            // Run the main application loop
+            if let Ok(mut app) = Arc::try_unwrap(app_arc) {
+                app.start().await?;
+            } else {
+                return Err(Error::Protocol("Failed to start application".to_string()));
+            }
         }
 
         Commands::Tui => {
@@ -166,7 +114,7 @@ async fn main() -> Result<()> {
 
 /// Start all monitoring services (Prometheus, Dashboard, Metrics Integration)
 #[cfg(not(feature = "mvp"))]
-async fn start_monitoring_services(app: Arc<BitCrapsApp>, config: &AppConfig) -> Result<()> {
+async fn start_monitoring_services(_app: Arc<BitCrapsApp>, config: &AppConfig) -> Result<()> {
     use bitcraps::monitoring::{
         PrometheusServer, PrometheusConfig, start_dashboard_server, start_metrics_integration,
         record_network_event,
@@ -237,4 +185,77 @@ async fn run_tui_wrapper(_app: BitCrapsApp) -> Result<()> {
 async fn run_tui_wrapper(_app: BitCrapsApp) -> Result<()> {
     eprintln!("TUI is disabled under MVP builds.");
     Ok(())
+}
+
+// ==================== Helper Functions ====================
+
+/// Install a panic handler for graceful shutdown
+fn install_panic_handler() {
+    std::panic::set_hook(Box::new(|panic_info| {
+        log_panic_to_console(panic_info);
+        log_panic_to_file(panic_info);
+        std::process::exit(1);
+    }));
+}
+
+/// Log panic information to console
+fn log_panic_to_console(panic_info: &std::panic::PanicInfo) {
+    eprintln!("🚨 CRITICAL: Application panic detected!");
+    eprintln!("Location: {}", format_panic_location(panic_info));
+    eprintln!("Message: {}", extract_panic_message(panic_info));
+    eprintln!("Attempting graceful shutdown...");
+}
+
+/// Log panic information to file
+fn log_panic_to_file(panic_info: &std::panic::PanicInfo) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("bitcraps_panic.log")
+    {
+        use std::io::Write;
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        
+        let _ = writeln!(
+            file,
+            "[{}] PANIC: {} at {}",
+            timestamp,
+            extract_panic_message(panic_info),
+            format_panic_location(panic_info)
+        );
+    }
+}
+
+/// Extract panic message from panic info
+fn extract_panic_message(panic_info: &std::panic::PanicInfo) -> String {
+    panic_info
+        .payload()
+        .downcast_ref::<&str>()
+        .unwrap_or(&"Unknown panic")
+        .to_string()
+}
+
+/// Format panic location for display
+fn format_panic_location(panic_info: &std::panic::PanicInfo) -> String {
+    panic_info
+        .location()
+        .map_or("unknown".to_string(), |l| l.to_string())
+}
+
+/// Initialize logging based on verbosity flag
+fn initialize_logging(verbose: bool) {
+    let filter = if verbose { "debug" } else { "info" };
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or(filter)
+    ).init();
+}
+
+/// Print application banner
+fn print_banner() {
+    println!("🎲 BitCraps - Decentralized Casino Protocol");
+    println!("⚡ Real-time craps over Bluetooth mesh with CRAP tokens");
+    println!();
 }

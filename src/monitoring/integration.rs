@@ -11,6 +11,11 @@ use log::{info, warn, error};
 use crate::monitoring::metrics::METRICS;
 use crate::app::BitCrapsApp;
 
+// TODO: [Integration] Replace these local structs with actual app_state types
+//       Currently using placeholder structs because of type mismatch between
+//       app::BitCrapsApp and app_state::BitCrapsApp. Need to unify the app types
+//       to enable proper metrics collection from real application state.
+//       Priority: HIGH - Blocks real metrics collection
 /// Application statistics structure
 #[derive(Debug, Clone)]
 struct AppStats {

@@ -36,6 +36,12 @@ pub struct DosProtectionConfig {
 
 impl Default for DosProtectionConfig {
     fn default() -> Self {
+        // TODO: [Security] Harden DoS protection thresholds for production
+        //       - Tune max_requests_per_minute based on load testing
+        //       - Implement adaptive thresholds based on network conditions
+        //       - Add IP reputation scoring to adjust limits dynamically
+        //       - Consider geographic rate limiting for fairness
+        //       Priority: HIGH - Critical for production resilience
         Self {
             max_request_size: 64 * 1024,                // 64KB max request
             max_requests_per_minute: 1000,              // 1000 requests per minute
