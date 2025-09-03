@@ -13,12 +13,12 @@ pub struct ThemeManager {
 impl ThemeManager {
     pub fn new() -> Self {
         let mut themes = HashMap::new();
-        
+
         // Add default themes
         themes.insert("light".to_string(), Theme::light());
         themes.insert("dark".to_string(), Theme::dark());
         themes.insert("casino".to_string(), Theme::casino());
-        
+
         Self {
             themes,
             current_theme: "dark".to_string(),
@@ -140,7 +140,7 @@ impl Theme {
     /// Apply color adjustments
     pub fn with_adjustments(&self, adjustments: ColorAdjustments) -> Self {
         let mut theme = self.clone();
-        
+
         if let Some(brightness) = adjustments.brightness {
             theme.primary_color = theme.primary_color.adjust_brightness(brightness);
             theme.secondary_color = theme.secondary_color.adjust_brightness(brightness);
@@ -175,7 +175,7 @@ impl Color {
     pub fn adjust_contrast(&self, factor: f32) -> Self {
         let factor = factor.clamp(0.0, 2.0);
         let gray = 128.0;
-        
+
         Self {
             r: ((self.r as f32 - gray) * factor + gray).clamp(0.0, 255.0) as u8,
             g: ((self.g as f32 - gray) * factor + gray).clamp(0.0, 255.0) as u8,
@@ -188,7 +188,7 @@ impl Color {
     pub fn mix(&self, other: &Color, ratio: f32) -> Self {
         let ratio = ratio.clamp(0.0, 1.0);
         let inv_ratio = 1.0 - ratio;
-        
+
         Self {
             r: (self.r as f32 * inv_ratio + other.r as f32 * ratio) as u8,
             g: (self.g as f32 * inv_ratio + other.g as f32 * ratio) as u8,
@@ -203,7 +203,7 @@ impl Color {
         let r = self.r as f32 / 255.0;
         let g = self.g as f32 / 255.0;
         let b = self.b as f32 / 255.0;
-        
+
         0.2126 * r + 0.7152 * g + 0.0722 * b
     }
 
@@ -448,7 +448,7 @@ impl DynamicTheme {
     pub fn current_theme(&self) -> Theme {
         let now = chrono::Local::now();
         let hour = now.hour() as u8;
-        
+
         if hour >= self.transition_hour_morning && hour < self.transition_hour_evening {
             self.day_theme.clone()
         } else {

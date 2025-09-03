@@ -14,7 +14,7 @@ use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tokio::time::interval;
 use uuid::Uuid;
 
-use super::consensus_game_manager::{ConsensusGameManager, ConsensusGameConfig, GameEvent};
+use super::consensus_game_manager::{ConsensusGameManager, GameEvent, ConsensusGameConfig};
 use crate::crypto::BitchatIdentity;
 use crate::error::{Error, Result};
 use crate::mesh::MeshService;
@@ -623,7 +623,7 @@ impl GameOrchestrator {
 
         tokio::spawn(async move {
             let mut discovery_timer = interval(discovery_interval);
-            let mut budget = LoopBudget::for_discovery();
+            let budget = LoopBudget::for_discovery();
 
             loop {
                 // Check budget before processing
@@ -631,7 +631,7 @@ impl GameOrchestrator {
                     budget.backoff().await;
                     continue;
                 }
-                
+
                 discovery_timer.tick().await;
                 budget.consume(1);
 
@@ -725,7 +725,7 @@ impl GameOrchestrator {
 
         tokio::spawn(async move {
             let mut timeout_timer = interval(Duration::from_secs(5));
-            let mut budget = LoopBudget::for_consensus();
+            let budget = LoopBudget::for_consensus();
 
             loop {
                 // Check budget before processing
@@ -733,7 +733,7 @@ impl GameOrchestrator {
                     budget.backoff().await;
                     continue;
                 }
-                
+
                 timeout_timer.tick().await;
                 budget.consume(1);
 
@@ -792,7 +792,7 @@ impl GameOrchestrator {
 
         tokio::spawn(async move {
             let mut sync_timer = interval(sync_interval);
-            let mut budget = LoopBudget::for_consensus();
+            let budget = LoopBudget::for_consensus();
 
             loop {
                 // Check budget before processing
@@ -800,7 +800,7 @@ impl GameOrchestrator {
                     budget.backoff().await;
                     continue;
                 }
-                
+
                 sync_timer.tick().await;
                 budget.consume(1);
 
@@ -865,7 +865,7 @@ impl GameOrchestrator {
 
         tokio::spawn(async move {
             let mut conflict_timer = interval(Duration::from_secs(10));
-            let mut budget = LoopBudget::for_consensus();
+            let budget = LoopBudget::for_consensus();
 
             loop {
                 // Check budget before processing
@@ -873,7 +873,7 @@ impl GameOrchestrator {
                     budget.backoff().await;
                     continue;
                 }
-                
+
                 conflict_timer.tick().await;
                 budget.consume(1);
 
@@ -1223,7 +1223,7 @@ mod tests {
             identity.clone(),
             Default::default(),
         ));
-        
+
         // Create consensus config that allows single-player games for testing
         let consensus_config = ConsensusGameConfig {
             consensus_timeout: std::time::Duration::from_secs(30),
@@ -1232,7 +1232,7 @@ mod tests {
             min_participants: 1,
             max_bet_amount: 10000,
         };
-        
+
         let consensus_manager = Arc::new(ConsensusGameManager::new(
             identity.clone(),
             mesh_service.clone(),

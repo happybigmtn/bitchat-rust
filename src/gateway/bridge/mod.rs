@@ -1,5 +1,5 @@
 //! Bridge Protocol Implementation
-//! 
+//!
 //! This module implements protocol translation between BLE mesh networks
 //! and internet protocols (TCP/UDP), enabling seamless communication
 //! across different transport layers.
@@ -126,12 +126,12 @@ pub struct BridgeManager {
     protocol_translator: Arc<ProtocolTranslator>,
     message_router: Arc<MessageRouter>,
     nat_traversal: Arc<NATTraversal>,
-    
+
     // Bridge state
     active_bridges: Arc<RwLock<HashMap<PeerId, BridgeConnection>>>,
     routing_table: Arc<RwLock<RoutingTable>>,
     nat_mappings: Arc<RwLock<HashMap<SocketAddr, SocketAddr>>>,
-    
+
     // Statistics
     bridge_stats: Arc<RwLock<BridgeStatistics>>,
 }
@@ -185,32 +185,32 @@ impl BridgeManager {
             config,
         }
     }
-    
+
     /// Start bridge manager
     pub async fn start(&self) -> Result<()> {
         // Initialize NAT traversal
         if self.config.nat_config.enable_nat_traversal {
             self.nat_traversal.initialize().await?;
         }
-        
+
         // Start routing table updates
         if self.config.routing_config.enable_adaptive_routing {
             self.start_routing_updates().await?;
         }
-        
+
         log::info!("Bridge manager started");
         Ok(())
     }
-    
+
     /// Stop bridge manager
     pub async fn stop(&self) {
         // Close all active bridges
         let mut bridges = self.active_bridges.write().await;
         bridges.clear();
-        
+
         log::info!("Bridge manager stopped");
     }
-    
+
     /// Create bridge between BLE mesh and internet peer
     pub async fn create_bridge(
         &self,
@@ -224,7 +224,7 @@ impl BridgeManager {
         } else {
             remote_address
         };
-        
+
         // Create bridge connection
         let bridge = BridgeConnection {
             peer_id: local_peer,
@@ -241,37 +241,37 @@ impl BridgeManager {
                 throughput: 0.0,
             },
         };
-        
+
         // Add to active bridges
         self.active_bridges.write().await.insert(local_peer, bridge);
-        
+
         // Update statistics
         {
             let mut stats = self.bridge_stats.write().await;
             stats.active_bridges = self.active_bridges.read().await.len();
         }
-        
-        log::info!("Bridge created: {} -> {}", 
+
+        log::info!("Bridge created: {} -> {}",
                   hex::encode(&local_peer[..8]), final_address);
-        
+
         Ok(())
     }
-    
+
     /// Remove bridge
     pub async fn remove_bridge(&self, local_peer: PeerId) -> Result<()> {
         let removed = self.active_bridges.write().await.remove(&local_peer).is_some();
-        
+
         if removed {
             // Update statistics
             let mut stats = self.bridge_stats.write().await;
             stats.active_bridges = self.active_bridges.read().await.len();
-            
+
             log::info!("Bridge removed: {}", hex::encode(&local_peer[..8]));
         }
-        
+
         Ok(())
     }
-    
+
     /// Bridge message from BLE to internet
     pub async fn bridge_to_internet(
         &self,
@@ -279,24 +279,24 @@ impl BridgeManager {
         message: Vec<u8>,
     ) -> Result<()> {
         let bridges = self.active_bridges.read().await;
-        
+
         if let Some(bridge) = bridges.get(&from_peer) {
             // Translate BLE message to internet protocol
             let translated = self.protocol_translator
                 .translate_ble_to_internet(message, bridge.protocol_type)
                 .await?;
-            
+
             // Route message to destination
             self.message_router
                 .route_to_internet(translated, bridge.remote_address)
                 .await?;
-            
+
             // Update statistics
             let mut stats = self.bridge_stats.write().await;
             stats.messages_bridged += 1;
             stats.bytes_bridged += translated.len() as u64;
             stats.successful_translations += 1;
-            
+
             Ok(())
         } else {
             Err(crate::error::Error::Network(
@@ -304,7 +304,7 @@ impl BridgeManager {
             ))
         }
     }
-    
+
     /// Bridge message from internet to BLE
     pub async fn bridge_to_ble(
         &self,
@@ -316,21 +316,21 @@ impl BridgeManager {
         let translated = self.protocol_translator
             .translate_internet_to_ble(message, source_protocol)
             .await?;
-        
+
         // Route message to BLE mesh
         self.message_router
             .route_to_ble(translated, to_peer)
             .await?;
-        
+
         // Update statistics
         let mut stats = self.bridge_stats.write().await;
         stats.messages_bridged += 1;
         stats.bytes_bridged += translated.len() as u64;
         stats.successful_translations += 1;
-        
+
         Ok(())
     }
-    
+
     /// Get bridge statistics
     pub async fn get_statistics(&self) -> BridgeStatistics {
         let stats = self.bridge_stats.read().await;
@@ -338,7 +338,7 @@ impl BridgeManager {
         result.active_bridges = self.active_bridges.read().await.len();
         result
     }
-    
+
     /// Update bridge quality metrics
     pub async fn update_bridge_quality(
         &self,
@@ -346,37 +346,37 @@ impl BridgeManager {
         quality: ConnectionQuality,
     ) -> Result<()> {
         let mut bridges = self.active_bridges.write().await;
-        
+
         if let Some(bridge) = bridges.get_mut(&peer_id) {
             bridge.connection_quality = quality;
             bridge.last_activity = std::time::Instant::now();
         }
-        
+
         Ok(())
     }
-    
+
     /// Get active bridges
     pub async fn get_active_bridges(&self) -> Vec<BridgeConnection> {
         self.active_bridges.read().await.values().cloned().collect()
     }
-    
+
     // Private helper methods
     async fn start_routing_updates(&self) -> Result<()> {
         let router = self.message_router.clone();
         let interval = self.config.routing_config.update_interval;
-        
+
         tokio::spawn(async move {
             let mut update_interval = tokio::time::interval(interval);
-            
+
             loop {
                 update_interval.tick().await;
-                
+
                 if let Err(e) = router.update_routing_table().await {
                     log::error!("Failed to update routing table: {}", e);
                 }
             }
         });
-        
+
         Ok(())
     }
 }
@@ -384,33 +384,33 @@ impl BridgeManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_bridge_manager_creation() {
         let config = BridgeConfig::default();
         let manager = BridgeManager::new(config);
-        
+
         let stats = manager.get_statistics().await;
         assert_eq!(stats.active_bridges, 0);
         assert_eq!(stats.messages_bridged, 0);
     }
-    
+
     #[tokio::test]
     async fn test_bridge_creation() {
         let config = BridgeConfig::default();
         let manager = BridgeManager::new(config);
-        
+
         let peer_id = [0u8; 32];
         let remote_addr = "127.0.0.1:8080".parse().unwrap();
-        
+
         let result = manager.create_bridge(
             peer_id,
             remote_addr,
             ProtocolType::Tcp,
         ).await;
-        
+
         assert!(result.is_ok());
-        
+
         let stats = manager.get_statistics().await;
         assert_eq!(stats.active_bridges, 1);
     }

@@ -550,8 +550,22 @@ impl MmapStorage {
             // Check if this is the key we're looking for
             if key == target_key {
                 let result = if compressed {
-                    decompress_size_prepended(data)
-                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
+                    let decompressed = decompress_size_prepended(data)
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+                    // Sanity check: decompressed size shouldn't exceed 100MB for memory cache
+                    const MAX_DECOMPRESSED_SIZE: usize = 100 * 1024 * 1024;
+                    if decompressed.len() > MAX_DECOMPRESSED_SIZE {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!(
+                                "Decompressed size {} exceeds maximum {}",
+                                decompressed.len(),
+                                MAX_DECOMPRESSED_SIZE
+                            ),
+                        ));
+                    }
+                    decompressed
                 } else {
                     data.to_vec()
                 };

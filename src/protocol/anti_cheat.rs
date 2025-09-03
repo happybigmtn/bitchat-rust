@@ -39,7 +39,7 @@ pub struct AntiCheatConfig {
     /// Chi-square test significance level (typically 0.05)
     pub chi_square_significance: f64,
     /// Minimum samples for statistical testing
-    pub min_samples_for_testing: usize
+    pub min_samples_for_testing: usize,
 }
 
 impl Default for AntiCheatConfig {

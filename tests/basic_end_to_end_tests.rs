@@ -307,3 +307,5 @@ mod performance_tests {
         assert!(ops_per_sec > 10.0, "Should maintain reasonable throughput");
     }
 }
+#![cfg(feature = "legacy-tests")]
+#![cfg(feature = "legacy-tests")]

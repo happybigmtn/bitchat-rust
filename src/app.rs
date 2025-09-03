@@ -10,6 +10,7 @@ use crate::{
     crypto::{BitchatIdentity, SecureKeystore},
     error::Result,
     gaming::{ConsensusGameConfig, ConsensusGameManager},
+    memory_pool::GameMemoryPools,
     mesh::{
         ConsensusMessageConfig, ConsensusMessageHandler, MeshConsensusIntegration, MeshService,
     },
@@ -34,6 +35,9 @@ pub struct BitCrapsApp {
 
     /// Keystore for persistent identity
     pub keystore: Option<Arc<SecureKeystore>>,
+
+    /// Memory pools for performance optimization
+    pub memory_pools: Arc<GameMemoryPools>,
 }
 
 /// Application configuration
@@ -105,7 +109,7 @@ impl ApplicationConfig {
     /// Create configuration from environment variables
     pub fn from_env() -> Self {
         use std::env;
-        
+
         let mut config = Self::default();
 
         if let Ok(port) = env::var("BITCRAPS_PORT") {
@@ -206,12 +210,19 @@ impl BitCrapsApp {
         // In production, this would load from persistent storage if available
         let identity = Arc::new(BitchatIdentity::generate_with_pow(16));
 
+        // Initialize memory pools from configuration
+        let memory_pools = Arc::new(GameMemoryPools::from_app_config(&config));
+
+        // Pre-warm memory pools for better initial performance
+        memory_pools.warmup().await;
+
         Ok(Self {
             identity,
             config,
             consensus_game_manager: None,
             token_ledger: None,
             keystore: Some(keystore),
+            memory_pools,
         })
     }
 
@@ -248,7 +259,7 @@ impl BitCrapsApp {
 
         // Enable TCP for desktop/server nodes
         if !self.config.mobile_mode {
-            coordinator.enable_tcp(self.config.port).await?;
+            coordinator.enable_tcp(self.config.port, self.identity.peer_id).await?;
         }
 
         // Always enable Bluetooth for local mesh connectivity
@@ -324,9 +335,25 @@ impl BitCrapsApp {
     async fn gather_participants(&self, min_players: u8) -> Vec<PeerId> {
         let mut participants = vec![self.identity.peer_id];
 
-        // TODO: Replace with proper peer discovery and invitation system
-        // Currently using placeholder peers for testing
-        for _ in 1..min_players {
+        // Try to get available peers from the consensus game manager
+        if let Some(ref game_manager) = self.consensus_game_manager {
+            // Get available peers from the game manager's peer discovery
+            if let Ok(available_peers) = game_manager.discover_available_peers().await {
+                // Add available gaming peers up to the required minimum
+                for peer_id in available_peers.iter() {
+                    if participants.len() >= min_players as usize {
+                        break;
+                    }
+                    // Don't add ourselves twice
+                    if *peer_id != self.identity.peer_id {
+                        participants.push(*peer_id);
+                    }
+                }
+            }
+        }
+
+        // If still need more peers, generate placeholder peers for testing scenarios
+        while participants.len() < min_players as usize {
             participants.push(Self::generate_placeholder_peer());
         }
 
@@ -407,6 +434,11 @@ impl BitCrapsApp {
         self.token_ledger
             .as_ref()
             .ok_or_else(|| crate::error::Error::NotInitialized("Token ledger not started".into()))
+    }
+
+    /// Get access to the memory pools for performance optimization
+    pub fn get_memory_pools(&self) -> &Arc<GameMemoryPools> {
+        &self.memory_pools
     }
 }
 

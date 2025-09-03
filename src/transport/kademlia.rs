@@ -161,7 +161,8 @@ impl PartialOrd for Contact {
 impl Ord for Contact {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Compare by node ID for ordering in data structures
-        self.id.cmp(&other.id)
+        self.id
+            .cmp(&other.id)
             .then_with(|| self.peer_id.cmp(&other.peer_id))
     }
 }
@@ -249,11 +250,11 @@ impl KBucket {
     /// Get K closest contacts to a target
     pub fn closest_contacts(&self, target: &NodeId, k: usize) -> Vec<SharedContact> {
         // Use a BinaryHeap to maintain only K closest contacts
-        use std::collections::BinaryHeap;
         use std::cmp::Reverse;
-        
+        use std::collections::BinaryHeap;
+
         let mut heap: BinaryHeap<(Reverse<Distance>, SharedContact)> = BinaryHeap::with_capacity(k);
-        
+
         for contact in &self.contacts {
             let distance = contact.id.distance(target);
             if heap.len() < k {
@@ -265,7 +266,7 @@ impl KBucket {
                 }
             }
         }
-        
+
         heap.into_sorted_vec()
             .into_iter()
             .map(|(_, contact)| contact)
@@ -321,10 +322,114 @@ impl RoutingTable {
         let bucket_idx = self.local_id.bucket_index(&contact.id);
         if bucket_idx < 256 {
             let mut bucket = self.buckets[bucket_idx].write().await;
-            if let Some(_eviction_candidate) = bucket.add_contact(updated_contact) {
-                // TODO: Ping eviction candidate to check if still alive
-                // If dead, replace with new contact
-                // For now, just keep the existing contact
+            if let Some(eviction_candidate) = bucket.add_contact(updated_contact.clone()) {
+                // Ping eviction candidate to check if still alive
+                drop(bucket); // Release the lock before async operation
+
+                let is_alive = self.ping_contact(&eviction_candidate).await;
+                let mut bucket = self.buckets[bucket_idx].write().await;
+
+                if !is_alive {
+                    // Eviction candidate is dead, replace with new contact
+                    bucket.remove_contact(&eviction_candidate.id);
+                    let contact_id = updated_contact.id.clone();
+                    bucket.add_contact(updated_contact);
+                    log::debug!(
+                        "Evicted dead contact {:?} and replaced with {:?}",
+                        eviction_candidate.id,
+                        contact_id
+                    );
+                } else {
+                    // Eviction candidate is alive, keep it and reject new contact
+                    log::debug!(
+                        "Eviction candidate {:?} is alive, rejecting new contact {:?}",
+                        eviction_candidate.id,
+                        updated_contact.id
+                    );
+                }
+            }
+        }
+    }
+
+    /// Ping a contact to check if it's still alive
+    async fn ping_contact(&self, contact: &SharedContact) -> bool {
+        use tokio::time::timeout;
+
+        log::debug!("Pinging contact {:?} at {}", contact.id, contact.address);
+
+        // Create ping message with our local contact info
+        let ping_msg = KademliaMessage::Ping {
+            requester: Contact {
+                id: self.local_id.clone(),
+                peer_id: [0u8; 32], // Placeholder peer_id for ping
+                address: "127.0.0.1:0"
+                    .parse()
+                    .unwrap_or_else(|_| ([127, 0, 0, 1], 0).into()),
+                last_seen: Instant::now(),
+                rtt: None,
+                reputation_score: 1.0,
+                validation_attempts: 0,
+            },
+        };
+
+        // Serialize the message
+        let message_data = match bincode::serialize(&ping_msg) {
+            Ok(data) => data,
+            Err(e) => {
+                log::error!("Failed to serialize ping message: {}", e);
+                return false;
+            }
+        };
+
+        // Create UDP socket for ping
+        let socket = match tokio::net::UdpSocket::bind("0.0.0.0:0").await {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to create UDP socket for ping: {}", e);
+                return false;
+            }
+        };
+
+        // Send ping message
+        if let Err(e) = socket.send_to(&message_data, contact.address).await {
+            log::error!("Failed to send ping to {:?}: {}", contact.address, e);
+            return false;
+        }
+
+        // Wait for response with timeout
+        let mut buffer = [0u8; 1024];
+        let ping_timeout = Duration::from_secs(3);
+
+        match timeout(ping_timeout, socket.recv(&mut buffer)).await {
+            Ok(Ok(size)) => {
+                // Try to deserialize the response
+                if let Ok(response) = bincode::deserialize::<KademliaMessage>(&buffer[..size]) {
+                    match response {
+                        KademliaMessage::Pong { responder } => {
+                            if responder.id == contact.id {
+                                log::debug!("Received valid pong from contact {:?}", contact.id);
+                                return true;
+                            }
+                        }
+                        _ => {
+                            log::debug!("Received unexpected message type from {:?}", contact.id);
+                        }
+                    }
+                }
+                log::debug!("Received malformed pong from contact {:?}", contact.id);
+                false
+            }
+            Ok(Err(e)) => {
+                log::error!(
+                    "Network error while waiting for pong from {:?}: {}",
+                    contact.id,
+                    e
+                );
+                false
+            }
+            Err(_) => {
+                log::debug!("Ping timeout for contact {:?}", contact.id);
+                false
             }
         }
     }
@@ -670,7 +775,9 @@ impl KademliaNode {
         hasher.update(&key);
         // Keys don't need proof-of-work, only nodes do
         let key_bytes: [u8; 32] = hasher.finalize().into();
-        let key_id = NodeId::new_with_proof(key_bytes, ProofOfWork::generate(&key_bytes, 1).unwrap()).unwrap();
+        let key_id =
+            NodeId::new_with_proof(key_bytes, ProofOfWork::generate(&key_bytes, 1).unwrap())
+                .unwrap();
 
         // Find K closest nodes
         let nodes = self.lookup_node(key_id.clone()).await;
@@ -715,7 +822,8 @@ impl KademliaNode {
         }
 
         let success = success_count > 0;
-        let _ = self.event_sender
+        let _ = self
+            .event_sender
             .try_send(KademliaEvent::ValueStored { key, success });
 
         Ok(success)
@@ -727,11 +835,10 @@ impl KademliaNode {
         if let Some(stored_value) = self.storage.read().await.get(&key) {
             // Check if value hasn't expired
             if stored_value.stored_at.elapsed() < stored_value.ttl {
-                let _ = self.event_sender
-                    .try_send(KademliaEvent::ValueFound {
-                        key: key.clone(),
-                        value: stored_value.data.clone(),
-                    });
+                let _ = self.event_sender.try_send(KademliaEvent::ValueFound {
+                    key: key.clone(),
+                    value: stored_value.data.clone(),
+                });
                 return Some(stored_value.data.clone());
             } else {
                 // Value expired, remove it
@@ -744,16 +851,17 @@ impl KademliaNode {
         hasher.update(&key);
         // Keys don't need proof-of-work, only nodes do
         let key_bytes: [u8; 32] = hasher.finalize().into();
-        let key_id = NodeId::new_with_proof(key_bytes, ProofOfWork::generate(&key_bytes, 1).unwrap()).unwrap();
+        let key_id =
+            NodeId::new_with_proof(key_bytes, ProofOfWork::generate(&key_bytes, 1).unwrap())
+                .unwrap();
 
         // Use iterative lookup for FIND_VALUE
         match self.iterative_find_value(key_id, key.clone()).await {
             Some(value) => {
-                let _ = self.event_sender
-                    .try_send(KademliaEvent::ValueFound {
-                        key,
-                        value: value.clone(),
-                    });
+                let _ = self.event_sender.try_send(KademliaEvent::ValueFound {
+                    key,
+                    value: value.clone(),
+                });
                 Some(value)
             }
             None => None,
@@ -1048,10 +1156,9 @@ impl KademliaNode {
                         }
                     }
                     Err(e) => {
-                        let _ = event_sender
-                            .try_send(KademliaEvent::NetworkError {
-                                error: format!("UDP receive error: {}", e),
-                            });
+                        let _ = event_sender.try_send(KademliaEvent::NetworkError {
+                            error: format!("UDP receive error: {}", e),
+                        });
                     }
                 }
             }
@@ -1122,8 +1229,12 @@ impl KademliaNode {
                         let mut hasher = Sha256::new();
                         hasher.update(&key);
                         // Keys don't need proof-of-work, only nodes do
-        let key_bytes: [u8; 32] = hasher.finalize().into();
-        let key_id = NodeId::new_with_proof(key_bytes, ProofOfWork::generate(&key_bytes, 1).unwrap()).unwrap();
+                        let key_bytes: [u8; 32] = hasher.finalize().into();
+                        let key_id = NodeId::new_with_proof(
+                            key_bytes,
+                            ProofOfWork::generate(&key_bytes, 1).unwrap(),
+                        )
+                        .unwrap();
                         let shared_nodes =
                             routing_table.find_closest(&key_id, routing_table.k).await;
                         let nodes = Contact::from_shared_vec(shared_nodes);
@@ -1134,8 +1245,12 @@ impl KademliaNode {
                     let mut hasher = Sha256::new();
                     hasher.update(&key);
                     // Keys don't need proof-of-work, only nodes do
-        let key_bytes: [u8; 32] = hasher.finalize().into();
-        let key_id = NodeId::new_with_proof(key_bytes, ProofOfWork::generate(&key_bytes, 1).unwrap()).unwrap();
+                    let key_bytes: [u8; 32] = hasher.finalize().into();
+                    let key_id = NodeId::new_with_proof(
+                        key_bytes,
+                        ProofOfWork::generate(&key_bytes, 1).unwrap(),
+                    )
+                    .unwrap();
                     let shared_nodes = routing_table.find_closest(&key_id, routing_table.k).await;
                     let nodes = Contact::from_shared_vec(shared_nodes);
                     FindValueResult::Nodes(nodes)
@@ -1195,8 +1310,7 @@ impl KademliaNode {
                 // Add responder to routing table
                 let responder_arc = Arc::new(responder.clone());
                 routing_table.add_contact(responder_arc).await;
-                let _ = event_sender
-                    .try_send(KademliaEvent::NodeDiscovered { contact: responder });
+                let _ = event_sender.try_send(KademliaEvent::NodeDiscovered { contact: responder });
             }
 
             KademliaMessage::NatPing {
@@ -1324,7 +1438,7 @@ impl KademliaNode {
     /// Get events receiver
     pub fn subscribe_events(&self) -> mpsc::Receiver<KademliaEvent> {
         let (_tx, rx) = mpsc::channel(1000); // Moderate traffic for event subscription
-        // In a real implementation, you'd want to manage multiple subscribers
+                                             // In a real implementation, you'd want to manage multiple subscribers
         rx
     }
 
@@ -1372,7 +1486,10 @@ mod tests {
         let node = KademliaNode::new(peer_id, addr, 20, 3)
             .await
             .expect("Failed to create KademliaNode");
-        assert_eq!(node.local_id, NodeId::from_peer_id(&peer_id));
+        assert_eq!(
+            node.local_id,
+            NodeId::from_peer_id(&peer_id).expect("Failed to create NodeId")
+        );
     }
 
     #[tokio::test]

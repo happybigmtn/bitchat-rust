@@ -324,11 +324,12 @@ fn encrypt_internal(env: &mut JNIEnv, alias: &str, data: &[u8]) -> Result<Vec<u8
     
     match cipher.encrypt(nonce, data) {
         Ok(ciphertext) => {
-            // Prepend nonce and key (temporary - in production key would be stored in Keystore)
-            let mut result = Vec::with_capacity(12 + 32 + ciphertext.len());
+            // SECURITY FIX: Only return nonce + ciphertext, never the key!
+            // Key must be stored in Android Keystore or derived from user password
+            let mut result = Vec::with_capacity(12 + ciphertext.len());
             result.extend_from_slice(&nonce_bytes);
-            result.extend_from_slice(&key);
             result.extend_from_slice(&ciphertext);
+            // TODO: Implement proper Android Keystore integration for key storage
             Ok(result)
         }
         Err(e) => {
@@ -342,16 +343,21 @@ fn decrypt_internal(env: &mut JNIEnv, alias: &str, encrypted: &[u8]) -> Result<V
     use chacha20poly1305::{ChaCha20Poly1305, KeyInit, aead::{Aead, generic_array::GenericArray}};
     
     // Extract nonce, key, and ciphertext
-    if encrypted.len() < 44 {
+    if encrypted.len() < 12 {
         return Err(jni::errors::Error::from_kind(jni::errors::ErrorKind::Msg("Invalid encrypted data".to_string())));
     }
     
     let nonce_bytes = &encrypted[0..12];
-    let key = &encrypted[12..44];
-    let ciphertext = &encrypted[44..];
+    let ciphertext = &encrypted[12..];
     
-    // Decrypt with ChaCha20Poly1305
-    let cipher = ChaCha20Poly1305::new(GenericArray::from_slice(key));
+    // SECURITY FIX: Key must be provided separately or derived from password
+    // For now, this will break decryption until proper key management is implemented
+    // TODO: Implement Android Keystore integration or password-based key derivation
+    return Err(jni::errors::Error::from_kind(jni::errors::ErrorKind::Msg("Key management not implemented - use Android Keystore".to_string())));
+    
+    // Future implementation will look like:
+    // let key = retrieve_key_from_keystore(key_alias)?;
+    // let cipher = ChaCha20Poly1305::new(GenericArray::from_slice(&key));
     let nonce = GenericArray::from_slice(nonce_bytes);
     
     match cipher.decrypt(nonce, ciphertext) {

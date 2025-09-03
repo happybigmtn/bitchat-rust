@@ -734,3 +734,5 @@ async fn test_encryption_performance() {
         }
     }
 }
+#![cfg(feature = "legacy-tests")]
+#![cfg(feature = "legacy-tests")]

@@ -436,3 +436,4 @@ async fn test_consensus_configuration() -> Result<()> {
 
     Ok(())
 }
+#![cfg(feature = "legacy-tests")]

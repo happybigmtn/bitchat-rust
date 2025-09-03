@@ -14,6 +14,7 @@ use hkdf::Hkdf;
 use rand::RngCore;
 use sha2::Sha256;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{Mutex, RwLock};
@@ -128,8 +129,8 @@ impl TransportCryptoState {
         let now = Instant::now();
 
         Ok(Self {
-            encryption_key: Key::from_slice(&encryption_key_bytes).clone(),
-            decryption_key: Key::from_slice(&decryption_key_bytes).clone(),
+            encryption_key: *Key::from_slice(&encryption_key_bytes), // No need to clone
+            decryption_key: *Key::from_slice(&decryption_key_bytes), // No need to clone
             send_counter: 0,
             recv_counters: HashMap::new(),
             key_created: now,
@@ -153,7 +154,7 @@ impl TransportCryptoState {
             .map_err(|_| Error::Crypto("Failed to derive new encryption key".to_string()))?;
 
         // Update keys
-        self.encryption_key = Key::from_slice(&new_encryption_key).clone();
+        self.encryption_key = *Key::from_slice(&new_encryption_key); // No clone needed
         self.key_created = Instant::now();
         self.next_rotation = self.key_created + KEY_ROTATION_INTERVAL;
 
@@ -292,6 +293,11 @@ pub struct TransportCrypto {
 
     /// Key rotation task handle
     rotation_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+
+    /// Metrics tracking
+    metrics_keys_rotated: Arc<AtomicU64>,
+    metrics_messages_encrypted: Arc<AtomicU64>,
+    metrics_messages_decrypted: Arc<AtomicU64>,
 }
 
 impl TransportCrypto {
@@ -307,6 +313,9 @@ impl TransportCrypto {
             peer_states: Arc::new(RwLock::new(HashMap::new())),
             connection_scores: Arc::new(RwLock::new(HashMap::new())),
             rotation_task: Arc::new(Mutex::new(None)),
+            metrics_keys_rotated: Arc::new(AtomicU64::new(0)),
+            metrics_messages_encrypted: Arc::new(AtomicU64::new(0)),
+            metrics_messages_decrypted: Arc::new(AtomicU64::new(0)),
         };
 
         crypto.start_key_rotation_task();
@@ -391,6 +400,10 @@ impl TransportCrypto {
         message.extend_from_slice(&nonce_bytes);
         message.extend_from_slice(&ciphertext);
 
+        // Track metrics
+        self.metrics_messages_encrypted
+            .fetch_add(1, Ordering::Relaxed);
+
         Ok(message)
     }
 
@@ -447,6 +460,10 @@ impl TransportCrypto {
                 .recv_counters
                 .retain(|_, timestamp| *timestamp > cutoff);
         }
+
+        // Track metrics
+        self.metrics_messages_decrypted
+            .fetch_add(1, Ordering::Relaxed);
 
         Ok(plaintext)
     }
@@ -519,6 +536,7 @@ impl TransportCrypto {
     /// Start background key rotation task
     fn start_key_rotation_task(&self) {
         let peer_states = self.peer_states.clone();
+        let metrics_keys_rotated = self.metrics_keys_rotated.clone();
 
         let task = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(3600)); // Check every hour
@@ -546,6 +564,8 @@ impl TransportCrypto {
 
                         if let Err(e) = state.rotate_keys(&new_secret) {
                             log::error!("Key rotation failed for peer {:?}: {}", peer_id, e);
+                        } else {
+                            metrics_keys_rotated.fetch_add(1, Ordering::Relaxed);
                         }
                     }
                 }
@@ -578,9 +598,9 @@ impl TransportCrypto {
 
         CryptoStats {
             active_sessions,
-            keys_rotated: 0,       // TODO: track this
-            messages_encrypted: 0, // TODO: track this
-            messages_decrypted: 0, // TODO: track this
+            keys_rotated: self.metrics_keys_rotated.load(Ordering::Relaxed),
+            messages_encrypted: self.metrics_messages_encrypted.load(Ordering::Relaxed),
+            messages_decrypted: self.metrics_messages_decrypted.load(Ordering::Relaxed),
             average_latency,
             average_reliability,
         }

@@ -545,60 +545,77 @@ mod tests {
     use tempfile::TempDir;
 
     #[tokio::test]
-    #[ignore] // TODO: Fix hanging test
     async fn test_key_lifecycle() {
+        use std::time::Duration;
+        use tokio::time::timeout;
+
         let temp_dir = TempDir::new().unwrap();
-        let keystore = SecureKeystore::new(temp_dir.path()).await.unwrap();
 
-        // Initialize master key
-        keystore.init_master_key("test_password").await.unwrap();
+        // Run the test with a timeout to prevent hanging
+        let result = timeout(Duration::from_secs(5), async {
+            let keystore = SecureKeystore::new(temp_dir.path()).await.unwrap();
 
-        // Generate a signing key
-        let key_id = keystore
-            .generate_key(KeyType::Signing, "test")
-            .await
-            .unwrap();
-
-        // Retrieve the key
-        let key = keystore.get_key(&key_id).await.unwrap();
-        assert_eq!(key.key_type, KeyType::Signing);
-        assert!(key.signing_key.is_some());
-
-        // Rotate the key
-        let new_key_id = keystore.rotate_key(&key_id).await.unwrap();
-        assert_ne!(key_id, new_key_id);
-
-        // Delete the old key
-        keystore.delete_key(&key_id).await.unwrap();
-
-        // Verify it's gone
-        assert!(keystore.get_key(&key_id).await.is_err());
-    }
-
-    #[tokio::test]
-    #[ignore] // TODO: Fix hanging test
-    async fn test_persistence() {
-        let temp_dir = TempDir::new().unwrap();
-        let path = temp_dir.path().to_path_buf();
-
-        // Create keystore and generate keys
-        {
-            let keystore = SecureKeystore::new(&path).await.unwrap();
+            // Initialize master key
             keystore.init_master_key("test_password").await.unwrap();
-            keystore
+
+            // Generate a signing key
+            let key_id = keystore
                 .generate_key(KeyType::Signing, "test")
                 .await
                 .unwrap();
-        }
 
-        // Load in new instance
-        {
-            let keystore = SecureKeystore::new(&path).await.unwrap();
-            keystore.init_master_key("test_password").await.unwrap();
-            keystore.load_keys().await.unwrap();
+            // Retrieve the key
+            let key = keystore.get_key(&key_id).await.unwrap();
+            assert_eq!(key.key_type, KeyType::Signing);
+            assert!(key.signing_key.is_some());
 
-            let keys = keystore.keys.read().await;
-            assert_eq!(keys.len(), 1);
-        }
+            // Rotate the key
+            let new_key_id = keystore.rotate_key(&key_id).await.unwrap();
+            assert_ne!(key_id, new_key_id);
+
+            // Delete the old key
+            keystore.delete_key(&key_id).await.unwrap();
+
+            // Verify it's gone
+            assert!(keystore.get_key(&key_id).await.is_err());
+        })
+        .await;
+
+        assert!(result.is_ok(), "Test timed out - possible deadlock");
+    }
+
+    #[tokio::test]
+    async fn test_persistence() {
+        use std::time::Duration;
+        use tokio::time::timeout;
+
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().to_path_buf();
+
+        // Run the test with a timeout to prevent hanging
+        let result = timeout(Duration::from_secs(5), async move {
+            // Create keystore and generate keys
+            {
+                let keystore = SecureKeystore::new(&path).await.unwrap();
+                keystore.init_master_key("test_password").await.unwrap();
+                keystore
+                    .generate_key(KeyType::Signing, "test")
+                    .await
+                    .unwrap();
+            }
+
+            // Load in new instance
+            {
+                let keystore = SecureKeystore::new(&path).await.unwrap();
+                keystore.init_master_key("test_password").await.unwrap();
+                keystore.load_keys().await.unwrap();
+
+                let keys = keystore.keys.read().await;
+                assert_eq!(keys.len(), 1);
+            }
+        })
+        .await;
+
+        assert!(result.is_ok(), "Test timed out - possible deadlock");
     }
 }

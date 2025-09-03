@@ -4,11 +4,16 @@
 //! data structures and algorithms, measuring both memory usage and CPU cycles
 //! to validate the efficiency improvements.
 
+#[cfg(feature = "benchmarks")]
 pub mod crypto_benchmarks;
+#[cfg(feature = "benchmarks")]
 pub mod game_benchmarks;
+#[cfg(feature = "benchmarks")]
 pub mod network_benchmarks;
+#[cfg(feature = "benchmarks")]
 pub mod state_benchmarks;
 
+#[cfg(feature = "benchmarks")]
 use criterion::Criterion;
 use std::time::Duration;
 
@@ -24,7 +29,7 @@ pub struct BenchmarkResults {
     /// Minimum execution time
     pub min_time: Duration,
 
-    /// Maximum execution time  
+    /// Maximum execution time
     pub max_time: Duration,
 
     /// Throughput (operations per second)

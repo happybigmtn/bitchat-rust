@@ -98,15 +98,17 @@ pub struct InputSanitizer {
 
 impl InputValidator {
     /// Create a new input validator
-    pub fn new(rules: ValidationRules) -> Self {
-        Self {
+    pub fn new(rules: ValidationRules) -> Result<Self> {
+        Ok(Self {
             rules: rules.clone(),
             rate_limiter: Arc::new(RateLimiter::new(
                 rules.max_message_rate,
                 rules.rate_limit_window,
             )),
-            sanitizer: Arc::new(InputSanitizer::new()),
-        }
+            sanitizer: Arc::new(InputSanitizer::new().map_err(|e| {
+                Error::ValidationError(format!("Failed to initialize input sanitizer: {}", e))
+            })?),
+        })
     }
 
     /// Validate a packet
@@ -336,24 +338,33 @@ impl RateLimiter {
 }
 
 impl InputSanitizer {
-    fn new() -> Self {
+    fn new() -> Result<Self> {
         // Compile dangerous patterns
         let patterns = vec![
-            regex::Regex::new(r"<script.*?>.*?</script>").unwrap(), // XSS
-            regex::Regex::new(r"javascript:").unwrap(),             // JS injection
-            regex::Regex::new(r"on\w+\s*=").unwrap(),               // Event handlers
-            regex::Regex::new(r"[';]--").unwrap(),                  // SQL comments
-            regex::Regex::new(r"union\s+select").unwrap(),          // SQL injection
-            regex::Regex::new(r"exec\s*\(").unwrap(),               // Code execution
-            regex::Regex::new(r"eval\s*\(").unwrap(),               // Eval
-            regex::Regex::new(r"\.\./").unwrap(),                   // Path traversal
-            regex::Regex::new(r"\\x[0-9a-f]{2}").unwrap(),          // Hex encoding
+            regex::Regex::new(r"<script.*?>.*?</script>")
+                .map_err(|e| Error::ValidationError(format!("Invalid regex pattern: {}", e)))?, // XSS
+            regex::Regex::new(r"javascript:")
+                .map_err(|e| Error::ValidationError(format!("Invalid regex pattern: {}", e)))?, // JS injection
+            regex::Regex::new(r"on\w+\s*=")
+                .map_err(|e| Error::ValidationError(format!("Invalid regex pattern: {}", e)))?, // Event handlers
+            regex::Regex::new(r"[';]--")
+                .map_err(|e| Error::ValidationError(format!("Invalid regex pattern: {}", e)))?, // SQL comments
+            regex::Regex::new(r"union\s+select")
+                .map_err(|e| Error::ValidationError(format!("Invalid regex pattern: {}", e)))?, // SQL injection
+            regex::Regex::new(r"exec\s*\(")
+                .map_err(|e| Error::ValidationError(format!("Invalid regex pattern: {}", e)))?, // Code execution
+            regex::Regex::new(r"eval\s*\(")
+                .map_err(|e| Error::ValidationError(format!("Invalid regex pattern: {}", e)))?, // Eval
+            regex::Regex::new(r"\.\./")
+                .map_err(|e| Error::ValidationError(format!("Invalid regex pattern: {}", e)))?, // Path traversal
+            regex::Regex::new(r"\\x[0-9a-f]{2}")
+                .map_err(|e| Error::ValidationError(format!("Invalid regex pattern: {}", e)))?, // Hex encoding
         ];
 
-        Self {
+        Ok(Self {
             dangerous_patterns: patterns,
             _max_depth: 10,
-        }
+        })
     }
 
     /// Sanitize a string input
@@ -424,11 +435,11 @@ pub struct ValidationStats {
 }
 
 impl ValidationMiddleware {
-    pub fn new(rules: ValidationRules) -> Self {
-        Self {
-            validator: Arc::new(InputValidator::new(rules)),
+    pub fn new(rules: ValidationRules) -> Result<Self> {
+        Ok(Self {
+            validator: Arc::new(InputValidator::new(rules)?),
             stats: Arc::new(RwLock::new(ValidationStats::default())),
-        }
+        })
     }
 
     /// Process and validate incoming data
@@ -480,7 +491,8 @@ mod tests {
             max_message_rate: 5,
             rate_limit_window: Duration::from_secs(1),
             ..Default::default()
-        });
+        })
+        .expect("Failed to create validator");
 
         let peer = [1u8; 32];
         let data = vec![0u8; 100];
@@ -496,7 +508,8 @@ mod tests {
 
     #[test]
     fn test_bet_validation() {
-        let validator = InputValidator::new(ValidationRules::default());
+        let validator =
+            InputValidator::new(ValidationRules::default()).expect("Failed to create validator");
 
         // Valid bet
         assert!(validator.validate_bet(100, 1000).is_ok());
@@ -510,7 +523,7 @@ mod tests {
 
     #[test]
     fn test_string_sanitization() {
-        let sanitizer = InputSanitizer::new();
+        let sanitizer = InputSanitizer::new().unwrap();
 
         // XSS attempt
         let input = "<script>alert('xss')</script>Hello";

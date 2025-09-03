@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
+    use super::super::bluetooth::BluetoothConnectionLimits;
     use std::time::Duration;
 
     #[tokio::test]
@@ -35,8 +36,7 @@ mod tests {
             address: addr2.clone(),
             established_at: std::time::Instant::now(),
         };
-        coordinator
-            .connections.insert(peer2, metadata2);
+        coordinator.connections.insert(peer2, metadata2);
         coordinator.increment_connection_count(&addr2).await;
 
         // Now the third connection should be rejected due to total limit
@@ -68,8 +68,7 @@ mod tests {
             address: addr.clone(),
             established_at: std::time::Instant::now(),
         };
-        coordinator
-            .connections.insert(peer1, metadata1);
+        coordinator.connections.insert(peer1, metadata1);
         coordinator.increment_connection_count(&addr).await;
 
         // Second connection to the same address should be rejected
@@ -189,16 +188,14 @@ mod tests {
             address: addr1.clone(),
             established_at: std::time::Instant::now(),
         };
-        coordinator
-            .connections.insert(peer1, metadata1);
+        coordinator.connections.insert(peer1, metadata1);
         coordinator.increment_connection_count(&addr1).await;
 
         let metadata2 = ConnectionMetadata {
             address: addr2.clone(),
             established_at: std::time::Instant::now(),
         };
-        coordinator
-            .connections.insert(peer2, metadata2);
+        coordinator.connections.insert(peer2, metadata2);
         coordinator.increment_connection_count(&addr2).await;
 
         // Record some attempts

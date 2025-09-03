@@ -7,6 +7,7 @@
 //! - Constant-time operations for sensitive comparisons
 //! - Security event logging and monitoring
 
+pub mod adaptive_limits;
 pub mod constant_time;
 pub mod dos_protection;
 pub mod input_validation;
@@ -18,7 +19,7 @@ pub use constant_time::ConstantTimeOps;
 pub use dos_protection::{DosProtection, DosProtectionConfig, ProtectionResult};
 pub use input_validation::{InputValidator, ValidationContext, ValidationResult};
 pub use rate_limiting::{RateLimitConfig, RateLimitResult, RateLimiter};
-pub use resource_quotas::{ResourceQuotaManager, QuotaConfig, ResourceType, QuotaViolation};
+pub use resource_quotas::{QuotaConfig, QuotaViolation, ResourceQuotaManager, ResourceType};
 pub use security_events::{SecurityEvent, SecurityEventLogger, SecurityLevel};
 
 use crate::error::{Error, Result};

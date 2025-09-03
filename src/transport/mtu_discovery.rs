@@ -22,6 +22,72 @@ pub struct MtuMetrics {
     pub average_mtu: f64,
     pub min_discovered: usize,
     pub max_discovered: usize,
+    pub fragmentation_events: u64,
+    pub reassembly_timeouts: u64,
+    pub fragment_loss_rate: f32,
+}
+
+/// Fragmentation policy for different network conditions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FragmentationPolicy {
+    /// Conservative: Smaller fragments, higher reliability
+    Conservative,
+    /// Adaptive: Balance between reliability and throughput
+    Adaptive,
+    /// Aggressive: Larger fragments, maximum throughput
+    Aggressive,
+}
+
+/// Network fragment with metadata
+#[derive(Debug, Clone)]
+pub struct Fragment {
+    pub id: u16,
+    pub index: u16,
+    pub total: u16,
+    pub data: Vec<u8>,
+    pub timestamp: std::time::Instant,
+}
+
+impl Fragment {
+    /// Convert fragment to wire format with header
+    pub fn to_wire_format(&self) -> Vec<u8> {
+        let mut wire = Vec::with_capacity(self.data.len() + 8);
+
+        // Fragment header
+        wire.extend_from_slice(&self.id.to_be_bytes());
+        wire.extend_from_slice(&self.index.to_be_bytes());
+        wire.extend_from_slice(&self.total.to_be_bytes());
+        wire.extend_from_slice(&(self.data.len() as u16).to_be_bytes());
+
+        // Payload
+        wire.extend_from_slice(&self.data);
+
+        wire
+    }
+
+    /// Parse fragment from wire format
+    pub fn from_wire_format(data: &[u8]) -> Option<Self> {
+        if data.len() < 8 {
+            return None;
+        }
+
+        let id = u16::from_be_bytes([data[0], data[1]]);
+        let index = u16::from_be_bytes([data[2], data[3]]);
+        let total = u16::from_be_bytes([data[4], data[5]]);
+        let payload_len = u16::from_be_bytes([data[6], data[7]]) as usize;
+
+        if data.len() < 8 + payload_len {
+            return None;
+        }
+
+        Some(Fragment {
+            id,
+            index,
+            total,
+            data: data[8..8 + payload_len].to_vec(),
+            timestamp: std::time::Instant::now(),
+        })
+    }
 }
 
 /// MTU probe result
@@ -159,38 +225,75 @@ impl AdaptiveMTU {
         Ok(final_mtu)
     }
 
-    /// Adaptive MTU based on network conditions
-    pub async fn adaptive_mtu(&self, peer: &PeerId, packet_size: usize) -> Vec<Vec<u8>> {
+    /// Adaptive fragmentation with policy-based MTU handling
+    pub async fn fragment_packet(
+        &self,
+        peer: &PeerId,
+        data: &[u8],
+        policy: FragmentationPolicy,
+    ) -> Result<Vec<Fragment>> {
         let mtu = self.get_mtu(peer).await;
+        let effective_mtu = self.calculate_effective_mtu(mtu, policy).await;
 
-        // Account for protocol overhead (headers, encryption, etc.)
-        let effective_mtu = mtu.saturating_sub(20); // Conservative overhead estimate
-
-        if packet_size <= effective_mtu {
-            // No fragmentation needed
-            return vec![];
+        if data.len() <= effective_mtu {
+            // No fragmentation needed - return single fragment
+            return Ok(vec![Fragment {
+                id: 0,
+                index: 0,
+                total: 1,
+                data: data.to_vec(),
+                timestamp: std::time::Instant::now(),
+            }]);
         }
 
-        // Fragment into MTU-sized chunks
-        let num_fragments = packet_size.div_ceil(effective_mtu);
+        // Fragment into appropriately sized chunks based on policy
+        let fragment_id = rand::random::<u16>();
+        let num_fragments = data.len().div_ceil(effective_mtu);
         let mut fragments = Vec::with_capacity(num_fragments);
 
         for i in 0..num_fragments {
             let start = i * effective_mtu;
-            let end = ((i + 1) * effective_mtu).min(packet_size);
-            let fragment_size = end - start;
+            let end = ((i + 1) * effective_mtu).min(data.len());
 
-            // Add fragment header (simplified)
-            let mut fragment = Vec::with_capacity(fragment_size + 4);
-            fragment.push((i as u8) << 4 | (num_fragments as u8)); // Fragment info
-            fragment.push((fragment_size >> 8) as u8); // Size high byte
-            fragment.push((fragment_size & 0xFF) as u8); // Size low byte
-            fragment.push(0); // Reserved/flags
-
-            fragments.push(fragment);
+            fragments.push(Fragment {
+                id: fragment_id,
+                index: i as u16,
+                total: num_fragments as u16,
+                data: data[start..end].to_vec(),
+                timestamp: std::time::Instant::now(),
+            });
         }
 
-        fragments
+        Ok(fragments)
+    }
+
+    /// Calculate effective MTU based on fragmentation policy
+    async fn calculate_effective_mtu(&self, raw_mtu: usize, policy: FragmentationPolicy) -> usize {
+        let overhead = match policy {
+            FragmentationPolicy::Conservative => 32, // Extra safety margin
+            FragmentationPolicy::Adaptive => 24,     // Standard protocol overhead
+            FragmentationPolicy::Aggressive => 16,   // Minimal overhead for max throughput
+        };
+
+        let base_mtu = raw_mtu.saturating_sub(overhead);
+
+        // Apply policy-specific adjustments
+        match policy {
+            FragmentationPolicy::Conservative => (base_mtu * 85) / 100, // 15% safety margin
+            FragmentationPolicy::Adaptive => base_mtu,
+            FragmentationPolicy::Aggressive => base_mtu,
+        }
+    }
+
+    /// Legacy method for backward compatibility
+    pub async fn adaptive_mtu(&self, peer: &PeerId, packet_size: usize) -> Vec<Vec<u8>> {
+        match self
+            .fragment_packet(peer, &vec![0; packet_size], FragmentationPolicy::Adaptive)
+            .await
+        {
+            Ok(fragments) => fragments.into_iter().map(|f| f.to_wire_format()).collect(),
+            Err(_) => vec![], // Return empty on error
+        }
     }
 
     /// Periodic MTU verification for cached values
@@ -227,6 +330,65 @@ impl AdaptiveMTU {
         }
 
         Ok(())
+    }
+
+    /// Reassemble fragments into complete message
+    pub async fn reassemble_fragments(
+        &self,
+        fragments: Vec<Fragment>,
+        timeout: Duration,
+    ) -> Result<Vec<u8>> {
+        if fragments.is_empty() {
+            return Err(crate::error::Error::Network(
+                "No fragments provided for reassembly".to_string(),
+            ));
+        }
+
+        // Validate all fragments belong to same message
+        let fragment_id = fragments[0].id;
+        let total_expected = fragments[0].total;
+
+        if !fragments
+            .iter()
+            .all(|f| f.id == fragment_id && f.total == total_expected)
+        {
+            return Err(crate::error::Error::Network(
+                "Fragment validation failed: inconsistent fragment set".to_string(),
+            ));
+        }
+
+        // Check for timeout
+        let oldest_fragment = fragments.iter().min_by_key(|f| f.timestamp).unwrap();
+
+        if oldest_fragment.timestamp.elapsed() > timeout {
+            let mut metrics = self.metrics.write().await;
+            metrics.reassembly_timeouts += 1;
+            return Err(crate::error::Error::Network(
+                "Fragment reassembly timeout".to_string(),
+            ));
+        }
+
+        // Sort fragments by index
+        let mut sorted_fragments = fragments;
+        sorted_fragments.sort_by_key(|f| f.index);
+
+        // Check for missing fragments
+        for (i, fragment) in sorted_fragments.iter().enumerate() {
+            if fragment.index != i as u16 {
+                return Err(crate::error::Error::Network(format!(
+                    "Missing fragment at index {}",
+                    i
+                )));
+            }
+        }
+
+        // Reassemble data
+        let mut reassembled = Vec::new();
+        for fragment in sorted_fragments {
+            reassembled.extend_from_slice(&fragment.data);
+        }
+
+        Ok(reassembled)
     }
 
     /// Record probe result for analysis

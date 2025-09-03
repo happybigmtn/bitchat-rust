@@ -282,7 +282,10 @@ impl LatencyTracker {
 
     pub fn record_latency(&mut self, peer_id: PeerId, latency: Duration) {
         // Record per-peer latency with memory limit
-        let peer_latencies = self.peer_latencies.entry(peer_id).or_insert_with(|| Vec::with_capacity(100));
+        let peer_latencies = self
+            .peer_latencies
+            .entry(peer_id)
+            .or_insert_with(|| Vec::with_capacity(100));
         peer_latencies.push(latency);
 
         // Keep only last 100 entries per peer (was 1000)
@@ -293,14 +296,15 @@ impl LatencyTracker {
 
         // Record global latency with reduced memory footprint
         self.global_latencies.push(latency);
-        if self.global_latencies.len() > 5000 { // Reduced from 10000
+        if self.global_latencies.len() > 5000 {
+            // Reduced from 10000
             // More efficient batch removal
             self.global_latencies.drain(..2500);
         }
 
         // Update activity timestamp
         self.peer_last_activity.insert(peer_id, Instant::now());
-        
+
         // Cleanup inactive peers periodically (every 1000 entries)
         if self.global_latencies.len() % 1000 == 0 {
             self.cleanup_inactive_peers();
@@ -454,7 +458,8 @@ impl ThroughputTracker {
         });
 
         // Keep only recent samples with efficient memory management
-        if self.throughput_samples.len() > 1000 { // Reduced from 5000
+        if self.throughput_samples.len() > 1000 {
+            // Reduced from 5000
             // More efficient batch removal
             self.throughput_samples.drain(..500);
         }

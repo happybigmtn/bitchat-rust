@@ -214,7 +214,7 @@ pub mod token_arithmetic {
         Ok(CrapTokens::new_unchecked(sum))
     }
 
-    /// Safe token subtraction  
+    /// Safe token subtraction
     pub fn safe_sub_tokens(a: CrapTokens, b: CrapTokens) -> Result<CrapTokens> {
         let difference = SafeArithmetic::safe_sub_u64(a.0, b.0)?;
         Ok(CrapTokens::new_unchecked(difference))

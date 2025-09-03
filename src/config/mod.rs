@@ -6,7 +6,10 @@
 //! - Hot reloading support
 //! - Secure secret management
 
+pub mod initialization;
 pub mod performance;
+pub mod runtime_reload;
+pub mod scalability;
 
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -15,7 +18,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+pub use initialization::ConfigurationManager;
 pub use performance::{PerformanceConfig, PerformanceProfile, PerformanceTuner};
+pub use runtime_reload::{ConfigChangeEvent, ReloadSettings, RuntimeConfigManager};
+pub use scalability::{PlatformType, ScalabilityConfig, ScalabilityManager};
 
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -468,21 +474,25 @@ impl Config {
 use once_cell::sync::Lazy;
 use std::sync::RwLock;
 
-static CONFIG: Lazy<RwLock<Config>> =
-    Lazy::new(|| RwLock::new(Config::load().unwrap_or_else(|e| {
-        eprintln!("WARNING: Failed to load configuration, using defaults: {}", e);
+static CONFIG: Lazy<RwLock<Config>> = Lazy::new(|| {
+    RwLock::new(Config::load().unwrap_or_else(|e| {
+        eprintln!(
+            "WARNING: Failed to load configuration, using defaults: {}",
+            e
+        );
         Config::default_for_environment(Environment::Production)
-    })));
+    }))
+});
 
 /// Get the global configuration instance
 pub fn get_config() -> Config {
-    CONFIG.read().unwrap().clone()
+    CONFIG.read().expect("Configuration lock poisoned").clone()
 }
 
 /// Set the global configuration (for testing)
 #[cfg(test)]
 pub fn set_config(config: Config) {
-    *CONFIG.write().unwrap() = config;
+    *CONFIG.write().expect("Configuration lock poisoned") = config;
 }
 
 #[cfg(test)]

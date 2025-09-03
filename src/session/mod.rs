@@ -1,13 +1,14 @@
 //! Session management for BitCraps
 //!
 //! This module implements simplified session management including:
-//! - Basic session lifecycle management  
+//! - Basic session lifecycle management
 //! - Simple encrypted channel communication
 //! - Session persistence and recovery (simplified)
 //! - Noise protocol integration
 //! - Forward secrecy with key rotation
 
 pub mod forward_secrecy;
+pub mod handshake_audit;
 pub mod lifecycle;
 pub mod noise;
 pub mod state;

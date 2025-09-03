@@ -72,7 +72,10 @@ pub use contracts::{
     BlockchainNetwork, BridgeContract, ContractManager, StakingContract, TokenContract,
 };
 pub use economics::{AdvancedStakingPosition, EconomicsConfig, EconomicsStats, TokenEconomics};
+#[cfg(not(feature = "mvp"))]
 pub use monitoring::{HealthCheck, NetworkDashboard, NetworkMetrics};
+#[cfg(feature = "mvp")]
+pub use monitoring::metrics::NetworkMetrics;
 pub use persistence::PersistenceManager;
 pub use security::{
     DosProtection, InputValidator, RateLimiter, SecurityConfig, SecurityEvent, SecurityEventLogger,
@@ -94,6 +97,13 @@ pub struct AppConfig {
     pub pow_difficulty: u32,
     pub max_connections: usize,
     pub enable_treasury: bool,
+    // MVP networking options
+    pub listen_tcp: Option<String>,
+    pub connect_tcp: Vec<String>,
+    pub enable_ble: bool,
+    // Monitoring options
+    pub prometheus_port: Option<u16>,
+    pub dashboard_port: Option<u16>,
 }
 
 impl Default for AppConfig {
@@ -104,6 +114,11 @@ impl Default for AppConfig {
             max_connections: 50,
             enable_treasury: true,
             nickname: None,
+            listen_tcp: None,
+            connect_tcp: Vec::new(),
+            enable_ble: false,
+            prometheus_port: Some(9090),
+            dashboard_port: Some(8080),
         }
     }
 }

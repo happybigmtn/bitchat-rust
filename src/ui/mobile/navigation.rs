@@ -34,7 +34,7 @@ impl NavigationController {
         }
 
         self.stack.push(route.clone());
-        
+
         // Notify callbacks
         if let Some(callback) = self.navigation_callbacks.get("did_push") {
             callback.did_navigate(&route);
@@ -87,7 +87,7 @@ impl NavigationController {
     /// Present a modal screen
     pub fn present_modal(&mut self, route: Route) -> NavigationResult {
         self.modal_stack.push(route.clone());
-        
+
         if let Some(callback) = self.navigation_callbacks.get("did_present_modal") {
             callback.did_navigate(&route);
         }
@@ -511,7 +511,7 @@ impl NavigationFlow {
     pub fn next_screen(&self) -> Option<Route> {
         let mut index = self.current_index.lock().unwrap();
         *index += 1;
-        
+
         if *index < self.screens.len() {
             Some(Route::new(self.screens[*index].clone()))
         } else {

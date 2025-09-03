@@ -411,7 +411,22 @@ impl CrapsGame {
                             _ => BetResolution::lose(*player_id, bet.clone()),
                         }
                     }
-                    // TODO: Add Any7 and AnyCraps bet types when they're implemented in BetType enum
+                    BetType::Any7 => {
+                        if total == 7 {
+                            BetResolution::win(*player_id, bet.clone(), bet.amount * 5)
+                        // 4:1 payout
+                        } else {
+                            BetResolution::lose(*player_id, bet.clone())
+                        }
+                    }
+                    BetType::AnyCraps => {
+                        if matches!(total, 2 | 3 | 12) {
+                            BetResolution::win(*player_id, bet.clone(), bet.amount * 8)
+                        // 7:1 payout
+                        } else {
+                            BetResolution::lose(*player_id, bet.clone())
+                        }
+                    }
                     _ => continue, // Skip other bet types during come-out
                 };
                 resolutions.push(resolution);
@@ -599,7 +614,22 @@ impl CrapsGame {
                             _ => BetResolution::lose(*player_id, bet.clone()),
                         }
                     }
-                    // TODO: Add Any7 and AnyCraps bet types when they're implemented in BetType enum
+                    BetType::Any7 => {
+                        if total == 7 {
+                            BetResolution::win(*player_id, bet.clone(), bet.amount * 5)
+                        // 4:1 payout
+                        } else {
+                            BetResolution::lose(*player_id, bet.clone())
+                        }
+                    }
+                    BetType::AnyCraps => {
+                        if matches!(total, 2 | 3 | 12) {
+                            BetResolution::win(*player_id, bet.clone(), bet.amount * 8)
+                        // 7:1 payout
+                        } else {
+                            BetResolution::lose(*player_id, bet.clone())
+                        }
+                    }
                     BetType::Eleven => {
                         if total == 11 {
                             BetResolution::win(*player_id, bet.clone(), bet.amount * 16)

@@ -1,5 +1,5 @@
 //! Base screen traits and rendering context
-//! 
+//!
 //! Provides the foundation for mobile screen implementations
 
 use std::time::Duration;
@@ -8,10 +8,10 @@ use std::time::Duration;
 pub trait Screen {
     /// Render the screen
     fn render(&self, ctx: &mut RenderContext);
-    
+
     /// Handle touch input
     fn handle_touch(&mut self, event: TouchEvent) -> Option<ScreenTransition>;
-    
+
     /// Update screen state
     fn update(&mut self, delta_time: Duration);
 }
@@ -66,63 +66,63 @@ impl RenderContext {
             theme,
         }
     }
-    
+
     /// Fill a rectangle
     pub fn fill_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: (u8, u8, u8, u8)) {
         // Platform-specific implementation
     }
-    
+
     /// Draw a rectangle outline
     pub fn draw_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: (u8, u8, u8, u8), line_width: f32) {
         // Platform-specific implementation
     }
-    
+
     /// Fill a circle
     pub fn fill_circle(&mut self, x: f32, y: f32, radius: f32, color: (u8, u8, u8, u8)) {
         // Platform-specific implementation
     }
-    
+
     /// Draw a circle outline
     pub fn draw_circle(&mut self, x: f32, y: f32, radius: f32, color: (u8, u8, u8, u8), line_width: f32) {
         // Platform-specific implementation
     }
-    
+
     /// Draw text
     pub fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: (u8, u8, u8, u8)) {
         // Platform-specific implementation
     }
-    
+
     /// Draw a line
     pub fn draw_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, color: (u8, u8, u8, u8), line_width: f32) {
         // Platform-specific implementation
     }
-    
+
     /// Fill with gradient
-    pub fn fill_gradient(&mut self, x: f32, y: f32, width: f32, height: f32, 
+    pub fn fill_gradient(&mut self, x: f32, y: f32, width: f32, height: f32,
                          start_color: (u8, u8, u8, u8), end_color: (u8, u8, u8, u8)) {
         // Platform-specific implementation
     }
-    
+
     /// Draw an image
     pub fn draw_image(&mut self, image_id: &str, x: f32, y: f32, width: f32, height: f32) {
         // Platform-specific implementation
     }
-    
+
     /// Push a clipping rectangle
     pub fn push_clip(&mut self, x: f32, y: f32, width: f32, height: f32) {
         // Platform-specific implementation
     }
-    
+
     /// Pop the clipping rectangle
     pub fn pop_clip(&mut self) {
         // Platform-specific implementation
     }
-    
+
     /// Get screen dimensions
     pub fn dimensions(&self) -> (f32, f32) {
         (self.width, self.height)
     }
-    
+
     /// Get theme
     pub fn theme(&self) -> &Theme {
         &self.theme
@@ -175,7 +175,7 @@ impl ScreenElement {
         x >= self.x && x <= self.x + self.width &&
         y >= self.y && y <= self.y + self.height
     }
-    
+
     /// Get center point
     pub fn center(&self) -> (f32, f32) {
         (self.x + self.width / 2.0, self.y + self.height / 2.0)

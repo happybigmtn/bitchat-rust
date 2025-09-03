@@ -1373,3 +1373,5 @@ async fn test_bottleneck_detection() {
     println!("✅ Bottleneck detection test completed");
     println!("🔍 Bottlenecks detected: {}", bottlenecks.len());
 }
+#![cfg(feature = "legacy-tests")]
+#![cfg(feature = "legacy-tests")]

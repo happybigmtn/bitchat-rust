@@ -79,7 +79,7 @@ impl MigrationManager {
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 );
-                
+
                 -- Games table
                 CREATE TABLE IF NOT EXISTS games (
                     id TEXT PRIMARY KEY,
@@ -90,7 +90,7 @@ impl MigrationManager {
                     completed_at INTEGER,
                     winner_id TEXT REFERENCES users(id)
                 );
-                
+
                 -- Bets table
                 CREATE TABLE IF NOT EXISTS bets (
                     id BLOB PRIMARY KEY,
@@ -102,7 +102,7 @@ impl MigrationManager {
                     created_at INTEGER NOT NULL,
                     resolved_at INTEGER
                 );
-                
+
                 -- Transactions table
                 CREATE TABLE IF NOT EXISTS transactions (
                     id TEXT PRIMARY KEY,
@@ -114,7 +114,7 @@ impl MigrationManager {
                     created_at INTEGER NOT NULL,
                     confirmed_at INTEGER
                 );
-                
+
                 -- Indices for performance
                 CREATE INDEX IF NOT EXISTS idx_games_created_at ON games(created_at);
                 CREATE INDEX IF NOT EXISTS idx_bets_game_id ON bets(game_id);
@@ -145,7 +145,7 @@ impl MigrationManager {
                     data_sent_bytes INTEGER DEFAULT 0,
                     data_received_bytes INTEGER DEFAULT 0
                 );
-                
+
                 CREATE INDEX IF NOT EXISTS idx_peer_connections_peer_id ON peer_connections(peer_id);
                 CREATE INDEX IF NOT EXISTS idx_peer_connections_connected_at ON peer_connections(connected_at);
                 "#
@@ -166,7 +166,7 @@ impl MigrationManager {
                     created_at INTEGER NOT NULL,
                     finalized_at INTEGER
                 );
-                
+
                 CREATE TABLE IF NOT EXISTS consensus_votes (
                     id TEXT PRIMARY KEY,
                     round_number INTEGER REFERENCES consensus_rounds(round_number),
@@ -175,7 +175,7 @@ impl MigrationManager {
                     signature BLOB NOT NULL,
                     created_at INTEGER NOT NULL
                 );
-                
+
                 CREATE INDEX IF NOT EXISTS idx_consensus_rounds_game_id ON consensus_rounds(game_id);
                 CREATE INDEX IF NOT EXISTS idx_consensus_votes_round ON consensus_votes(round_number);
                 "#
@@ -200,7 +200,7 @@ impl MigrationManager {
                     max_pot_size INTEGER DEFAULT 0,
                     created_at INTEGER NOT NULL
                 );
-                
+
                 CREATE TABLE IF NOT EXISTS player_statistics (
                     player_id TEXT PRIMARY KEY REFERENCES users(id),
                     games_played INTEGER DEFAULT 0,
@@ -213,7 +213,7 @@ impl MigrationManager {
                     longest_streak INTEGER DEFAULT 0,
                     updated_at INTEGER NOT NULL
                 );
-                
+
                 CREATE INDEX IF NOT EXISTS idx_game_statistics_created_at ON game_statistics(created_at);
                 CREATE INDEX IF NOT EXISTS idx_player_statistics_win_rate ON player_statistics(win_rate);
                 "#
@@ -240,7 +240,7 @@ impl MigrationManager {
                     user_agent TEXT,
                     created_at INTEGER NOT NULL
                 );
-                
+
                 CREATE INDEX IF NOT EXISTS idx_audit_log_event_type ON audit_log(event_type);
                 CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log(entity_type, entity_id);
                 CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id);
@@ -260,7 +260,7 @@ impl MigrationManager {
                     staked_balance INTEGER DEFAULT 0,
                     last_updated INTEGER NOT NULL
                 );
-                
+
                 CREATE TABLE IF NOT EXISTS token_transfers (
                     id TEXT PRIMARY KEY,
                     from_address TEXT NOT NULL,
@@ -273,7 +273,7 @@ impl MigrationManager {
                     created_at INTEGER NOT NULL,
                     confirmed_at INTEGER
                 );
-                
+
                 CREATE TABLE IF NOT EXISTS staking_positions (
                     id TEXT PRIMARY KEY,
                     user_id TEXT NOT NULL REFERENCES users(id),
@@ -285,7 +285,7 @@ impl MigrationManager {
                     claimed_rewards INTEGER DEFAULT 0,
                     is_active INTEGER DEFAULT 1
                 );
-                
+
                 CREATE INDEX IF NOT EXISTS idx_token_transfers_from ON token_transfers(from_address);
                 CREATE INDEX IF NOT EXISTS idx_token_transfers_to ON token_transfers(to_address);
                 CREATE INDEX IF NOT EXISTS idx_staking_positions_user ON staking_positions(user_id);
@@ -311,7 +311,7 @@ impl MigrationManager {
                     tags TEXT,
                     created_at INTEGER NOT NULL
                 );
-                
+
                 CREATE TABLE IF NOT EXISTS system_health (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     cpu_usage REAL,
@@ -323,7 +323,7 @@ impl MigrationManager {
                     error_count INTEGER DEFAULT 0,
                     created_at INTEGER NOT NULL
                 );
-                
+
                 CREATE INDEX IF NOT EXISTS idx_performance_metrics_name ON performance_metrics(metric_name);
                 CREATE INDEX IF NOT EXISTS idx_performance_metrics_component ON performance_metrics(component);
                 CREATE INDEX IF NOT EXISTS idx_performance_metrics_created_at ON performance_metrics(created_at);

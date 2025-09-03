@@ -282,7 +282,7 @@ impl ConsensusEngine {
             // With n < 4, we cannot tolerate any Byzantine nodes (need n ≥ 3f + 1)
             if total_participants < 4 {
                 return Err(crate::error::Error::Protocol(
-                    "Byzantine consensus requires at least 4 participants".into()
+                    "Byzantine consensus requires at least 4 participants".into(),
                 ));
             }
 
@@ -384,7 +384,10 @@ impl ConsensusEngine {
                     }
                 }
             }
-            GameOperation::ResolveDispute { dispute_id, resolution } => {
+            GameOperation::ResolveDispute {
+                dispute_id,
+                resolution,
+            } => {
                 // Log dispute resolution
                 log::info!("Dispute {:?} resolved: {}", dispute_id, resolution);
                 // In a full implementation, this would update dispute tracking state
@@ -466,6 +469,11 @@ impl ConsensusEngine {
     /// Get current consensus state
     pub fn get_current_state(&self) -> &GameConsensusState {
         &self.current_state
+    }
+
+    /// Get current consensus state as Arc for efficient sharing
+    pub fn get_current_state_arc(&self) -> Arc<GameConsensusState> {
+        Arc::clone(&self.current_state)
     }
 
     /// Sync state from external source (for joining mid-game)
@@ -889,14 +897,14 @@ impl ConsensusEngine {
         let votes = self.dispute_votes.get(&dispute_id);
         if let Some(votes) = votes {
             let total_participants = self.participants.len();
-            
+
             // CRITICAL BFT SAFETY: Minimum 4 nodes required for Byzantine fault tolerance
             if total_participants < 4 {
                 return Err(crate::error::Error::Protocol(
-                    "Byzantine consensus requires at least 4 participants".into()
+                    "Byzantine consensus requires at least 4 participants".into(),
                 ));
             }
-            
+
             // CRITICAL FIX: Use ceiling of 2n/3 for Byzantine fault tolerance
             // Ensures safety when exactly n/3 nodes are Byzantine
             let required_votes = (total_participants * 2 + 2) / 3;
@@ -1026,14 +1034,14 @@ impl ConsensusEngine {
 
             // Double-check Byzantine threshold one more time
             let total_participants = self.participants.len();
-            
+
             // CRITICAL BFT SAFETY: Minimum 4 nodes required for Byzantine fault tolerance
             if total_participants < 4 {
                 return Err(crate::error::Error::Protocol(
-                    "Byzantine consensus requires at least 4 participants".into()
+                    "Byzantine consensus requires at least 4 participants".into(),
                 ));
             }
-            
+
             // CRITICAL FIX: Use ceiling of 2n/3 for Byzantine fault tolerance
             let byzantine_threshold = (total_participants * 2 + 2) / 3;
 

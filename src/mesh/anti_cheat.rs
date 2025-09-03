@@ -104,8 +104,26 @@ impl AntiCheatMonitor {
 
         // Check for suspicious patterns in game packets
         if packet.packet_type >= 0x20 && packet.packet_type <= 0x27 {
-            // Game-specific anti-cheat would go here
-            // For example: impossible dice rolls, betting patterns, etc.
+            // Game-specific anti-cheat validation
+            if let Some(violation) = self.validate_game_packet(packet, peer_id).await {
+                behavior.suspicious_patterns += 1;
+
+                // Ban peer if too many violations
+                if behavior.suspicious_patterns >= 3 {
+                    self.ban_peer(peer_id, Duration::from_secs(300)).await; // 5 minute ban
+                    return Some(format!("Multiple game violations: {}", violation));
+                }
+
+                return Some(violation);
+            }
+        }
+
+        // Check for consensus message violations
+        if packet.packet_type == crate::protocol::PACKET_TYPE_CONSENSUS_VOTE {
+            if let Some(violation) = self.validate_consensus_packet(packet, peer_id).await {
+                behavior.suspicious_patterns += 1;
+                return Some(violation);
+            }
         }
 
         None
@@ -128,5 +146,89 @@ impl AntiCheatMonitor {
         }
 
         false
+    }
+
+    /// Validate game-specific packets for cheating
+    async fn validate_game_packet(
+        &self,
+        packet: &BitchatPacket,
+        _peer_id: PeerId,
+    ) -> Option<String> {
+        // Deserialize payload to analyze game content
+        if let Some(ref payload) = packet.payload {
+            // Check for impossible dice rolls
+            if packet.packet_type == 0x21 {
+                // Dice roll packet type
+                if let Ok(dice_data) = bincode::deserialize::<(u8, u8)>(payload) {
+                    let (die1, die2) = dice_data;
+                    if die1 < 1 || die1 > 6 || die2 < 1 || die2 > 6 {
+                        return Some("Invalid dice values".to_string());
+                    }
+                }
+            }
+
+            // Check for suspicious betting patterns
+            if packet.packet_type == 0x22 {
+                // Bet placement packet
+                if let Ok(bet_data) = bincode::deserialize::<crate::protocol::Bet>(payload) {
+                    // Check for impossible bet amounts (negative or zero)
+                    if bet_data.amount.0 == 0 {
+                        return Some("Invalid bet amount".to_string());
+                    }
+
+                    // Check for unreasonably large bets that might indicate manipulation
+                    if bet_data.amount.0 > 1_000_000 {
+                        return Some("Bet amount too large".to_string());
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Validate consensus-specific packets for cheating
+    async fn validate_consensus_packet(
+        &self,
+        packet: &BitchatPacket,
+        peer_id: PeerId,
+    ) -> Option<String> {
+        if let Some(ref payload) = packet.payload {
+            // Check consensus message structure
+            if let Ok(consensus_msg) =
+                bincode::deserialize::<crate::protocol::p2p_messages::ConsensusMessage>(payload)
+            {
+                // Check for timestamp manipulation
+                let current_time = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+
+                // Allow 30 second clock skew
+                if consensus_msg.timestamp > current_time + 30
+                    || consensus_msg.timestamp + 300 < current_time
+                {
+                    // 5 minutes in the past
+                    return Some("Suspicious timestamp in consensus message".to_string());
+                }
+
+                // Check for message sender spoofing
+                if consensus_msg.sender != peer_id {
+                    return Some("Sender ID mismatch in consensus message".to_string());
+                }
+
+                // Check for malformed signatures
+                if consensus_msg.signature.0.len() != 64 {
+                    return Some("Invalid signature length".to_string());
+                }
+
+                // Check for consensus round manipulation
+                if consensus_msg.round > 1_000_000 {
+                    return Some("Suspicious consensus round number".to_string());
+                }
+            }
+        }
+
+        None
     }
 }

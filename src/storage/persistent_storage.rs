@@ -1,5 +1,5 @@
 //! Production Persistent Storage System for BitCraps
-//! 
+//!
 //! This module provides enterprise-grade persistent storage with:
 //! - High-performance database operations
 //! - Automatic backup and recovery
@@ -50,16 +50,16 @@ impl PersistentStorageManager {
     pub async fn new(config: StorageConfig) -> Result<Self, StorageError> {
         // Initialize database pool
         let db_pool = Arc::new(DatabasePool::new(&config).await?);
-        
+
         // Initialize cache
         let cache = Arc::new(StorageCache::new(config.cache_size_mb * 1024 * 1024));
-        
+
         // Initialize backup manager
         let backup_manager = Arc::new(BackupManager::new(config.clone()).await?);
-        
+
         // Initialize compression engine
         let compression_engine = Arc::new(CompressionEngine::new(config.compression_level));
-        
+
         // Initialize encryption engine
         let key_dir = config.data_path.join("keys");
         let key_manager = Box::new(FileKeyManager::new(key_dir)?);
@@ -87,7 +87,7 @@ impl PersistentStorageManager {
 
     /// Store data with automatic compression and caching
     pub async fn store<T: Serialize + Send + Sync>(
-        &self, 
+        &self,
         collection: &str,
         key: &str,
         data: &T
@@ -115,10 +115,10 @@ impl PersistentStorageManager {
             let mut encryption_engine = self.encryption_engine.lock().await;
             let encrypted = encryption_engine.encrypt(&compressed_data)
                 .map_err(|e| StorageError::ConfigurationError(format!("Encryption failed: {}", e)))?;
-            
+
             let metadata = serde_json::to_vec(&encrypted)
                 .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-            
+
             (metadata, Some(encrypted))
         } else {
             (compressed_data, None)
@@ -181,19 +181,19 @@ impl PersistentStorageManager {
         // Check cache first
         if let Some((data, is_compressed)) = self.cache.get(&cache_key).await {
             self.stats.cache_hits.fetch_add(1, Ordering::Relaxed);
-            
+
             // Decrypt cached data if encryption is enabled
             let decrypted_data = if self.config.enable_encryption {
                 let encrypted: EncryptedData = serde_json::from_slice(&data)
                     .map_err(|e| StorageError::DeserializationError(e.to_string()))?;
-                
+
                 let encryption_engine = self.encryption_engine.lock().await;
                 encryption_engine.decrypt(&encrypted)
                     .map_err(|e| StorageError::ConfigurationError(format!("Cache decryption failed: {}", e)))?
             } else {
                 data
             };
-            
+
             let decompressed = if is_compressed {
                 self.compression_engine.decompress(&decrypted_data)?
             } else {
@@ -202,7 +202,7 @@ impl PersistentStorageManager {
 
             let result: T = serde_json::from_slice(&decompressed)
                 .map_err(|e| StorageError::DeserializationError(e.to_string()))?;
-            
+
             return Ok(Some(result));
         }
 
@@ -222,7 +222,7 @@ impl PersistentStorageManager {
             // Deserialize encrypted metadata
             let encrypted: EncryptedData = serde_json::from_slice(&record.data)
                 .map_err(|e| StorageError::DeserializationError(e.to_string()))?;
-            
+
             let encryption_engine = self.encryption_engine.lock().await;
             encryption_engine.decrypt(&encrypted)
                 .map_err(|e| StorageError::ConfigurationError(format!("Decryption failed: {}", e)))?
@@ -256,17 +256,17 @@ impl PersistentStorageManager {
     /// Delete data from storage and cache
     pub async fn delete(&self, collection: &str, key: &str) -> Result<bool, StorageError> {
         let cache_key = format!("{}:{}", collection, key);
-        
+
         // Remove from cache
         self.cache.remove(&cache_key).await;
-        
+
         // Remove from database
         let deleted = self.db_pool.delete_record(collection, key).await?;
-        
+
         if deleted {
             self.stats.total_deletes.fetch_add(1, Ordering::Relaxed);
         }
-        
+
         Ok(deleted)
     }
 
@@ -284,7 +284,7 @@ impl PersistentStorageManager {
     pub async fn get_statistics(&self) -> StorageStatistics {
         let db_stats = self.db_pool.get_statistics().await;
         let cache_stats = self.cache.get_statistics().await;
-        
+
         StorageStatistics {
             total_reads: self.stats.total_reads.load(Ordering::Relaxed),
             total_writes: self.stats.total_writes.load(Ordering::Relaxed),
@@ -294,11 +294,11 @@ impl PersistentStorageManager {
             deduplicated_writes: self.stats.deduplicated_writes.load(Ordering::Relaxed),
             bytes_written: self.stats.bytes_written.load(Ordering::Relaxed),
             average_read_time_ms: if self.stats.total_reads.load(Ordering::Relaxed) > 0 {
-                self.stats.total_read_time_ms.load(Ordering::Relaxed) as f64 / 
+                self.stats.total_read_time_ms.load(Ordering::Relaxed) as f64 /
                 self.stats.total_reads.load(Ordering::Relaxed) as f64
             } else { 0.0 },
             average_write_time_ms: if self.stats.total_writes.load(Ordering::Relaxed) > 0 {
-                self.stats.total_write_time_ms.load(Ordering::Relaxed) as f64 / 
+                self.stats.total_write_time_ms.load(Ordering::Relaxed) as f64 /
                 self.stats.total_writes.load(Ordering::Relaxed) as f64
             } else { 0.0 },
             cache_hit_rate: if cache_stats.total_requests > 0 {
@@ -469,18 +469,21 @@ pub struct DatabasePool {
 impl DatabasePool {
     async fn new(config: &StorageConfig) -> Result<Self, StorageError> {
         let mut connections = Vec::new();
-        
+
         // Create database file if it doesn't exist
         std::fs::create_dir_all(&config.data_path)
             .map_err(|e| StorageError::DatabaseError(format!("Failed to create data directory: {}", e)))?;
 
         let db_path = config.data_path.join("bitcraps.db");
-        
+
         // Create initial connections
         for _ in 0..config.max_connections {
-            let conn = Connection::open(&db_path)
+            let mut conn = Connection::open(&db_path)
                 .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
-            
+
+            // Enable SQLite optimizations
+            Self::configure_connection(&mut conn, &config)?;
+
             // Initialize database schema
             Self::init_schema(&conn)?;
             connections.push(conn);
@@ -491,6 +494,54 @@ impl DatabasePool {
             semaphore: Arc::new(Semaphore::new(config.max_connections)),
             config: config.clone(),
         })
+    }
+
+    fn configure_connection(conn: &mut Connection, config: &StorageConfig) -> Result<(), StorageError> {
+        // Enable WAL mode for better concurrency and crash safety
+        conn.execute("PRAGMA journal_mode=WAL", [])
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to set WAL mode: {}", e)))?;
+
+        // Enable synchronous=NORMAL for WAL mode (faster writes while still safe)
+        conn.execute("PRAGMA synchronous=NORMAL", [])
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to set synchronous mode: {}", e)))?;
+
+        // Increase cache size for better performance (negative value = KB of RAM)
+        let cache_size = -(config.cache_size_mb as i32 * 1024);
+        conn.execute(&format!("PRAGMA cache_size={}", cache_size), [])
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to set cache size: {}", e)))?;
+
+        // Enable foreign keys for referential integrity
+        conn.execute("PRAGMA foreign_keys=ON", [])
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to enable foreign keys: {}", e)))?;
+
+        // Set busy timeout to handle concurrent access
+        conn.execute("PRAGMA busy_timeout=30000", []) // 30 seconds
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to set busy timeout: {}", e)))?;
+
+        // Enable automatic index creation for better query performance
+        conn.execute("PRAGMA automatic_index=ON", [])
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to enable automatic index: {}", e)))?;
+
+        // Set temp store to memory for better performance
+        conn.execute("PRAGMA temp_store=MEMORY", [])
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to set temp store: {}", e)))?;
+
+        // Set mmap_size for memory-mapped I/O (256MB default)
+        conn.execute("PRAGMA mmap_size=268435456", [])
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to set mmap size: {}", e)))?;
+
+        // Verify WAL mode was set correctly
+        let mut stmt = conn.prepare("PRAGMA journal_mode")
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to prepare journal_mode query: {}", e)))?;
+        let journal_mode: String = stmt.query_row([], |row| row.get(0))
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to query journal_mode: {}", e)))?;
+
+        if journal_mode.to_uppercase() != "WAL" {
+            return Err(StorageError::DatabaseError(format!("Failed to enable WAL mode: got {}", journal_mode)));
+        }
+
+        info!("SQLite configured with WAL mode and optimizations: cache_size={}KB, mmap_size=256MB", config.cache_size_mb * 1024);
+        Ok(())
     }
 
     fn init_schema(conn: &Connection) -> Result<(), StorageError> {
@@ -535,7 +586,7 @@ impl DatabasePool {
             .ok_or_else(|| StorageError::DatabaseError("No database connections available".to_string()))?;
 
         let result = conn.execute(
-            "INSERT OR REPLACE INTO storage_records 
+            "INSERT OR REPLACE INTO storage_records
              (collection, key, data, content_hash, is_compressed, created_at, size_bytes, access_count, last_accessed)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
@@ -637,7 +688,7 @@ impl DatabasePool {
 
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
         let result = conn.execute(
-            "UPDATE storage_records SET access_count = access_count + 1, last_accessed = ?1 
+            "UPDATE storage_records SET access_count = access_count + 1, last_accessed = ?1
              WHERE collection = ?2 AND key = ?3",
             params![now, collection, key]
         ).map_err(|e| StorageError::DatabaseError(e.to_string()));
@@ -936,26 +987,203 @@ impl StorageCache {
 
 pub struct BackupManager {
     config: StorageConfig,
+    backup_dir: PathBuf,
 }
 
 impl BackupManager {
     pub async fn new(config: StorageConfig) -> Result<Self, StorageError> {
-        Ok(Self { config })
+        let backup_dir = config.data_path.join("backups");
+        std::fs::create_dir_all(&backup_dir)
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to create backup directory: {}", e)))?;
+
+        Ok(Self { config, backup_dir })
     }
 
     pub async fn create_backup(&self) -> Result<BackupInfo, StorageError> {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)
+            .unwrap().as_secs();
+        let backup_name = format!("bitcraps_backup_{}.db", timestamp);
+        let backup_path = self.backup_dir.join(&backup_name);
+        let source_db = self.config.data_path.join("bitcraps.db");
+
+        // Create backup using SQLite backup API for consistency
+        let source_conn = Connection::open(&source_db)
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to open source database: {}", e)))?;
+
+        let backup_conn = Connection::open(&backup_path)
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to create backup database: {}", e)))?;
+
+        // Perform online backup
+        let backup = rusqlite::backup::Backup::new(&source_conn, &backup_conn)
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to initialize backup: {}", e)))?;
+
+        backup.run_to_completion(5, Duration::from_millis(100), None)
+            .map_err(|e| StorageError::DatabaseError(format!("Backup failed: {}", e)))?;
+
+        // Validate backup integrity
+        let validation_result = self.validate_backup(&backup_path).await?;
+        if !validation_result.is_valid {
+            std::fs::remove_file(&backup_path).ok(); // Clean up invalid backup
+            return Err(StorageError::DatabaseError(format!("Backup validation failed: {}", validation_result.error_message.unwrap_or_default())));
+        }
+
+        let file_size = std::fs::metadata(&backup_path)
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to get backup file size: {}", e)))?
+            .len();
+
+        info!("Created validated backup: {} ({} bytes)", backup_name, file_size);
+
         Ok(BackupInfo {
-            size_bytes: 1024 * 1024, // Example size
+            backup_id: backup_name.clone(),
+            size_bytes: file_size,
+            created_at: timestamp,
+            validation_hash: validation_result.integrity_hash,
+            backup_path: backup_path,
         })
     }
 
+    pub async fn validate_backup(&self, backup_path: &Path) -> Result<BackupValidationResult, StorageError> {
+        // Open backup database for validation
+        let conn = Connection::open(backup_path)
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to open backup for validation: {}", e)))?;
+
+        let mut validation_result = BackupValidationResult {
+            is_valid: false,
+            integrity_hash: String::new(),
+            error_message: None,
+            validation_time: SystemTime::now(),
+        };
+
+        // Check database integrity
+        let integrity_check: String = conn.prepare("PRAGMA integrity_check")
+            .and_then(|mut stmt| stmt.query_row([], |row| row.get(0)))
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to run integrity check: {}", e)))?;
+
+        if integrity_check != "ok" {
+            validation_result.error_message = Some(format!("Integrity check failed: {}", integrity_check));
+            return Ok(validation_result);
+        }
+
+        // Check that essential tables exist and have expected structure
+        let table_check: i32 = conn.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('storage_records', 'content_references')")
+            .and_then(|mut stmt| stmt.query_row([], |row| row.get(0)))
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to check table structure: {}", e)))?;
+
+        if table_check != 2 {
+            validation_result.error_message = Some("Missing essential tables in backup".to_string());
+            return Ok(validation_result);
+        }
+
+        // Check that we can read from all tables
+        let record_count: i64 = conn.prepare("SELECT COUNT(*) FROM storage_records")
+            .and_then(|mut stmt| stmt.query_row([], |row| row.get(0)))
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to count storage records: {}", e)))?;
+
+        let ref_count: i64 = conn.prepare("SELECT COUNT(*) FROM content_references")
+            .and_then(|mut stmt| stmt.query_row([], |row| row.get(0)))
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to count content references: {}", e)))?;
+
+        // Calculate integrity hash of backup file
+        let backup_data = std::fs::read(backup_path)
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to read backup file for hashing: {}", e)))?;
+
+        let mut hasher = Hasher::new();
+        hasher.update(&backup_data);
+        validation_result.integrity_hash = hex::encode(hasher.finalize().as_bytes());
+        validation_result.is_valid = true;
+
+        info!("Backup validation passed: {} records, {} refs, hash: {}",
+              record_count, ref_count, &validation_result.integrity_hash[..16]);
+
+        Ok(validation_result)
+    }
+
+    pub async fn restore_from_backup(&self, backup_info: &BackupInfo) -> Result<(), StorageError> {
+        // Validate backup before restore
+        let validation = self.validate_backup(&backup_info.backup_path).await?;
+        if !validation.is_valid {
+            return Err(StorageError::DatabaseError(format!("Cannot restore from invalid backup: {}",
+                validation.error_message.unwrap_or_default())));
+        }
+
+        // Verify backup hash matches
+        if validation.integrity_hash != backup_info.validation_hash {
+            return Err(StorageError::DatabaseError("Backup integrity hash mismatch".to_string()));
+        }
+
+        let current_db = self.config.data_path.join("bitcraps.db");
+        let backup_current = self.config.data_path.join("bitcraps.db.pre_restore");
+
+        // Backup current database first
+        if current_db.exists() {
+            std::fs::copy(&current_db, &backup_current)
+                .map_err(|e| StorageError::DatabaseError(format!("Failed to backup current database: {}", e)))?;
+        }
+
+        // Replace current database with backup
+        std::fs::copy(&backup_info.backup_path, &current_db)
+            .map_err(|e| {
+                // Attempt to restore original if copy failed
+                if backup_current.exists() {
+                    std::fs::copy(&backup_current, &current_db).ok();
+                }
+                StorageError::DatabaseError(format!("Failed to restore from backup: {}", e))
+            })?;
+
+        // Cleanup temporary backup
+        std::fs::remove_file(&backup_current).ok();
+
+        info!("Successfully restored database from backup: {}", backup_info.backup_id);
+        Ok(())
+    }
+
     pub async fn cleanup_old_backups(&self) -> Result<usize, StorageError> {
-        Ok(0) // Placeholder
+        let max_age_days = 30; // Keep backups for 30 days
+        let max_age_secs = max_age_days * 24 * 3600;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let mut cleaned_count = 0;
+
+        let entries = std::fs::read_dir(&self.backup_dir)
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to read backup directory: {}", e)))?;
+
+        for entry in entries {
+            let entry = entry.map_err(|e| StorageError::DatabaseError(format!("Failed to read directory entry: {}", e)))?;
+            let path = entry.path();
+
+            if path.extension().and_then(|s| s.to_str()) == Some("db") {
+                if let Ok(metadata) = std::fs::metadata(&path) {
+                    if let Ok(modified) = metadata.modified() {
+                        if let Ok(age) = modified.duration_since(UNIX_EPOCH) {
+                            if now.saturating_sub(age.as_secs()) > max_age_secs {
+                                if std::fs::remove_file(&path).is_ok() {
+                                    cleaned_count += 1;
+                                    debug!("Cleaned up old backup: {:?}", path.file_name());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        info!("Cleaned up {} old backup files", cleaned_count);
+        Ok(cleaned_count)
     }
 }
 
 pub struct BackupInfo {
+    pub backup_id: String,
     pub size_bytes: u64,
+    pub created_at: u64,
+    pub validation_hash: String,
+    pub backup_path: PathBuf,
+}
+
+pub struct BackupValidationResult {
+    pub is_valid: bool,
+    pub integrity_hash: String,
+    pub error_message: Option<String>,
+    pub validation_time: SystemTime,
 }
 
 pub struct CompressionEngine {
@@ -1011,7 +1239,7 @@ mod tests {
         };
 
         let storage = PersistentStorageManager::new(config).await.unwrap();
-        
+
         #[derive(Serialize, Deserialize, PartialEq, Debug)]
         struct TestData {
             value: String,
@@ -1025,7 +1253,7 @@ mod tests {
 
         storage.store("test_collection", "test_key", &data).await.unwrap();
         let retrieved: Option<TestData> = storage.retrieve("test_collection", "test_key").await.unwrap();
-        
+
         assert_eq!(retrieved, Some(data));
     }
 }

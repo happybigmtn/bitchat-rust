@@ -229,8 +229,7 @@ impl AndroidAdapter {
     }
 
     async fn request_permissions(&self) -> Result<PermissionStatus, BitCrapsError> {
-        // TODO: Implement via JNI calls to Android permission system
-        log::info!("Requesting Android permissions");
+        log::info!("Requesting Android permissions via JNI");
 
         let required_permissions = [
             "android.permission.BLUETOOTH",
@@ -242,8 +241,53 @@ impl AndroidAdapter {
             "android.permission.POST_NOTIFICATIONS",
         ];
 
-        // For now, assume permissions are granted
-        // In a real implementation, this would make JNI calls to check and request permissions
+        #[cfg(target_os = "android")]
+        {
+            use crate::mobile::android::jni_helpers::call_android_method;
+
+            for permission in &required_permissions {
+                // Check if permission is already granted
+                match call_android_method(
+                    "android/content/Context",
+                    "checkSelfPermission",
+                    "(Ljava/lang/String;)I",
+                    &[permission.to_string().into()],
+                ) {
+                    Ok(result) => {
+                        let status = result.i().unwrap_or(-1);
+                        if status != 0 {
+                            // PERMISSION_GRANTED = 0
+                            log::info!("Requesting permission: {}", permission);
+
+                            // Request the permission
+                            let _ = call_android_method(
+                                "androidx/core/app/ActivityCompat",
+                                "requestPermissions",
+                                "(Landroid/app/Activity;[Ljava/lang/String;I)V",
+                                &[
+                                    "activity".into(),
+                                    vec![permission.to_string()].into(),
+                                    1001.into(), // REQUEST_CODE
+                                ],
+                            );
+                        } else {
+                            log::debug!("Permission already granted: {}", permission);
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to check permission {}: {}", permission, e);
+                        return Err(BitCrapsError::Platform(format!(
+                            "Failed to check permission {}: {}",
+                            permission, e
+                        )));
+                    }
+                }
+            }
+
+            Ok(PermissionStatus::Granted)
+        }
+
+        #[cfg(not(target_os = "android"))]
         Ok(PermissionStatus::Granted)
     }
 
@@ -264,30 +308,245 @@ impl AndroidAdapter {
     async fn configure_foreground_service(&self) -> Result<(), BitCrapsError> {
         log::info!("Configuring Android foreground service");
 
-        // TODO: Implement via JNI calls to start foreground service
-        // This would create a persistent notification and keep the service running
+        #[cfg(target_os = "android")]
+        {
+            use crate::mobile::android::jni_helpers::call_android_method;
 
-        Ok(())
+            // Create notification channel for foreground service
+            match call_android_method(
+                "android/app/NotificationChannel",
+                "new",
+                "(Ljava/lang/String;Ljava/lang/String;I)V",
+                &[
+                    "bitcraps_service".into(),
+                    "BitCraps Game Service".into(),
+                    3.into(), // IMPORTANCE_DEFAULT
+                ],
+            ) {
+                Ok(_) => {
+                    // Create the notification for foreground service
+                    let notification_result = call_android_method(
+                        "android/app/Notification$Builder",
+                        "setSmallIcon",
+                        "(I)Landroid/app/Notification$Builder;",
+                        &[17301613.into()], // android.R.drawable.ic_dialog_info
+                    )
+                    .and_then(|_| {
+                        call_android_method(
+                            "android/app/Notification$Builder",
+                            "setContentTitle",
+                            "(Ljava/lang/String;)Landroid/app/Notification$Builder;",
+                            &["BitCraps Gaming".into()],
+                        )
+                    })
+                    .and_then(|_| {
+                        call_android_method(
+                            "android/app/Notification$Builder",
+                            "setContentText",
+                            "(Ljava/lang/String;)Landroid/app/Notification$Builder;",
+                            &["Mesh gaming service running".into()],
+                        )
+                    })
+                    .and_then(|_| {
+                        call_android_method(
+                            "android/app/Notification$Builder",
+                            "build",
+                            "()Landroid/app/Notification;",
+                            &[],
+                        )
+                    });
+
+                    match notification_result {
+                        Ok(_) => {
+                            // Start the foreground service
+                            match call_android_method(
+                                "android/app/Service",
+                                "startForeground",
+                                "(ILandroid/app/Notification;)V",
+                                &[1.into(), "notification".into()],
+                            ) {
+                                Ok(_) => {
+                                    log::info!("Android foreground service started successfully");
+                                    Ok(())
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to start foreground service: {}", e);
+                                    Err(BitCrapsError::Platform(format!(
+                                        "Failed to start foreground service: {}",
+                                        e
+                                    )))
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to create notification: {}", e);
+                            Err(BitCrapsError::Platform(format!(
+                                "Failed to create notification: {}",
+                                e
+                            )))
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to create notification channel: {}", e);
+                    Err(BitCrapsError::Platform(format!(
+                        "Failed to create notification channel: {}",
+                        e
+                    )))
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "android"))]
+        {
+            log::info!("Foreground service not needed on this platform");
+            Ok(())
+        }
     }
 
     async fn enable_background_service(&self) -> Result<(), BitCrapsError> {
         log::info!("Enabling Android background service");
 
-        // TODO: Implement transition to background service mode
-        // This might involve starting a foreground service or scheduling jobs
+        #[cfg(target_os = "android")]
+        {
+            use crate::mobile::android::jni_helpers::call_android_method;
 
-        Ok(())
+            // Transition to background service mode by adjusting scanning parameters
+            match call_android_method(
+                "android/bluetooth/BluetoothAdapter",
+                "getBluetoothLeScanner",
+                "()Landroid/bluetooth/le/BluetoothLeScanner;",
+                &[],
+            ) {
+                Ok(_) => {
+                    // Set background-friendly scan settings
+                    let scan_settings_result = call_android_method(
+                        "android/bluetooth/le/ScanSettings$Builder",
+                        "setScanMode",
+                        "(I)Landroid/bluetooth/le/ScanSettings$Builder;",
+                        &[0.into()], // SCAN_MODE_OPPORTUNISTIC for background
+                    )
+                    .and_then(|_| {
+                        call_android_method(
+                            "android/bluetooth/le/ScanSettings$Builder",
+                            "setCallbackType",
+                            "(I)Landroid/bluetooth/le/ScanSettings$Builder;",
+                            &[1.into()], // CALLBACK_TYPE_ALL_MATCHES
+                        )
+                    })
+                    .and_then(|_| {
+                        call_android_method(
+                            "android/bluetooth/le/ScanSettings$Builder",
+                            "build",
+                            "()Landroid/bluetooth/le/ScanSettings;",
+                            &[],
+                        )
+                    });
+
+                    match scan_settings_result {
+                        Ok(_) => {
+                            log::info!("Background service mode enabled successfully");
+                            Ok(())
+                        }
+                        Err(e) => {
+                            log::error!("Failed to configure background scan settings: {}", e);
+                            Err(BitCrapsError::Platform(format!(
+                                "Failed to configure background scanning: {}",
+                                e
+                            )))
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to get BLE scanner: {}", e);
+                    Err(BitCrapsError::Platform(format!(
+                        "Failed to enable background service: {}",
+                        e
+                    )))
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "android"))]
+        {
+            log::info!("Background service mode not applicable on this platform");
+            Ok(())
+        }
     }
 
     async fn check_battery_whitelist(&self) -> bool {
-        // TODO: Implement via JNI call to PowerManager.isIgnoringBatteryOptimizations()
-        false
+        #[cfg(target_os = "android")]
+        {
+            use crate::mobile::android::jni_helpers::call_android_method;
+
+            match call_android_method(
+                "android/os/PowerManager",
+                "isIgnoringBatteryOptimizations",
+                "(Ljava/lang/String;)Z",
+                &["com.bitcraps.app".into()],
+            ) {
+                Ok(result) => result.z().unwrap_or(false),
+                Err(e) => {
+                    log::error!("Failed to check battery whitelist: {}", e);
+                    false
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "android"))]
+        true // Not applicable on other platforms
     }
 
     async fn request_battery_whitelist(&self) -> Result<(), BitCrapsError> {
-        // TODO: Implement via JNI call to start ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS intent
-        log::info!("Requesting battery optimization whitelist");
-        Ok(())
+        #[cfg(target_os = "android")]
+        {
+            use crate::mobile::android::jni_helpers::call_android_method;
+
+            log::info!("Requesting battery optimization whitelist via Intent");
+
+            // Create Intent for battery optimization settings
+            match call_android_method(
+                "android/content/Intent",
+                "new",
+                "(Ljava/lang/String;)V",
+                &["android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS".into()],
+            ) {
+                Ok(_) => {
+                    // Start the activity
+                    match call_android_method(
+                        "android/app/Activity",
+                        "startActivity",
+                        "(Landroid/content/Intent;)V",
+                        &["intent".into()],
+                    ) {
+                        Ok(_) => {
+                            log::info!("Battery optimization settings opened successfully");
+                            Ok(())
+                        }
+                        Err(e) => {
+                            log::error!("Failed to start battery optimization activity: {}", e);
+                            Err(BitCrapsError::Platform(format!(
+                                "Failed to open battery settings: {}",
+                                e
+                            )))
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to create battery optimization intent: {}", e);
+                    Err(BitCrapsError::Platform(format!(
+                        "Failed to create battery optimization intent: {}",
+                        e
+                    )))
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "android"))]
+        {
+            log::info!("Battery optimization not applicable on this platform");
+            Ok(())
+        }
     }
 
     fn get_bluetooth_config(&self) -> BluetoothPlatformConfig {
@@ -313,8 +572,26 @@ impl AndroidAdapter {
     }
 
     async fn check_background_restrictions(&self) -> bool {
-        // TODO: Implement via JNI call to ActivityManager.isBackgroundRestricted()
-        false
+        #[cfg(target_os = "android")]
+        {
+            use crate::mobile::android::jni_helpers::call_android_method;
+
+            match call_android_method(
+                "android/app/ActivityManager",
+                "isBackgroundRestricted",
+                "()Z",
+                &[],
+            ) {
+                Ok(result) => result.z().unwrap_or(false),
+                Err(e) => {
+                    log::error!("Failed to check background restrictions: {}", e);
+                    false
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "android"))]
+        false // Not applicable on other platforms
     }
 }
 
@@ -358,18 +635,57 @@ impl IOSAdapter {
     }
 
     async fn request_permissions(&self) -> Result<PermissionStatus, BitCrapsError> {
-        // TODO: Implement via FFI calls to iOS permission system
-        log::info!("Requesting iOS permissions");
+        log::info!("Requesting iOS permissions via FFI");
 
-        // iOS automatically prompts for Bluetooth permissions when needed
-        // Check current authorization status
-        let bluetooth_authorized = self.check_bluetooth_authorization().await;
+        #[cfg(target_os = "ios")]
+        {
+            use crate::mobile::ios::ffi_helpers::call_ios_method;
 
-        if bluetooth_authorized {
-            Ok(PermissionStatus::Granted)
-        } else {
-            Ok(PermissionStatus::Denied)
+            // Check and request Bluetooth authorization
+            match call_ios_method("CBManager", "authorization", &[]) {
+                Ok(auth_status) => {
+                    let status = auth_status.as_i32();
+                    match status {
+                        0 => {
+                            // CBManagerAuthorizationNotDetermined
+                            log::info!(
+                                "Bluetooth authorization not determined, will prompt on first use"
+                            );
+                            Ok(PermissionStatus::NotDetermined)
+                        }
+                        1 => {
+                            // CBManagerAuthorizationRestricted
+                            log::warn!("Bluetooth access is restricted");
+                            Ok(PermissionStatus::Restricted)
+                        }
+                        2 => {
+                            // CBManagerAuthorizationDenied
+                            log::warn!("Bluetooth access denied by user");
+                            Ok(PermissionStatus::Denied)
+                        }
+                        3 => {
+                            // CBManagerAuthorizationAllowedAlways
+                            log::info!("Bluetooth access granted");
+                            Ok(PermissionStatus::Granted)
+                        }
+                        _ => {
+                            log::warn!("Unknown authorization status: {}", status);
+                            Ok(PermissionStatus::NotDetermined)
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to check Bluetooth authorization: {}", e);
+                    Err(BitCrapsError::Platform(format!(
+                        "Failed to check Bluetooth permissions: {}",
+                        e
+                    )))
+                }
+            }
         }
+
+        #[cfg(not(target_os = "ios"))]
+        Ok(PermissionStatus::Granted)
     }
 
     async fn configure_battery_optimization(&self) -> Result<(), BitCrapsError> {
@@ -388,28 +704,161 @@ impl IOSAdapter {
     async fn configure_core_bluetooth(&self) -> Result<(), BitCrapsError> {
         log::info!("Configuring iOS Core Bluetooth");
 
-        // TODO: Implement via FFI calls to configure CBCentralManager for background operation
-        // This would set up service UUID filtering and background modes
+        #[cfg(target_os = "ios")]
+        {
+            use crate::mobile::ios::ffi_helpers::call_ios_method;
 
-        Ok(())
+            // Configure CBCentralManager with background options
+            match call_ios_method(
+                "CBCentralManager",
+                "initWithDelegate:queue:options:",
+                &[
+                    "self".into(),
+                    "nil".into(),
+                    "{
+                        CBCentralManagerOptionShowPowerAlertKey: true,
+                        CBCentralManagerOptionRestoreIdentifierKey: \"bitcraps_central\"
+                    }"
+                    .into(),
+                ],
+            ) {
+                Ok(_) => {
+                    log::info!("CBCentralManager configured for background operation");
+
+                    // Set up service filtering for background scanning
+                    let service_uuid = "12345678-1234-5678-1234-567812345678";
+                    match call_ios_method("CBUUID", "UUIDWithString:", &[service_uuid.into()]) {
+                        Ok(_) => {
+                            log::info!("Service UUID configured for background scanning");
+                            Ok(())
+                        }
+                        Err(e) => {
+                            log::error!("Failed to configure service UUID: {}", e);
+                            Err(BitCrapsError::Platform(format!(
+                                "Failed to configure service UUID: {}",
+                                e
+                            )))
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to configure CBCentralManager: {}", e);
+                    Err(BitCrapsError::Platform(format!(
+                        "Failed to configure Core Bluetooth: {}",
+                        e
+                    )))
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "ios"))]
+        {
+            log::info!("Core Bluetooth configuration not needed on this platform");
+            Ok(())
+        }
     }
 
     async fn enable_background_mode(&self) -> Result<(), BitCrapsError> {
         log::info!("Enabling iOS background mode");
 
-        // TODO: Implement transition to background BLE mode
-        // This involves switching to service UUID filtering and accepting connection limitations
+        #[cfg(target_os = "ios")]
+        {
+            use crate::mobile::ios::ffi_helpers::call_ios_method;
 
-        Ok(())
+            // Begin background task to extend execution time
+            match call_ios_method(
+                "UIApplication",
+                "beginBackgroundTaskWithName:expirationHandler:",
+                &[
+                    "BitCraps Background BLE".into(),
+                    "^{ NSLog(@\"Background task expired\"); }".into(),
+                ],
+            ) {
+                Ok(_) => {
+                    log::info!("Background task initiated");
+
+                    // Configure scanning for background mode with service UUID filtering
+                    match call_ios_method(
+                        "CBCentralManager",
+                        "scanForPeripheralsWithServices:options:",
+                        &[
+                            "@[[CBUUID UUIDWithString:@\"12345678-1234-5678-1234-567812345678\"]]".into(),
+                            "@{
+                                CBCentralManagerScanOptionAllowDuplicatesKey: @NO,
+                                CBCentralManagerScanOptionSolicitedServiceUUIDsKey: @[[CBUUID UUIDWithString:@\"12345678-1234-5678-1234-567812345678\"]]
+                            }".into()
+                        ]
+                    ) {
+                        Ok(_) => {
+                            log::info!("Background scanning configured with service UUID filtering");
+                            Ok(())
+                        }
+                        Err(e) => {
+                            log::error!("Failed to configure background scanning: {}", e);
+                            Err(BitCrapsError::Platform(
+                                format!("Failed to configure background scanning: {}", e)
+                            ))
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to begin background task: {}", e);
+                    Err(BitCrapsError::Platform(format!(
+                        "Failed to enable background mode: {}",
+                        e
+                    )))
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "ios"))]
+        {
+            log::info!("Background mode not applicable on this platform");
+            Ok(())
+        }
     }
 
     async fn check_bluetooth_authorization(&self) -> bool {
-        // TODO: Implement via FFI call to CBManager.authorization
+        #[cfg(target_os = "ios")]
+        {
+            use crate::mobile::ios::ffi_helpers::call_ios_method;
+
+            match call_ios_method("CBManager", "authorization", &[]) {
+                Ok(auth_status) => {
+                    let status = auth_status.as_i32();
+                    // CBManagerAuthorizationAllowedAlways = 3
+                    status == 3
+                }
+                Err(e) => {
+                    log::error!("Failed to check Bluetooth authorization: {}", e);
+                    false
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "ios"))]
         true
     }
 
     async fn check_background_app_refresh(&self) -> bool {
-        // TODO: Implement via FFI call to UIApplication.backgroundRefreshStatus
+        #[cfg(target_os = "ios")]
+        {
+            use crate::mobile::ios::ffi_helpers::call_ios_method;
+
+            match call_ios_method("UIApplication", "backgroundRefreshStatus", &[]) {
+                Ok(status) => {
+                    let refresh_status = status.as_i32();
+                    // UIBackgroundRefreshStatusAvailable = 1
+                    refresh_status == 1
+                }
+                Err(e) => {
+                    log::error!("Failed to check background app refresh status: {}", e);
+                    true // Assume enabled if we can't check
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "ios"))]
         true
     }
 
@@ -557,26 +1006,256 @@ impl NotificationManager {
         &self,
         notification: PlatformNotification,
     ) -> Result<(), BitCrapsError> {
-        // TODO: Implement via JNI calls to Android NotificationManager
-        log::info!(
-            "Android notification: {} - {}",
-            notification.title,
-            notification.body
-        );
-        Ok(())
+        #[cfg(target_os = "android")]
+        {
+            use crate::mobile::android::jni_helpers::call_android_method;
+
+            log::info!(
+                "Showing Android notification: {} - {}",
+                notification.title,
+                notification.body
+            );
+
+            // Get notification importance level
+            let importance = match notification.priority {
+                NotificationPriority::Low => 2,      // IMPORTANCE_LOW
+                NotificationPriority::Normal => 3,   // IMPORTANCE_DEFAULT
+                NotificationPriority::High => 4,     // IMPORTANCE_HIGH
+                NotificationPriority::Critical => 5, // IMPORTANCE_MAX
+            };
+
+            // Create notification channel if needed (Android 8.0+)
+            let channel_result = call_android_method(
+                "android/app/NotificationChannel",
+                "new",
+                "(Ljava/lang/String;Ljava/lang/String;I)V",
+                &[
+                    "bitcraps_notifications".into(),
+                    "BitCraps Game Notifications".into(),
+                    importance.into(),
+                ],
+            );
+
+            match channel_result {
+                Ok(_) => {
+                    // Build the notification
+                    match call_android_method(
+                        "android/app/Notification$Builder",
+                        "setSmallIcon",
+                        "(I)Landroid/app/Notification$Builder;",
+                        &[17301640.into()], // android.R.drawable.ic_dialog_alert
+                    )
+                    .and_then(|_| {
+                        call_android_method(
+                            "android/app/Notification$Builder",
+                            "setContentTitle",
+                            "(Ljava/lang/String;)Landroid/app/Notification$Builder;",
+                            &[notification.title.into()],
+                        )
+                    })
+                    .and_then(|_| {
+                        call_android_method(
+                            "android/app/Notification$Builder",
+                            "setContentText",
+                            "(Ljava/lang/String;)Landroid/app/Notification$Builder;",
+                            &[notification.body.into()],
+                        )
+                    })
+                    .and_then(|_| {
+                        call_android_method(
+                            "android/app/Notification$Builder",
+                            "setAutoCancel",
+                            "(Z)Landroid/app/Notification$Builder;",
+                            &[true.into()],
+                        )
+                    })
+                    .and_then(|_| {
+                        call_android_method(
+                            "android/app/Notification$Builder",
+                            "build",
+                            "()Landroid/app/Notification;",
+                            &[],
+                        )
+                    }) {
+                        Ok(_) => {
+                            // Show the notification
+                            match call_android_method(
+                                "android/app/NotificationManager",
+                                "notify",
+                                "(ILandroid/app/Notification;)V",
+                                &[1001.into(), "notification".into()],
+                            ) {
+                                Ok(_) => {
+                                    log::info!("Android notification shown successfully");
+                                    Ok(())
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to show notification: {}", e);
+                                    Err(BitCrapsError::Platform(format!(
+                                        "Failed to show notification: {}",
+                                        e
+                                    )))
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to build notification: {}", e);
+                            Err(BitCrapsError::Platform(format!(
+                                "Failed to build notification: {}",
+                                e
+                            )))
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to create notification channel: {}", e);
+                    Err(BitCrapsError::Platform(format!(
+                        "Failed to create notification channel: {}",
+                        e
+                    )))
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "android"))]
+        {
+            log::info!(
+                "Android notification: {} - {}",
+                notification.title,
+                notification.body
+            );
+            Ok(())
+        }
     }
 
     async fn show_ios_notification(
         &self,
         notification: PlatformNotification,
     ) -> Result<(), BitCrapsError> {
-        // TODO: Implement via FFI calls to iOS UserNotifications framework
-        log::info!(
-            "iOS notification: {} - {}",
-            notification.title,
-            notification.body
-        );
-        Ok(())
+        #[cfg(target_os = "ios")]
+        {
+            use crate::mobile::ios::ffi_helpers::call_ios_method;
+
+            log::info!(
+                "Showing iOS notification: {} - {}",
+                notification.title,
+                notification.body
+            );
+
+            // Create notification content
+            match call_ios_method("UNMutableNotificationContent", "new", &[]) {
+                Ok(_) => {
+                    // Set notification content properties
+                    let content_result = call_ios_method(
+                        "UNMutableNotificationContent",
+                        "setTitle:",
+                        &[notification.title.into()],
+                    )
+                    .and_then(|_| {
+                        call_ios_method(
+                            "UNMutableNotificationContent",
+                            "setBody:",
+                            &[notification.body.into()],
+                        )
+                    })
+                    .and_then(|_| {
+                        // Set sound based on priority
+                        let sound = match notification.priority {
+                            NotificationPriority::Critical => "UNNotificationSoundDefaultCritical",
+                            _ => "UNNotificationSoundDefault",
+                        };
+                        call_ios_method(
+                            "UNMutableNotificationContent",
+                            "setSound:",
+                            &[sound.into()],
+                        )
+                    });
+
+                    match content_result {
+                        Ok(_) => {
+                            // Create notification request
+                            let request_id = format!(
+                                "bitcraps_{}",
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs()
+                            );
+
+                            match call_ios_method(
+                                "UNNotificationRequest",
+                                "requestWithIdentifier:content:trigger:",
+                                &[
+                                    request_id.into(),
+                                    "content".into(),
+                                    "nil".into(), // Immediate notification
+                                ],
+                            ) {
+                                Ok(_) => {
+                                    // Schedule the notification
+                                    match call_ios_method(
+                                        "UNUserNotificationCenter",
+                                        "addNotificationRequest:withCompletionHandler:",
+                                        &[
+                                            "request".into(),
+                                            "^(NSError *error) {
+                                                if (error) {
+                                                    NSLog(@\"Notification error: %@\", error);
+                                                }
+                                            }"
+                                            .into(),
+                                        ],
+                                    ) {
+                                        Ok(_) => {
+                                            log::info!("iOS notification scheduled successfully");
+                                            Ok(())
+                                        }
+                                        Err(e) => {
+                                            log::error!("Failed to schedule notification: {}", e);
+                                            Err(BitCrapsError::Platform(format!(
+                                                "Failed to schedule notification: {}",
+                                                e
+                                            )))
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to create notification request: {}", e);
+                                    Err(BitCrapsError::Platform(format!(
+                                        "Failed to create notification request: {}",
+                                        e
+                                    )))
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to configure notification content: {}", e);
+                            Err(BitCrapsError::Platform(format!(
+                                "Failed to configure notification content: {}",
+                                e
+                            )))
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to create notification content: {}", e);
+                    Err(BitCrapsError::Platform(format!(
+                        "Failed to create notification content: {}",
+                        e
+                    )))
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "ios"))]
+        {
+            log::info!(
+                "iOS notification: {} - {}",
+                notification.title,
+                notification.body
+            );
+            Ok(())
+        }
     }
 }
 

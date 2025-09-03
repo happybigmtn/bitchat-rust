@@ -51,7 +51,7 @@ impl Default for PrometheusConfig {
             .ok()
             .and_then(|addr| addr.parse().ok())
             .unwrap_or_else(|| ([0, 0, 0, 0], 9090).into());
-        
+
         Self {
             bind_address,
             collection_interval_seconds: 15,

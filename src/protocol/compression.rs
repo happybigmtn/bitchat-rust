@@ -203,10 +203,15 @@ impl AdaptiveCompression {
                     .map_err(|e| crate::error::Error::Serialization(e.to_string()))?
             }
             CompressionAlgorithm::Zstd => {
-                // Future: Add zstd support
-                return Err(crate::error::Error::Protocol(
-                    "Zstd not yet implemented".to_string(),
-                ));
+                // Use zstd with default level
+                let mut encoder = zstd::stream::Encoder::new(Vec::new(), 0)
+                    .map_err(|e| crate::error::Error::Serialization(e.to_string()))?;
+                encoder
+                    .write_all(data)
+                    .map_err(|e| crate::error::Error::Serialization(e.to_string()))?;
+                encoder
+                    .finish()
+                    .map_err(|e| crate::error::Error::Serialization(e.to_string()))?
             }
         };
 
@@ -243,9 +248,12 @@ impl AdaptiveCompression {
                     .map_err(|e| crate::error::Error::Serialization(e.to_string()))?
             }
             CompressionAlgorithm::Zstd => {
-                return Err(crate::error::Error::Protocol(
-                    "Zstd not yet implemented".to_string(),
-                ));
+                let mut decoder = zstd::stream::Decoder::new(&payload.data[..])
+                    .map_err(|e| crate::error::Error::Serialization(e.to_string()))?;
+                let mut out = Vec::new();
+                std::io::copy(&mut decoder, &mut out)
+                    .map_err(|e| crate::error::Error::Serialization(e.to_string()))?;
+                out
             }
         };
 
@@ -278,7 +286,12 @@ impl AdaptiveCompression {
                     Err(_) => return 1.0,
                 }
             }
-            CompressionAlgorithm::Zstd => return 1.0, // Not implemented
+            CompressionAlgorithm::Zstd => {
+                match zstd::stream::encode_all(&data[..], 0) {
+                    Ok(c) => c,
+                    Err(_) => return 1.0,
+                }
+            }
         };
 
         compressed.len() as f64 / data.len() as f64

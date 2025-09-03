@@ -1,6 +1,7 @@
 //! Lock-free consensus engine for high-performance game state management
 
 use crossbeam_epoch::{self as epoch, Atomic, Owned};
+use crossbeam_skiplist::SkipMap;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -47,11 +48,8 @@ pub struct LockFreeConsensusEngine {
     /// Local peer ID
     local_peer_id: PeerId,
 
-    /// Pending proposals (using crossbeam's lock-free map would be better)
-    // TODO: [Performance] Replace FxHashMap with crossbeam::SkipList for true lock-free operations
-    //       Current implementation uses parking_lot::RwLock which can cause contention under high load
-    //       See: feynman/bugs.md - Lock-free data structures partially implemented
-    pending_proposals: Arc<parking_lot::RwLock<FxHashMap<ProposalId, GameProposal>>>,
+    /// Pending proposals using lock-free skip list for high concurrency
+    pending_proposals: Arc<SkipMap<ProposalId, GameProposal>>,
 
     /// Consensus participants
     _participants: Vec<PeerId>,
@@ -82,7 +80,7 @@ impl LockFreeConsensusEngine {
             version_counter: AtomicU64::new(1),
             game_id,
             local_peer_id,
-            pending_proposals: Arc::new(parking_lot::RwLock::new(FxHashMap::default())),
+            pending_proposals: Arc::new(SkipMap::new()),
             _participants: participants,
             metrics: Arc::new(LockFreeMetrics::default()),
             active: AtomicBool::new(true),
@@ -253,13 +251,34 @@ impl LockFreeConsensusEngine {
             signature: Signature([0u8; 64]), // Would use real signature
         };
 
-        // Store proposal (minimal locking)
-        {
-            let mut proposals = self.pending_proposals.write();
-            proposals.insert(proposal_id, proposal);
-        }
+        // Store proposal (lock-free)
+        self.pending_proposals.insert(proposal_id, proposal);
 
         Ok(proposal_id)
+    }
+
+    /// Get proposal by ID (lock-free)
+    pub fn get_proposal(&self, proposal_id: &ProposalId) -> Option<GameProposal> {
+        self.pending_proposals
+            .get(proposal_id)
+            .map(|entry| entry.value().clone())
+    }
+
+    /// Remove proposal by ID (lock-free)
+    pub fn remove_proposal(&self, proposal_id: &ProposalId) -> Option<GameProposal> {
+        self.pending_proposals
+            .remove(proposal_id)
+            .map(|entry| entry.value().clone())
+    }
+
+    /// Get count of pending proposals (lock-free)
+    pub fn pending_proposal_count(&self) -> usize {
+        self.pending_proposals.len()
+    }
+
+    /// Check if proposal exists (lock-free)
+    pub fn has_proposal(&self, proposal_id: &ProposalId) -> bool {
+        self.pending_proposals.contains_key(proposal_id)
     }
 
     /// Check if a state transition is valid (lock-free)

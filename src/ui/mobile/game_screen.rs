@@ -1,5 +1,5 @@
 //! Mobile game screen implementation
-//! 
+//!
 //! Provides the core game UI for mobile platforms with touch-optimized controls
 
 use std::sync::Arc;
@@ -105,22 +105,22 @@ impl GameScreen {
             bet_amount: Arc::new(RwLock::new(10)),
         }
     }
-    
+
     /// Handle placing a bet
     pub async fn place_bet(&self, bet_type: BetType, amount: u64) -> Result<(), String> {
         let balance = *self.balance.read().await;
-        
+
         if amount > balance.0 {
             return Err("Insufficient balance".to_string());
         }
-        
+
         // Deduct from balance
         *self.balance.write().await = CrapTokens(balance.0 - amount);
-        
+
         // Add to pot
         let mut pot = self.pot_size.write().await;
         *pot = CrapTokens(pot.0 + amount);
-        
+
         // Set current bet
         *self.current_bet.write().await = Some(ActiveBet {
             bet_type,
@@ -128,14 +128,14 @@ impl GameScreen {
             placed_at: SystemTime::now(),
             potential_payout: Self::calculate_payout(bet_type, amount),
         });
-        
+
         // Add to message log
         self.add_message(
             "You".to_string(),
             format!("Placed {} CRAP on {:?}", amount, bet_type),
             MessageType::Bet,
         ).await;
-        
+
         // Trigger chip animation
         let mut anim = self.animation_state.write().await;
         anim.chip_animations.push(ChipAnimation {
@@ -144,21 +144,21 @@ impl GameScreen {
             progress: 0.0,
             amount: CrapTokens(amount),
         });
-        
+
         Ok(())
     }
-    
+
     /// Handle rolling dice
     pub async fn roll_dice(&self) -> Result<DiceRoll, String> {
         // Start dice animation
         let mut anim = self.animation_state.write().await;
         anim.dice_rolling = true;
         anim.dice_rotation = (0.0, 0.0);
-        
+
         // Simulate dice roll (in real implementation, this would use consensus)
         let die1 = (rand::random::<u8>() % 6) + 1;
         let die2 = (rand::random::<u8>() % 6) + 1;
-        
+
         let roll = DiceRoll {
             die1,
             die2,
@@ -167,27 +167,27 @@ impl GameScreen {
                 .unwrap()
                 .as_secs(),
         };
-        
+
         *self.last_roll.write().await = Some(roll.clone());
-        
+
         // Add to message log
         self.add_message(
             "Shooter".to_string(),
             format!("Rolled {} + {} = {}", die1, die2, die1 + die2),
             MessageType::Roll,
         ).await;
-        
+
         // Process the roll result
         self.process_roll_result(&roll).await;
-        
+
         Ok(roll)
     }
-    
+
     /// Process the result of a dice roll
     async fn process_roll_result(&self, roll: &DiceRoll) {
         let total = roll.die1 + roll.die2;
         let phase = self.phase.read().await.clone();
-        
+
         match phase {
             GamePhase::ComeOut => {
                 match total {
@@ -244,7 +244,7 @@ impl GameScreen {
             _ => {}
         }
     }
-    
+
     /// Resolve bets based on outcome
     async fn resolve_bets(&self, pass_wins: bool) {
         if let Some(bet) = self.current_bet.read().await.as_ref() {
@@ -253,17 +253,17 @@ impl GameScreen {
                 BetType::DontPass => !pass_wins,
                 _ => false,
             };
-            
+
             if won {
                 // Add winnings to balance
                 let winnings = bet.potential_payout.0;
                 let mut balance = self.balance.write().await;
                 *balance = CrapTokens(balance.0 + winnings);
-                
+
                 // Trigger celebration
                 let mut anim = self.animation_state.write().await;
                 anim.celebration_active = true;
-                
+
                 self.add_message(
                     "You".to_string(),
                     format!("Won {} CRAP!", winnings),
@@ -276,12 +276,12 @@ impl GameScreen {
                     MessageType::Loss,
                 ).await;
             }
-            
+
             // Clear current bet
             *self.current_bet.write().await = None;
         }
     }
-    
+
     /// Add a message to the game log
     async fn add_message(&self, sender: String, content: String, message_type: MessageType) {
         let mut log = self.message_log.write().await;
@@ -291,13 +291,13 @@ impl GameScreen {
             content,
             message_type,
         });
-        
+
         // Keep only last 50 messages
         if log.len() > 50 {
             log.remove(0);
         }
     }
-    
+
     /// Calculate potential payout for a bet
     fn calculate_payout(bet_type: BetType, amount: u64) -> CrapTokens {
         let multiplier = match bet_type {
@@ -308,10 +308,10 @@ impl GameScreen {
             BetType::Hardway(_) => 10.0,
             _ => 2.0,
         };
-        
+
         CrapTokens((amount as f64 * multiplier) as u64)
     }
-    
+
     /// Get visual position for bet placement
     fn get_bet_position(bet_type: BetType) -> (f32, f32) {
         match bet_type {
@@ -323,28 +323,28 @@ impl GameScreen {
             _ => (0.5, 0.5),
         }
     }
-    
+
     /// Update animations
     pub async fn update_animations(&self, delta_time: Duration) {
         let mut anim = self.animation_state.write().await;
-        
+
         // Update dice rolling animation
         if anim.dice_rolling {
             anim.dice_rotation.0 += delta_time.as_secs_f32() * 720.0;
             anim.dice_rotation.1 += delta_time.as_secs_f32() * 540.0;
-            
+
             // Stop after 2 seconds
             if anim.dice_rotation.0 > 1440.0 {
                 anim.dice_rolling = false;
             }
         }
-        
+
         // Update chip animations
         anim.chip_animations.retain_mut(|chip| {
             chip.progress += delta_time.as_secs_f32() * 2.0;
             chip.progress < 1.0
         });
-        
+
         // Update celebration
         if anim.celebration_active {
             // Auto-disable after 3 seconds
@@ -358,29 +358,29 @@ impl Screen for GameScreen {
     fn render(&self, ctx: &mut RenderContext) {
         // Render game table background
         self.render_table(ctx);
-        
+
         // Render dice
         self.render_dice(ctx);
-        
+
         // Render betting areas
         self.render_betting_areas(ctx);
-        
+
         // Render chips
         self.render_chips(ctx);
-        
+
         // Render player info
         self.render_players(ctx);
-        
+
         // Render controls
         self.render_controls(ctx);
-        
+
         // Render message log
         self.render_message_log(ctx);
-        
+
         // Render animations
         self.render_animations(ctx);
     }
-    
+
     fn handle_touch(&mut self, event: TouchEvent) -> Option<ScreenTransition> {
         match event {
             TouchEvent::Tap { x, y } => {
@@ -388,7 +388,7 @@ impl Screen for GameScreen {
                 if self.is_betting_area(x, y) {
                     // Place bet logic
                 }
-                
+
                 // Handle control button taps
                 if self.is_roll_button(x, y) {
                     // Roll dice logic
@@ -396,10 +396,10 @@ impl Screen for GameScreen {
             }
             _ => {}
         }
-        
+
         None
     }
-    
+
     fn update(&mut self, _delta_time: Duration) {
         // Update is handled by async methods
     }
@@ -410,54 +410,54 @@ impl GameScreen {
     fn render_table(&self, ctx: &mut RenderContext) {
         // Draw green felt table
         ctx.fill_rect(0.0, 0.0, 1.0, 1.0, (0, 100, 0, 255));
-        
+
         // Draw betting area outlines
         ctx.draw_rect(0.2, 0.4, 0.2, 0.2, (255, 255, 255, 255), 2.0);
         ctx.draw_text("PASS", 0.3, 0.5, 16.0, (255, 255, 255, 255));
-        
+
         ctx.draw_rect(0.6, 0.4, 0.2, 0.2, (255, 255, 255, 255), 2.0);
         ctx.draw_text("DON'T", 0.7, 0.5, 16.0, (255, 255, 255, 255));
     }
-    
+
     fn render_dice(&self, _ctx: &mut RenderContext) {
         // Render dice with current animation state
     }
-    
+
     fn render_betting_areas(&self, _ctx: &mut RenderContext) {
         // Highlight active betting areas
     }
-    
+
     fn render_chips(&self, _ctx: &mut RenderContext) {
         // Render placed chips with animations
     }
-    
+
     fn render_players(&self, _ctx: &mut RenderContext) {
         // Show connected players
     }
-    
+
     fn render_controls(&self, ctx: &mut RenderContext) {
         // Render bet amount selector
         ctx.fill_rect(0.1, 0.8, 0.3, 0.1, (50, 50, 50, 200));
         ctx.draw_text("BET: 10 CRAP", 0.25, 0.85, 14.0, (255, 255, 255, 255));
-        
+
         // Render roll button
         ctx.fill_rect(0.6, 0.8, 0.3, 0.1, (200, 50, 50, 255));
         ctx.draw_text("ROLL DICE", 0.75, 0.85, 16.0, (255, 255, 255, 255));
     }
-    
+
     fn render_message_log(&self, _ctx: &mut RenderContext) {
         // Show recent game messages
     }
-    
+
     fn render_animations(&self, _ctx: &mut RenderContext) {
         // Render active animations
     }
-    
+
     fn is_betting_area(&self, _x: f32, _y: f32) -> bool {
         // Check if touch is in betting area
         false
     }
-    
+
     fn is_roll_button(&self, x: f32, y: f32) -> bool {
         x >= 0.6 && x <= 0.9 && y >= 0.8 && y <= 0.9
     }

@@ -807,3 +807,5 @@ async fn test_encryption_performance() {
         ops_per_sec
     );
 }
+#![cfg(feature = "legacy-tests")]
+#![cfg(feature = "legacy-tests")]

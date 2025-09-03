@@ -125,7 +125,7 @@ impl DbusConnection {
         Ok("placeholder".to_string())
     }
 
-    /// Set a D-Bus property  
+    /// Set a D-Bus property
     async fn set_property(
         &self,
         destination: &str,
@@ -181,6 +181,9 @@ pub struct LinuxBlePeripheral {
 
     // Service data
     service_characteristics: Arc<RwLock<HashMap<String, Vec<u8>>>>,
+
+    // Recovery configuration
+    recovery_config: Arc<RwLock<Option<RecoveryConfig>>>,
 }
 
 #[cfg(target_os = "linux")]
@@ -204,6 +207,7 @@ impl LinuxBlePeripheral {
             advertisement_registered: Arc::new(RwLock::new(false)),
 
             service_characteristics: Arc::new(RwLock::new(HashMap::new())),
+            recovery_config: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -816,8 +820,11 @@ impl BlePeripheral for LinuxBlePeripheral {
         Ok(())
     }
 
-    async fn set_recovery_config(&mut self, _config: RecoveryConfig) -> Result<()> {
-        // TODO: Store recovery configuration
+    async fn set_recovery_config(&mut self, config: RecoveryConfig) -> Result<()> {
+        // Store recovery configuration
+        let mut recovery_config = self.recovery_config.write().await;
+        *recovery_config = Some(config);
+        log::debug!("Recovery configuration updated");
         Ok(())
     }
 

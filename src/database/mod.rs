@@ -143,16 +143,20 @@ impl DatabasePool {
         }
 
         // Set optimal pragmas
-        let _: String = conn.query_row("PRAGMA synchronous = NORMAL", [], |row| row.get(0))
+        let _: String = conn
+            .query_row("PRAGMA synchronous = NORMAL", [], |row| row.get(0))
             .map_err(|e| Error::Database(format!("Failed to set synchronous: {}", e)))?;
 
-        let _: i64 = conn.query_row("PRAGMA cache_size = -64000", [], |row| row.get(0)) // 64MB cache
+        let _: i64 = conn
+            .query_row("PRAGMA cache_size = -64000", [], |row| row.get(0)) // 64MB cache
             .map_err(|e| Error::Database(format!("Failed to set cache size: {}", e)))?;
 
-        let _: String = conn.query_row("PRAGMA temp_store = MEMORY", [], |row| row.get(0))
+        let _: String = conn
+            .query_row("PRAGMA temp_store = MEMORY", [], |row| row.get(0))
             .map_err(|e| Error::Database(format!("Failed to set temp store: {}", e)))?;
 
-        let _: i64 = conn.query_row("PRAGMA mmap_size = 268435456", [], |row| row.get(0)) // 256MB mmap
+        let _: i64 = conn
+            .query_row("PRAGMA mmap_size = 268435456", [], |row| row.get(0)) // 256MB mmap
             .map_err(|e| Error::Database(format!("Failed to set mmap size: {}", e)))?;
 
         // Set busy timeout
@@ -284,10 +288,11 @@ impl DatabasePool {
     /// Checkpoint the database (WAL mode)
     pub async fn checkpoint(&self) -> Result<()> {
         self.with_connection(|conn| {
-            let _: (i64, i64) = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
-                Ok((row.get(0)?, row.get(1)?))
-            })
-            .map_err(|e| Error::Database(format!("Checkpoint failed: {}", e)))?;
+            let _: (i64, i64) = conn
+                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                    Ok((row.get(0)?, row.get(1)?))
+                })
+                .map_err(|e| Error::Database(format!("Checkpoint failed: {}", e)))?;
             Ok(())
         })
         .await

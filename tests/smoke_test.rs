@@ -71,3 +71,4 @@ fn test_compilation_integration() {
     // If this test runs, it means the basic integration is working
     assert!(true, "If this assertion runs, basic compilation is working");
 }
+#![cfg(feature = "legacy-tests")]

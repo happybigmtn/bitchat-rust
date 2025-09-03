@@ -122,6 +122,12 @@ pub enum ConsensusPayload {
         violation_type: CheatType,
         evidence: Vec<u8>,
     },
+
+    // Leader election consensus
+    LeaderElection {
+        proposed_leader: PeerId,
+        term: u64,
+    },
 }
 
 /// Compressed game state for efficient BLE transmission
@@ -298,6 +304,7 @@ impl ConsensusPayload {
             ConsensusPayload::JoinAccept { .. } => MessagePriority::Low,
             ConsensusPayload::JoinReject { .. } => MessagePriority::Low,
             ConsensusPayload::CheatAlert { .. } => MessagePriority::Critical,
+            ConsensusPayload::LeaderElection { .. } => MessagePriority::High,
         }
     }
 }

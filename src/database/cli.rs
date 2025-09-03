@@ -337,7 +337,7 @@ impl DbCli {
 -- Up Migration
 -- Add your forward migration SQL here
 
--- Down Migration  
+-- Down Migration
 -- Add your rollback SQL here (optional but recommended)
 "#,
             name,
@@ -575,13 +575,21 @@ impl DbCli {
 
             // Get row count - Use proper table name validation and quoting
             // Note: Table names cannot be parameterized in SQLite, so we validate the name first
-            if !table_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                return Err(Error::Database(format!("Invalid table name: {}", table_name)));
+            if !table_name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                return Err(Error::Database(format!(
+                    "Invalid table name: {}",
+                    table_name
+                )));
             }
             let row_count: usize = conn
-                .query_row(&format!("SELECT COUNT(*) FROM \"{}\"", table_name), [], |row| {
-                    row.get(0)
-                })
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM \"{}\"", table_name),
+                    [],
+                    |row| row.get(0),
+                )
                 .map_err(|e| Error::Database(e.to_string()))?;
 
             result.push((table_name, col_count, row_count));

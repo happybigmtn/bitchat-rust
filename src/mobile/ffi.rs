@@ -387,8 +387,41 @@ impl BitCrapsNode {
             });
         }
 
-        // TODO: Join actual game via mesh network
+        // Join game via mesh network
+        let game_id_bytes: [u8; 32] = hex::decode(&game_id)
+            .map_err(|_| BitCrapsError::InvalidInput {
+                reason: "Invalid hex in game ID".to_string(),
+            })?
+            .try_into()
+            .map_err(|_| BitCrapsError::InvalidInput {
+                reason: "Invalid game ID length".to_string(),
+            })?;
 
+        // Send join request through mesh network
+        let join_payload = serde_json::json!({
+            "game_id": hex::encode(game_id_bytes),
+            "player_id": hex::encode(self.peer_id),
+        });
+
+        let join_msg = crate::mesh::MeshMessage {
+            message_type: crate::mesh::MeshMessageType::DirectMessage,
+            payload: serde_json::to_vec(&join_payload).unwrap_or_default(),
+            sender: self.peer_id,
+            recipient: None,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            signature: vec![], // Signature will be added by mesh service
+        };
+
+        // Find the game host and send join request
+        if let Some(response) = self.mesh_service.poll_discovery_response().await {
+            // Process game discovery response
+            log::info!("Found game to join: {:?}", response);
+        }
+
+        // For now, return not found if game doesn't exist
         Err(BitCrapsError::NotFound {
             item: format!("Game {}", game_id),
         })

@@ -82,13 +82,19 @@ impl NetworkDashboard {
 
     /// Aggregate metrics from all known bootstrap nodes
     async fn aggregate_network_metrics(&self) -> NetworkMetrics {
-        // In a real implementation, this would query multiple bootstrap nodes
-        // For now, return mock data
+        // Get real metrics from global METRICS instance
+        use crate::monitoring::metrics::METRICS;
+        
+        let connected_peers = METRICS.network.active_connections.load(Ordering::Relaxed);
+        let active_games = METRICS.gaming.active_games.load(Ordering::Relaxed) as u64;
+        let total_volume = METRICS.gaming.total_volume.load(Ordering::Relaxed);
+        let messages_sent = METRICS.network.messages_sent.load(Ordering::Relaxed) as u64;
+        
         NetworkMetrics {
-            node_count: self.total_nodes.load(Ordering::Relaxed).saturating_add(1),
-            game_count: self.active_games.load(Ordering::Relaxed),
-            volume: self.total_volume.load(Ordering::Relaxed),
-            hash_rate: self.mining_rate.load(Ordering::Relaxed),
+            node_count: (connected_peers as u64).max(1), // At least this node
+            game_count: active_games,
+            volume: total_volume,
+            hash_rate: messages_sent / 60, // Messages per minute converted to rate
         }
     }
 

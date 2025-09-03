@@ -44,7 +44,7 @@ pub struct PoolConfig {
     /// Small buffer pool (256 bytes)
     pub small_pool_size: usize,
     pub small_buffer_size: usize,
-    /// Medium buffer pool (1KB)  
+    /// Medium buffer pool (1KB)
     pub medium_pool_size: usize,
     pub medium_buffer_size: usize,
     /// Large buffer pool (4KB)

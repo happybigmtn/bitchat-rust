@@ -1,5 +1,5 @@
 //! Commands module for BitCraps UI
-//! 
+//!
 //! This module implements the user interface components for BitCraps
 //! including CLI, TUI, and specialized casino widgets.
 
@@ -13,7 +13,7 @@ use crate::protocol::*;
 use crate::token::Transaction;
 
 /// Main persistence manager coordinating all storage
-/// 
+///
 /// Feynman: This is the casino's record keeper - every game, every bet,
 /// every transaction is written down in ledgers that survive even if
 /// the power goes out. It's like having an indestructible filing cabinet
@@ -29,24 +29,24 @@ impl PersistenceManager {
         // Create SQLite database
         let db_path = format!("{}/bitcraps.db", data_dir);
         let conn = Connection::open(&db_path)?;
-        
+
         // Initialize schema
         Self::init_schema(&conn)?;
-        
+
         // Create key-value store
         let kv_path = format!("{}/bitcraps_kv", data_dir);
         let kv_store = sled::open(&kv_path)?;
-        
+
         // Create wallet cipher
         let wallet_cipher = WalletCipher::new();
-        
+
         Ok(Self {
             sqlite_conn: Arc::new(RwLock::new(conn)),
             kv_store: Arc::new(kv_store),
             wallet_cipher: Arc::new(wallet_cipher),
         })
     }
-    
+
     fn init_schema(conn: &Connection) -> Result<()> {
         // Games table
         conn.execute(
@@ -64,7 +64,7 @@ impl PersistenceManager {
             )",
             [],
         )?;
-        
+
         // Bets table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS bets (
@@ -80,7 +80,7 @@ impl PersistenceManager {
             )",
             [],
         )?;
-        
+
         // Rolls table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS rolls (
@@ -95,7 +95,7 @@ impl PersistenceManager {
             )",
             [],
         )?;
-        
+
         // Transactions table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS transactions (
@@ -111,7 +111,7 @@ impl PersistenceManager {
             )",
             [],
         )?;
-        
+
         // Peers table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS peers (
@@ -126,19 +126,19 @@ impl PersistenceManager {
             )",
             [],
         )?;
-        
+
         // Create indexes
         conn.execute("CREATE INDEX IF NOT EXISTS idx_games_series ON games(series_id)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_bets_player ON bets(player)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_bets_game ON bets(game_id)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_rolls_game ON rolls(game_id)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tx_peer ON transactions(from_peer, to_peer)", [])?;
-        
+
         Ok(())
     }
-    
+
     /// Save a game to the database
-    /// 
+    ///
     /// Feynman: Like filing a game report - we record who played,
     /// what happened, and who won. This creates a permanent record
     /// that can be audited later to ensure fairness.
@@ -148,9 +148,9 @@ impl PersistenceManager {
         status: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let conn = self.sqlite_conn.write().await;
-        
+
         conn.execute(
-            "INSERT OR REPLACE INTO games 
+            "INSERT OR REPLACE INTO games
              (game_id, series_id, shooter, start_time, status, total_wagered, total_paid)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
@@ -165,10 +165,10 @@ impl PersistenceManager {
                 0i64,
             ],
         )?;
-        
+
         Ok(())
     }
-    
+
     /// Save a bet to the database
     pub async fn save_bet(
         &self,
@@ -176,9 +176,9 @@ impl PersistenceManager {
         status: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let conn = self.sqlite_conn.write().await;
-        
+
         conn.execute(
-            "INSERT INTO bets 
+            "INSERT INTO bets
              (bet_id, game_id, player, bet_type, amount, timestamp, status)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
@@ -191,10 +191,10 @@ impl PersistenceManager {
                 status,
             ],
         )?;
-        
+
         Ok(())
     }
-    
+
     /// Record a dice roll
     pub async fn save_roll(
         &self,
@@ -204,9 +204,9 @@ impl PersistenceManager {
         phase: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let conn = self.sqlite_conn.write().await;
-        
+
         conn.execute(
-            "INSERT INTO rolls 
+            "INSERT INTO rolls
              (game_id, roll_number, die1, die2, timestamp, phase)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
@@ -220,10 +220,10 @@ impl PersistenceManager {
                 phase,
             ],
         )?;
-        
+
         Ok(())
     }
-    
+
     /// Get game history for a player
     pub async fn get_player_history(
         &self,
@@ -231,7 +231,7 @@ impl PersistenceManager {
         limit: u32,
     ) -> Result<Vec<GameSummary>, Box<dyn std::error::Error>> {
         let conn = self.sqlite_conn.read().await;
-        
+
         let mut stmt = conn.prepare(
             "SELECT g.game_id, g.start_time, g.end_time, g.status,
                     b.bet_type, b.amount, b.payout
@@ -241,7 +241,7 @@ impl PersistenceManager {
              ORDER BY g.start_time DESC
              LIMIT ?2"
         )?;
-        
+
         let game_iter = stmt.query_map(params![player.as_ref(), limit], |row| {
             Ok(GameSummary {
                 game_id: row.get(0)?,
@@ -253,18 +253,18 @@ impl PersistenceManager {
                 payout: row.get(6)?,
             })
         })?;
-        
+
         let mut games = Vec::new();
         for game in game_iter {
             games.push(game?);
         }
-        
+
         Ok(games)
     }
 }
 
 /// Key-value store for peer data and session state
-/// 
+///
 /// Feynman: This is like a giant phone book that remembers everyone
 /// who ever visited the casino. It's fast to look up because it's
 /// organized like a dictionary - you say a name, it instantly finds
@@ -277,7 +277,7 @@ impl PeerStore {
     pub fn new(db: Arc<Db>) -> Self {
         Self { db }
     }
-    
+
     pub async fn save_peer_info(
         &self,
         peer_id: PeerId,
@@ -288,13 +288,13 @@ impl PeerStore {
         self.db.insert(key, value)?;
         Ok(())
     }
-    
+
     pub async fn get_peer_info(
         &self,
         peer_id: PeerId,
     ) -> Result<Option<PeerInfo>, Box<dyn std::error::Error>> {
         let key = format!("peer:{:?}", peer_id);
-        
+
         if let Some(value) = self.db.get(&key)? {
             let info: PeerInfo = serde_json::from_slice(&value)?;
             Ok(Some(info))
@@ -302,7 +302,7 @@ impl PeerStore {
             Ok(None)
         }
     }
-    
+
     pub async fn save_session(
         &self,
         session_id: &str,
@@ -313,13 +313,13 @@ impl PeerStore {
         self.db.insert(key, value)?;
         Ok(())
     }
-    
+
     pub async fn restore_session(
         &self,
         session_id: &str,
     ) -> Result<Option<SessionState>, Box<dyn std::error::Error>> {
         let key = format!("session:{}", session_id);
-        
+
         if let Some(value) = self.db.get(&key)? {
             let state: SessionState = serde_json::from_slice(&value)?;
             Ok(Some(state))
@@ -330,7 +330,7 @@ impl PeerStore {
 }
 
 /// Encrypted wallet storage
-/// 
+///
 /// Feynman: Your wallet is like a safe - it needs a combination
 /// (password) to open. We use military-grade encryption to scramble
 /// your balance and keys so even if someone steals the file, they
@@ -343,7 +343,7 @@ impl WalletCipher {
     pub fn new() -> Self {
         Self {}
     }
-    
+
     pub fn encrypt_wallet(
         &self,
         wallet: &Wallet,
@@ -354,7 +354,7 @@ impl WalletCipher {
         let json = serde_json::to_vec(wallet)?;
         Ok(json) // Placeholder - would be encrypted
     }
-    
+
     pub fn decrypt_wallet(
         &self,
         encrypted: &[u8],

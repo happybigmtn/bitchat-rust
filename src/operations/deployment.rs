@@ -1,5 +1,5 @@
 //! Deployment Management and Automation
-//! 
+//!
 //! Automated deployment pipelines and infrastructure management for BitCraps
 
 use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}};
@@ -43,7 +43,7 @@ impl DeploymentManager {
 
         // Register the pipeline
         self.pipelines.write().await.insert(pipeline.id.clone(), pipeline.clone());
-        
+
         info!("Registered deployment pipeline: {}", pipeline.name);
         Ok(())
     }
@@ -80,7 +80,7 @@ impl DeploymentManager {
 
         tokio::spawn(async move {
             let result = Self::execute_pipeline(pipeline_clone, execution_clone.clone()).await;
-            
+
             // Update deployment status
             let mut active = active_deployments.write().await;
             if let Some(mut exec) = active.remove(&deployment_id) {
@@ -95,7 +95,7 @@ impl DeploymentManager {
                     }
                 }
                 exec.completed_at = Some(SystemTime::now());
-                
+
                 // Add to history
                 let record = DeploymentRecord {
                     id: exec.id.clone(),
@@ -107,7 +107,7 @@ impl DeploymentManager {
                     completed_at: exec.completed_at,
                     duration: exec.completed_at.map(|end| end.duration_since(exec.started_at).unwrap_or(Duration::ZERO)),
                 };
-                
+
                 history.write().await.push(record);
             }
         });
@@ -154,11 +154,11 @@ impl DeploymentManager {
         let history = self.history.read().await;
         let mut records = history.clone();
         records.sort_by(|a, b| b.started_at.cmp(&a.started_at)); // Most recent first
-        
+
         if let Some(limit) = limit {
             records.truncate(limit);
         }
-        
+
         records
     }
 
@@ -177,7 +177,7 @@ impl DeploymentManager {
 
         // Find previous successful deployment
         let previous_deployment = history.iter()
-            .filter(|r| r.pipeline_id == record.pipeline_id && 
+            .filter(|r| r.pipeline_id == record.pipeline_id &&
                        r.environment == record.environment &&
                        matches!(r.status, DeploymentStatus::Completed) &&
                        r.started_at < record.started_at)
@@ -191,7 +191,7 @@ impl DeploymentManager {
             &record.environment
         ).await?;
 
-        info!("Initiated rollback {} for deployment {} to version {}", 
+        info!("Initiated rollback {} for deployment {} to version {}",
               rollback_id, deployment_id, previous_deployment.version);
         Ok(rollback_id)
     }
@@ -211,7 +211,7 @@ impl DeploymentManager {
             if stage.name.is_empty() {
                 return Err(DeploymentError::InvalidConfiguration("Stage name cannot be empty".to_string()));
             }
-            
+
             if stage.steps.is_empty() {
                 return Err(DeploymentError::InvalidConfiguration(
                     format!("Stage '{}' must have at least one step", stage.name)
@@ -225,13 +225,13 @@ impl DeploymentManager {
     /// Execute deployment pipeline
     async fn execute_pipeline(pipeline: DeploymentPipeline, mut execution: DeploymentExecution) -> Result<(), DeploymentError> {
         execution.status = DeploymentStatus::Running;
-        
+
         for (stage_index, stage) in pipeline.stages.iter().enumerate() {
             execution.current_stage = stage_index;
-            
+
             info!("Executing stage {}: {}", stage_index + 1, stage.name);
             Self::log_message(&execution, format!("Starting stage: {}", stage.name)).await;
-            
+
             // Execute stage steps
             for step in &stage.steps {
                 match Self::execute_step(step, &execution).await {
@@ -244,13 +244,13 @@ impl DeploymentManager {
                     }
                 }
             }
-            
+
             Self::log_message(&execution, format!("Completed stage: {}", stage.name)).await;
         }
 
         execution.current_stage = pipeline.stages.len();
         Self::log_message(&execution, "Deployment completed successfully".to_string()).await;
-        
+
         Ok(())
     }
 
@@ -259,11 +259,11 @@ impl DeploymentManager {
         match &step.step_type {
             DeploymentStepType::Command { command, args, working_dir } => {
                 let mut cmd = Command::new(command);
-                
+
                 if let Some(args) = args {
                     cmd.args(args);
                 }
-                
+
                 if let Some(dir) = working_dir {
                     cmd.current_dir(dir);
                 }
@@ -286,16 +286,16 @@ impl DeploymentManager {
             DeploymentStepType::Docker { image, command, environment_vars } => {
                 let mut docker_cmd = Command::new("docker");
                 docker_cmd.arg("run").arg("--rm");
-                
+
                 // Add environment variables
                 if let Some(env_vars) = environment_vars {
                     for (key, value) in env_vars {
                         docker_cmd.arg("-e").arg(format!("{}={}", key, value));
                     }
                 }
-                
+
                 docker_cmd.arg(image);
-                
+
                 if let Some(cmd) = command {
                     docker_cmd.args(cmd.split_whitespace());
                 }
@@ -313,7 +313,7 @@ impl DeploymentManager {
             DeploymentStepType::Kubernetes { manifest_path, namespace } => {
                 let mut kubectl_cmd = Command::new("kubectl");
                 kubectl_cmd.arg("apply").arg("-f").arg(manifest_path);
-                
+
                 if let Some(ns) = namespace {
                     kubectl_cmd.arg("-n").arg(ns);
                 }
@@ -332,25 +332,25 @@ impl DeploymentManager {
                 // Perform health check
                 let timeout = Duration::from_secs(*timeout_seconds);
                 let start_time = std::time::Instant::now();
-                
+
                 loop {
                     // In a real implementation, this would use an HTTP client
                     // For now, we'll simulate a successful health check
                     info!("Performing health check: {}", url);
-                    
+
                     // Simulate health check response
                     let status_code = 200; // Placeholder
-                    
+
                     if status_code == *expected_status {
                         return Ok(());
                     }
-                    
+
                     if start_time.elapsed() > timeout {
                         return Err(DeploymentError::HealthCheckFailed(
                             format!("Health check timed out after {} seconds", timeout_seconds)
                         ));
                     }
-                    
+
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
             },
@@ -369,7 +369,7 @@ impl DeploymentManager {
             level: LogLevel::Info,
             message,
         };
-        
+
         execution.logs.write().await.push(log_entry);
     }
 }
@@ -596,7 +596,7 @@ mod tests {
     async fn test_deployment_manager_creation() {
         let config = DeploymentConfig::default();
         let manager = DeploymentManager::new(config);
-        
+
         let active_deployments = manager.list_active_deployments().await;
         assert_eq!(active_deployments.len(), 0);
     }
@@ -605,7 +605,7 @@ mod tests {
     async fn test_pipeline_registration() {
         let config = DeploymentConfig::default();
         let manager = DeploymentManager::new(config);
-        
+
         let pipeline = DeploymentPipeline {
             id: "test-pipeline".to_string(),
             name: "Test Pipeline".to_string(),

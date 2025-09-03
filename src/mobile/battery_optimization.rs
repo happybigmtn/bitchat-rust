@@ -5,6 +5,9 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
+/// Battery manager for mobile platforms (alias for compatibility)
+pub type BatteryManager = BatteryOptimizationHandler;
+
 /// Battery optimization detector and handler
 pub struct BatteryOptimizationHandler {
     platform_type: PlatformType,
@@ -201,6 +204,24 @@ impl BatteryOptimizationHandler {
         }
 
         recommendations
+    }
+
+    /// Check if device is in low power mode
+    pub fn is_low_power_mode(&self) -> bool {
+        if let Ok(state) = self.optimization_state.lock() {
+            // Consider it low power mode if:
+            // - Battery level is below 20% and not charging
+            // - Doze mode is detected (Android)
+            // - App standby is detected (Android)
+            // - Background is restricted
+            let low_battery = state.battery_level.unwrap_or(100.0) < 20.0 && !state.is_charging;
+            low_battery
+                || state.doze_mode_detected
+                || state.app_standby_detected
+                || state.background_restricted
+        } else {
+            false // Default to normal mode if we can't determine
+        }
     }
 
     /// Check for battery optimization interference
@@ -414,34 +435,148 @@ impl BatteryOptimizationHandler {
     // Platform-specific detection methods (stubs - would be implemented with actual platform APIs)
 
     async fn detect_android_doze_mode() -> bool {
-        // TODO: Implement via JNI call to PowerManager.isDeviceIdleMode()
+        #[cfg(target_os = "android")]
+        {
+            use crate::mobile::android::jni_helpers::call_android_method;
+
+            match call_android_method("android/os/PowerManager", "isDeviceIdleMode", "()Z", &[]) {
+                Ok(result) => result.z().unwrap_or(false),
+                Err(e) => {
+                    log::error!("Failed to check Android Doze mode: {}", e);
+                    false
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "android"))]
         false
     }
 
     async fn detect_android_app_standby() -> bool {
-        // TODO: Implement via JNI call to UsageStatsManager.isAppInactive()
+        #[cfg(target_os = "android")]
+        {
+            use crate::mobile::android::jni_helpers::call_android_method;
+
+            match call_android_method(
+                "android/app/usage/UsageStatsManager",
+                "isAppInactive",
+                "(Ljava/lang/String;)Z",
+                &["com.bitcraps.app".into()],
+            ) {
+                Ok(result) => result.z().unwrap_or(false),
+                Err(e) => {
+                    log::error!("Failed to check Android App Standby: {}", e);
+                    false
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "android"))]
         false
     }
 
     async fn detect_android_background_restrictions() -> bool {
-        // TODO: Implement via JNI call to ActivityManager.isBackgroundRestricted()
+        #[cfg(target_os = "android")]
+        {
+            use crate::mobile::android::jni_helpers::call_android_method;
+
+            match call_android_method(
+                "android/app/ActivityManager",
+                "isBackgroundRestricted",
+                "()Z",
+                &[],
+            ) {
+                Ok(result) => result.z().unwrap_or(false),
+                Err(e) => {
+                    log::error!("Failed to check Android background restrictions: {}", e);
+                    false
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "android"))]
         false
     }
 
     async fn detect_ios_background_refresh() -> bool {
-        // TODO: Implement via FFI call to UIApplication.backgroundRefreshStatus
+        #[cfg(target_os = "ios")]
+        {
+            use crate::mobile::ios::ffi_helpers::call_ios_method;
+
+            match call_ios_method("UIApplication", "backgroundRefreshStatus", &[]) {
+                Ok(status) => {
+                    let refresh_status = status.as_i32();
+                    // UIBackgroundRefreshStatusDenied = 0, UIBackgroundRefreshStatusRestricted = 2
+                    refresh_status == 0 || refresh_status == 2
+                }
+                Err(e) => {
+                    log::error!("Failed to check iOS background refresh status: {}", e);
+                    false
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "ios"))]
         false
     }
 
     async fn get_battery_level(platform_type: &PlatformType) -> Option<f32> {
-        // TODO: Implement platform-specific battery level detection
         match platform_type {
             PlatformType::Android => {
-                // TODO: JNI call to BatteryManager.getIntProperty()
+                #[cfg(target_os = "android")]
+                {
+                    use crate::mobile::android::jni_helpers::call_android_method;
+
+                    match call_android_method(
+                        "android/os/BatteryManager",
+                        "getIntProperty",
+                        "(I)I",
+                        &[4.into()], // BATTERY_PROPERTY_CAPACITY
+                    ) {
+                        Ok(result) => {
+                            let level = result.i().unwrap_or(-1);
+                            if level >= 0 && level <= 100 {
+                                Some(level as f32 / 100.0)
+                            } else {
+                                None
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to get Android battery level: {}", e);
+                            None
+                        }
+                    }
+                }
+
+                #[cfg(not(target_os = "android"))]
                 None
             }
             PlatformType::Ios => {
-                // TODO: FFI call to UIDevice.batteryLevel
+                #[cfg(target_os = "ios")]
+                {
+                    use crate::mobile::ios::ffi_helpers::call_ios_method;
+
+                    // Enable battery monitoring first
+                    let _ =
+                        call_ios_method("UIDevice", "setBatteryMonitoringEnabled:", &[true.into()]);
+
+                    match call_ios_method("UIDevice", "batteryLevel", &[]) {
+                        Ok(result) => {
+                            let level = result.as_f32();
+                            if level >= 0.0 && level <= 1.0 {
+                                Some(level)
+                            } else {
+                                None
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to get iOS battery level: {}", e);
+                            None
+                        }
+                    }
+                }
+
+                #[cfg(not(target_os = "ios"))]
                 None
             }
             _ => None,
@@ -449,14 +584,56 @@ impl BatteryOptimizationHandler {
     }
 
     async fn is_device_charging(platform_type: &PlatformType) -> bool {
-        // TODO: Implement platform-specific charging detection
         match platform_type {
             PlatformType::Android => {
-                // TODO: JNI call to BatteryManager charging status
+                #[cfg(target_os = "android")]
+                {
+                    use crate::mobile::android::jni_helpers::call_android_method;
+
+                    match call_android_method(
+                        "android/os/BatteryManager",
+                        "getIntProperty",
+                        "(I)I",
+                        &[6.into()], // BATTERY_PROPERTY_STATUS
+                    ) {
+                        Ok(result) => {
+                            let status = result.i().unwrap_or(1); // BATTERY_STATUS_UNKNOWN = 1
+                                                                  // BATTERY_STATUS_CHARGING = 2, BATTERY_STATUS_FULL = 5
+                            status == 2 || status == 5
+                        }
+                        Err(e) => {
+                            log::error!("Failed to get Android charging status: {}", e);
+                            false
+                        }
+                    }
+                }
+
+                #[cfg(not(target_os = "android"))]
                 false
             }
             PlatformType::Ios => {
-                // TODO: FFI call to UIDevice.batteryState
+                #[cfg(target_os = "ios")]
+                {
+                    use crate::mobile::ios::ffi_helpers::call_ios_method;
+
+                    // Enable battery monitoring first
+                    let _ =
+                        call_ios_method("UIDevice", "setBatteryMonitoringEnabled:", &[true.into()]);
+
+                    match call_ios_method("UIDevice", "batteryState", &[]) {
+                        Ok(result) => {
+                            let state = result.as_i32();
+                            // UIDeviceBatteryStateCharging = 2, UIDeviceBatteryStateFull = 3
+                            state == 2 || state == 3
+                        }
+                        Err(e) => {
+                            log::error!("Failed to get iOS battery state: {}", e);
+                            false
+                        }
+                    }
+                }
+
+                #[cfg(not(target_os = "ios"))]
                 false
             }
             _ => false,

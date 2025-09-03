@@ -1,5 +1,5 @@
 //! Bridge Protocol Definitions
-//! 
+//!
 //! Defines the protocol structures and types for bridging between
 //! BLE mesh networks and internet protocols.
 
@@ -262,7 +262,7 @@ impl BridgeProtocol {
     pub fn new(protocol_type: ProtocolType, config: ProtocolConfig) -> Self {
         let capabilities = Self::get_capabilities(protocol_type);
         let mtu = Self::get_mtu(protocol_type);
-        
+
         Self {
             protocol_type,
             config,
@@ -270,7 +270,7 @@ impl BridgeProtocol {
             capabilities,
         }
     }
-    
+
     /// Get protocol capabilities
     fn get_capabilities(protocol_type: ProtocolType) -> ProtocolCapabilities {
         match protocol_type {
@@ -324,7 +324,7 @@ impl BridgeProtocol {
             },
         }
     }
-    
+
     /// Get MTU for protocol
     fn get_mtu(protocol_type: ProtocolType) -> usize {
         match protocol_type {
@@ -336,42 +336,42 @@ impl BridgeProtocol {
             ProtocolType::Http => 1460, // TCP-based
         }
     }
-    
+
     /// Check if protocols are compatible for bridging
     pub fn is_compatible(&self, other: &BridgeProtocol) -> bool {
         // Define compatibility matrix
         match (self.protocol_type, other.protocol_type) {
             // BLE mesh can bridge to any internet protocol
             (ProtocolType::BleMesh, _) | (_, ProtocolType::BleMesh) => true,
-            
+
             // TCP can bridge to TCP, WebSocket, HTTP
             (ProtocolType::Tcp, ProtocolType::Tcp) |
             (ProtocolType::Tcp, ProtocolType::WebSocket) |
             (ProtocolType::Tcp, ProtocolType::Http) => true,
-            
+
             // UDP can bridge to UDP, QUIC
             (ProtocolType::Udp, ProtocolType::Udp) |
             (ProtocolType::Udp, ProtocolType::Quic) => true,
-            
+
             // WebSocket can bridge to TCP, HTTP
             (ProtocolType::WebSocket, ProtocolType::Tcp) |
             (ProtocolType::WebSocket, ProtocolType::Http) => true,
-            
+
             // QUIC can bridge to UDP
             (ProtocolType::Quic, ProtocolType::Udp) => true,
-            
+
             // HTTP can bridge to TCP, WebSocket
             (ProtocolType::Http, ProtocolType::Tcp) |
             (ProtocolType::Http, ProtocolType::WebSocket) => true,
-            
+
             _ => false,
         }
     }
-    
+
     /// Get required transformations for bridging
     pub fn get_transformations(&self, target: &BridgeProtocol) -> Vec<Transformation> {
         let mut transformations = Vec::new();
-        
+
         // Reliability transformation
         if self.capabilities.reliable != target.capabilities.reliable {
             if target.capabilities.reliable {
@@ -380,7 +380,7 @@ impl BridgeProtocol {
                 transformations.push(Transformation::RemoveReliability);
             }
         }
-        
+
         // Ordering transformation
         if self.capabilities.ordered != target.capabilities.ordered {
             if target.capabilities.ordered {
@@ -389,7 +389,7 @@ impl BridgeProtocol {
                 transformations.push(Transformation::RemoveOrdering);
             }
         }
-        
+
         // MTU transformation
         if self.mtu != target.mtu {
             if self.mtu > target.mtu {
@@ -398,7 +398,7 @@ impl BridgeProtocol {
                 transformations.push(Transformation::Defragment);
             }
         }
-        
+
         // Flow control transformation
         if self.capabilities.flow_control != target.capabilities.flow_control {
             if target.capabilities.flow_control {
@@ -407,7 +407,7 @@ impl BridgeProtocol {
                 transformations.push(Transformation::RemoveFlowControl);
             }
         }
-        
+
         transformations
     }
 }
@@ -458,14 +458,14 @@ impl BridgeMessage {
             payload_length: payload.len() as u32,
             checksum: Self::calculate_checksum(&payload),
         };
-        
+
         Self {
             header,
             payload,
             metadata: MessageMetadata::default(),
         }
     }
-    
+
     /// Generate unique message ID
     fn generate_message_id() -> u64 {
         use std::time::{SystemTime, UNIX_EPOCH};
@@ -474,34 +474,34 @@ impl BridgeMessage {
             .unwrap_or_default()
             .as_nanos() as u64
     }
-    
+
     /// Calculate payload checksum
     fn calculate_checksum(payload: &[u8]) -> u32 {
         // Simple CRC-32 implementation
         crc32fast::hash(payload)
     }
-    
+
     /// Verify message integrity
     pub fn verify_checksum(&self) -> bool {
         self.header.checksum == Self::calculate_checksum(&self.payload)
     }
-    
+
     /// Check if message has expired
     pub fn is_expired(&self) -> bool {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         now > self.metadata.timestamp + self.metadata.ttl as u64
     }
-    
+
     /// Serialize message for transmission
     pub fn serialize(&self) -> Result<Vec<u8>, ProtocolError> {
         bincode::serialize(self)
             .map_err(|e| ProtocolError::InvalidFormat(e.to_string()))
     }
-    
+
     /// Deserialize message from bytes
     pub fn deserialize(data: &[u8]) -> Result<Self, ProtocolError> {
         bincode::deserialize(data)
@@ -512,7 +512,7 @@ impl BridgeMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_protocol_capabilities() {
         let tcp = BridgeProtocol::new(
@@ -524,13 +524,13 @@ mod tests {
                 write_timeout: None,
             },
         );
-        
+
         assert!(tcp.capabilities.reliable);
         assert!(tcp.capabilities.ordered);
         assert!(tcp.capabilities.flow_control);
         assert!(!tcp.capabilities.multiplexing);
     }
-    
+
     #[test]
     fn test_protocol_compatibility() {
         let ble = BridgeProtocol::new(
@@ -542,7 +542,7 @@ mod tests {
                 connection_interval: 100,
             },
         );
-        
+
         let tcp = BridgeProtocol::new(
             ProtocolType::Tcp,
             ProtocolConfig::Tcp {
@@ -552,11 +552,11 @@ mod tests {
                 write_timeout: None,
             },
         );
-        
+
         assert!(ble.is_compatible(&tcp));
         assert!(tcp.is_compatible(&ble));
     }
-    
+
     #[test]
     fn test_bridge_message() {
         let message = BridgeMessage::new(
@@ -565,13 +565,13 @@ mod tests {
             MessageType::Data,
             b"Hello, World!".to_vec(),
         );
-        
+
         assert!(message.verify_checksum());
         assert!(!message.is_expired());
-        
+
         let serialized = message.serialize().unwrap();
         let deserialized = BridgeMessage::deserialize(&serialized).unwrap();
-        
+
         assert_eq!(message.header.message_id, deserialized.header.message_id);
         assert_eq!(message.payload, deserialized.payload);
     }

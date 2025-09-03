@@ -26,7 +26,7 @@ pub struct SecureKeystore {
 }
 
 /// Key context for different operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum KeyContext {
     /// Identity/authentication key
     Identity,
@@ -41,7 +41,7 @@ pub enum KeyContext {
 }
 
 /// Secure signature with context
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SecureSignature {
     #[serde(with = "serde_bytes")]
     pub signature: Vec<u8>,
@@ -230,8 +230,11 @@ impl SecureKeystore {
                     let session_key = self.derive_session_key(context)?;
                     self.session_keys.insert(context_key.clone(), session_key);
                 }
-                self.session_keys.get(&context_key)
-                    .ok_or_else(|| crate::error::Error::Crypto("Failed to retrieve session key after creation".to_string()))
+                self.session_keys.get(&context_key).ok_or_else(|| {
+                    crate::error::Error::Crypto(
+                        "Failed to retrieve session key after creation".to_string(),
+                    )
+                })
             }
         }
     }
@@ -252,7 +255,10 @@ impl SecureKeystore {
 impl Default for SecureKeystore {
     fn default() -> Self {
         Self::new().unwrap_or_else(|e| {
-            eprintln!("WARNING: Failed to create secure keystore, using fallback: {}", e);
+            eprintln!(
+                "WARNING: Failed to create secure keystore, using fallback: {}",
+                e
+            );
             // Create a minimal fallback keystore
             SecureKeystore {
                 identity_key: SigningKey::generate(&mut OsRng),
@@ -281,6 +287,173 @@ mod tests {
         let keystore = SecureKeystore::new().unwrap();
         let peer_id = keystore.peer_id();
         assert_eq!(peer_id.len(), 32);
+    }
+
+    #[test]
+    fn test_keystore_creation_error_cases() {
+        // Test successful creation first
+        let keystore_result = SecureKeystore::new();
+        assert!(
+            keystore_result.is_ok(),
+            "Normal keystore creation should succeed"
+        );
+
+        // Test that multiple keystores have different peer IDs
+        let keystore1 = SecureKeystore::new().unwrap();
+        let keystore2 = SecureKeystore::new().unwrap();
+        assert_ne!(
+            keystore1.peer_id(),
+            keystore2.peer_id(),
+            "Different keystores should have unique peer IDs"
+        );
+
+        // Test peer ID consistency
+        let keystore = SecureKeystore::new().unwrap();
+        let peer_id1 = keystore.peer_id();
+        let peer_id2 = keystore.peer_id();
+        assert_eq!(
+            peer_id1, peer_id2,
+            "Peer ID should be consistent across calls"
+        );
+    }
+
+    #[test]
+    fn test_signing_error_cases() {
+        let mut keystore = SecureKeystore::new().unwrap();
+        let message = b"test message";
+
+        // Test normal signing
+        let signature_result = keystore.sign(message);
+        assert!(signature_result.is_ok(), "Normal signing should succeed");
+
+        // Test empty message signing
+        let empty_message = b"";
+        let empty_sig_result = keystore.sign(empty_message);
+        assert!(
+            empty_sig_result.is_ok(),
+            "Signing empty message should succeed"
+        );
+
+        // Test very large message signing (stress test)
+        let large_message = vec![0u8; 10000];
+        let large_sig_result = keystore.sign(&large_message);
+        assert!(
+            large_sig_result.is_ok(),
+            "Signing large message should succeed"
+        );
+    }
+
+    #[test]
+    fn test_signature_verification_error_cases() {
+        let mut keystore1 = SecureKeystore::new().unwrap();
+        let mut keystore2 = SecureKeystore::new().unwrap();
+        let message = b"test message";
+
+        // Create signature with keystore1
+        let signature = keystore1.sign(message).unwrap();
+        let public_key1 = keystore1.export_public_key();
+        let public_key2 = keystore2.export_public_key();
+
+        // Test normal verification
+        let valid_result = SecureKeystore::verify_signature(message, &signature, &public_key1);
+        assert!(valid_result.is_ok(), "Normal verification should succeed");
+        assert!(valid_result.unwrap(), "Valid signature should verify");
+
+        // Test verification with wrong public key
+        let invalid_result = SecureKeystore::verify_signature(message, &signature, &public_key2);
+        assert!(
+            invalid_result.is_ok(),
+            "Verification with wrong key should complete"
+        );
+        assert!(
+            !invalid_result.unwrap(),
+            "Signature with wrong key should not verify"
+        );
+
+        // Test verification with tampered signature
+        let mut tampered_signature = signature.clone();
+        if let Some(byte) = tampered_signature.0.get_mut(0) {
+            *byte = byte.wrapping_add(1); // Tamper with first byte
+        }
+        let tampered_result =
+            SecureKeystore::verify_signature(message, &tampered_signature, &public_key1);
+        // This might fail or return false depending on signature format validation
+        if let Ok(result) = tampered_result {
+            assert!(!result, "Tampered signature should not verify");
+        }
+
+        // Test verification with wrong message
+        let wrong_message = b"different message";
+        let wrong_msg_result =
+            SecureKeystore::verify_signature(wrong_message, &signature, &public_key1);
+        assert!(
+            wrong_msg_result.is_ok(),
+            "Wrong message verification should complete"
+        );
+        assert!(
+            !wrong_msg_result.unwrap(),
+            "Signature with wrong message should not verify"
+        );
+    }
+
+    #[test]
+    fn test_context_signing_error_cases() {
+        let mut keystore = SecureKeystore::new().unwrap();
+        let message = b"consensus data";
+
+        // Test normal context signing
+        let consensus_sig_result = keystore.sign_with_context(message, KeyContext::Consensus);
+        assert!(
+            consensus_sig_result.is_ok(),
+            "Context signing should succeed"
+        );
+
+        let identity_sig_result = keystore.sign_with_context(message, KeyContext::Identity);
+        assert!(
+            identity_sig_result.is_ok(),
+            "Identity context signing should succeed"
+        );
+
+        // Test that different contexts produce different signatures
+        let consensus_sig = keystore
+            .sign_with_context(message, KeyContext::Consensus)
+            .unwrap();
+        let identity_sig = keystore
+            .sign_with_context(message, KeyContext::Identity)
+            .unwrap();
+        assert_ne!(
+            consensus_sig, identity_sig,
+            "Different contexts should produce different signatures"
+        );
+
+        // Test context verification error cases
+        let sig = keystore
+            .sign_with_context(message, KeyContext::Consensus)
+            .unwrap();
+
+        // Verify with correct context
+        let correct_verification =
+            SecureKeystore::verify_secure_signature(message, &sig, &KeyContext::Consensus);
+        assert!(
+            correct_verification.is_ok(),
+            "Correct context verification should succeed"
+        );
+        assert!(
+            correct_verification.unwrap(),
+            "Correct context should verify"
+        );
+
+        // Verify with wrong context
+        let wrong_context_verification =
+            SecureKeystore::verify_secure_signature(message, &sig, &KeyContext::Identity);
+        assert!(
+            wrong_context_verification.is_ok(),
+            "Wrong context verification should complete"
+        );
+        assert!(
+            !wrong_context_verification.unwrap(),
+            "Wrong context should not verify"
+        );
     }
 
     #[test]

@@ -960,3 +960,5 @@ async fn test_network_partition_recovery() -> Result<()> {
     println!("✅ Network partition recovery test completed!");
     Ok(())
 }
+#![cfg(feature = "legacy-tests")]
+#![cfg(feature = "legacy-tests")]

@@ -21,6 +21,7 @@ use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use crate::monitoring::metrics::METRICS;
+use crate::persistence::PersistenceManager;
 use crate::protocol::craps::CrapsGame;
 
 /// Multi-game framework manager
@@ -35,6 +36,8 @@ pub struct MultiGameFramework {
     event_sender: broadcast::Sender<GameFrameworkEvent>,
     /// Framework configuration
     config: GameFrameworkConfig,
+    /// Persistent storage for game states
+    persistence: Option<Arc<PersistenceManager>>,
 }
 
 impl MultiGameFramework {
@@ -48,6 +51,7 @@ impl MultiGameFramework {
             stats: Arc::new(GameFrameworkStats::new()),
             event_sender,
             config,
+            persistence: None, // Initialize without persistence, can be set later
         };
 
         // Register built-in games
@@ -135,10 +139,16 @@ impl MultiGameFramework {
 
         // Initialize game-specific state
         engine.initialize_session(&session).await?;
-        
-        // TODO: [Gaming] Implement persistent game state storage
-        //       Games are currently memory-only, lost on restart
-        //       Priority: High - Required for production gaming
+
+        // Implement persistent game state storage
+        if let Err(e) = self.save_game_state(&session_id, &session).await {
+            log::warn!(
+                "Failed to persist game state for session {}: {}",
+                session_id,
+                e
+            );
+            // Continue execution - persistence failure shouldn't prevent gameplay
+        }
 
         // Add to active sessions
         self.active_sessions
@@ -454,6 +464,101 @@ impl MultiGameFramework {
             }
         }
     }
+
+    /// Set persistence manager
+    pub fn set_persistence(&mut self, persistence: Arc<PersistenceManager>) {
+        self.persistence = Some(persistence);
+    }
+
+    /// Save game state to persistent storage
+    async fn save_game_state(
+        &self,
+        session_id: &str,
+        session: &GameSession,
+    ) -> crate::error::Result<()> {
+        if let Some(ref persistence) = self.persistence {
+            // Serialize game session to JSON
+            let session_data = match serde_json::to_string(session) {
+                Ok(data) => data,
+                Err(e) => {
+                    return Err(crate::error::Error::GameLogic(format!(
+                        "Failed to serialize game session: {}",
+                        e
+                    )));
+                }
+            };
+
+            // Store with game state key (using simple filesystem storage for now)
+            let storage_path = format!("game_state_{}.json", session_id);
+            if let Err(e) = persistence.save_string(&storage_path, &session_data).await {
+                return Err(crate::error::Error::GameLogic(format!(
+                    "Failed to persist game state: {}",
+                    e
+                )));
+            }
+
+            info!(
+                "Successfully persisted game state for session: {}",
+                session_id
+            );
+        } else {
+            debug!("No persistence manager configured, skipping game state persistence");
+        }
+        Ok(())
+    }
+
+    /// Load game state from persistent storage
+    pub async fn load_game_state(
+        &self,
+        session_id: &str,
+    ) -> crate::error::Result<Option<GameSession>> {
+        if let Some(ref persistence) = self.persistence {
+            let storage_path = format!("game_state_{}.json", session_id);
+
+            match persistence.load_string(&storage_path).await {
+                Ok(Some(session_data)) => {
+                    match serde_json::from_str::<GameSession>(&session_data) {
+                        Ok(session) => {
+                            info!("Successfully loaded game state for session: {}", session_id);
+                            return Ok(Some(session));
+                        }
+                        Err(e) => {
+                            error!("Failed to deserialize game session {}: {}", session_id, e);
+                            return Err(crate::error::Error::GameLogic(format!(
+                                "Failed to deserialize game session: {}",
+                                e
+                            )));
+                        }
+                    }
+                }
+                Ok(None) => {
+                    debug!("No persisted state found for session: {}", session_id);
+                }
+                Err(e) => {
+                    return Err(crate::error::Error::GameLogic(format!(
+                        "Failed to load game state: {}",
+                        e
+                    )));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Remove game state from persistent storage
+    pub async fn remove_game_state(&self, session_id: &str) -> crate::error::Result<()> {
+        if let Some(ref persistence) = self.persistence {
+            let storage_path = format!("game_state_{}.json", session_id);
+            if let Err(e) = persistence.delete_file(&storage_path).await {
+                return Err(crate::error::Error::GameLogic(format!(
+                    "Failed to delete game state: {}",
+                    e
+                )));
+            }
+            info!("Removed persisted game state for session: {}", session_id);
+        }
+        Ok(())
+    }
 }
 
 impl Clone for MultiGameFramework {
@@ -464,6 +569,7 @@ impl Clone for MultiGameFramework {
             stats: Arc::clone(&self.stats),
             event_sender: self.event_sender.clone(),
             config: self.config.clone(),
+            persistence: self.persistence.clone(),
         }
     }
 }
@@ -671,7 +777,7 @@ impl GameEngine for CrapsGameEngine {
     }
 }
 
-/// Blackjack game engine implementation  
+/// Blackjack game engine implementation
 pub struct BlackjackGameEngine;
 
 impl Default for BlackjackGameEngine {
@@ -983,15 +1089,33 @@ pub struct PlayerInfo {
     pub game_specific_data: HashMap<String, serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameSession {
     pub id: String,
     pub game_id: String,
+    #[serde(skip, default = "default_players")] // Skip serialization with defaults
     pub players: Arc<RwLock<HashMap<String, PlayerInfo>>>,
+    #[serde(skip, default = "default_game_state")]
     pub state: Arc<RwLock<GameSessionState>>,
     pub config: GameSessionConfig,
+    #[serde(skip, default = "GameSessionStats::new")] // Skip atomic stats
     pub stats: GameSessionStats,
     pub created_at: SystemTime,
+    #[serde(skip, default = "default_last_activity")]
     pub last_activity: Arc<RwLock<SystemTime>>,
+}
+
+// Default value functions for serde skipped fields
+fn default_players() -> Arc<RwLock<HashMap<String, PlayerInfo>>> {
+    Arc::new(RwLock::new(HashMap::new()))
+}
+
+fn default_game_state() -> Arc<RwLock<GameSessionState>> {
+    Arc::new(RwLock::new(GameSessionState::WaitingForPlayers))
+}
+
+fn default_last_activity() -> Arc<RwLock<SystemTime>> {
+    Arc::new(RwLock::new(SystemTime::now()))
 }
 
 #[derive(Debug, Clone)]

@@ -48,8 +48,10 @@ pub mod ble_optimization;
 pub mod consensus_coordinator;
 pub mod network_consensus_bridge;
 pub mod p2p_messages;
+pub mod packet_utils;
 pub mod partition_recovery;
 pub mod state_sync;
+pub mod tlv_validation;
 
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -59,6 +61,12 @@ use crate::error::{Error, Result};
 // Re-exports for external modules
 pub use crate::database::GameState;
 pub use p2p_messages::ConsensusMessage as P2PMessage;
+
+// Re-exports from packet_utils
+pub use packet_utils::{
+    create_discovery_packet, create_game_packet, create_ping_packet, GameCreationData,
+    GameDiscoveryData, parse_game_creation_data, parse_game_discovery_data,
+};
 
 /// Transaction identifier for tracking game operations
 pub type TransactionId = [u8; 32];
@@ -169,9 +177,11 @@ pub enum BetType {
     Next12,
 
     // Single roll proposition bets
-    Ace,    // 2 (snake eyes)
-    Eleven, // 11 (yo)
-    Twelve, // 12 (boxcars)
+    Ace,      // 2 (snake eyes)
+    Eleven,   // 11 (yo)
+    Twelve,   // 12 (boxcars)
+    Any7,     // Any roll of 7
+    AnyCraps, // Any craps roll (2, 3, or 12)
 
     // Yes bets (rolling number before 7)
     Yes2,
@@ -265,46 +275,48 @@ impl BetType {
             BetType::Next11 => 24,
             BetType::Next12 => 25,
 
-            // Single roll proposition bets (26-28)
+            // Single roll proposition bets (26-30)
             BetType::Ace => 26,
             BetType::Eleven => 27,
             BetType::Twelve => 28,
+            BetType::Any7 => 29,
+            BetType::AnyCraps => 30,
 
-            // Yes bets (29-39)
-            BetType::Yes2 => 29,
-            BetType::Yes3 => 30,
-            BetType::Yes4 => 31,
-            BetType::Yes5 => 32,
-            BetType::Yes6 => 33,
-            BetType::Yes8 => 34,
-            BetType::Yes9 => 35,
-            BetType::Yes10 => 36,
-            BetType::Yes11 => 37,
-            BetType::Yes12 => 38,
+            // Yes bets (31-41)
+            BetType::Yes2 => 31,
+            BetType::Yes3 => 32,
+            BetType::Yes4 => 33,
+            BetType::Yes5 => 34,
+            BetType::Yes6 => 35,
+            BetType::Yes8 => 36,
+            BetType::Yes9 => 37,
+            BetType::Yes10 => 38,
+            BetType::Yes11 => 39,
+            BetType::Yes12 => 40,
 
-            // No bets (39-49)
-            BetType::No2 => 39,
-            BetType::No3 => 40,
-            BetType::No4 => 41,
-            BetType::No5 => 42,
-            BetType::No6 => 43,
-            BetType::No8 => 44,
-            BetType::No9 => 45,
-            BetType::No10 => 46,
-            BetType::No11 => 47,
-            BetType::No12 => 48,
+            // No bets (41-51)
+            BetType::No2 => 41,
+            BetType::No3 => 42,
+            BetType::No4 => 43,
+            BetType::No5 => 44,
+            BetType::No6 => 45,
+            BetType::No8 => 46,
+            BetType::No9 => 47,
+            BetType::No10 => 48,
+            BetType::No11 => 49,
+            BetType::No12 => 50,
 
-            // Repeater bets (49-60)
-            BetType::Repeater2 => 49,
-            BetType::Repeater3 => 50,
-            BetType::Repeater4 => 51,
-            BetType::Repeater5 => 52,
-            BetType::Repeater6 => 53,
-            BetType::Repeater8 => 54,
-            BetType::Repeater9 => 55,
-            BetType::Repeater10 => 56,
-            BetType::Repeater11 => 57,
-            BetType::Repeater12 => 58,
+            // Repeater bets (51-62)
+            BetType::Repeater2 => 51,
+            BetType::Repeater3 => 52,
+            BetType::Repeater4 => 53,
+            BetType::Repeater5 => 54,
+            BetType::Repeater6 => 55,
+            BetType::Repeater8 => 56,
+            BetType::Repeater9 => 57,
+            BetType::Repeater10 => 58,
+            BetType::Repeater11 => 59,
+            BetType::Repeater12 => 60,
 
             // Special bets (61-73)
             BetType::Fire => 61,
@@ -465,7 +477,7 @@ impl<'de> Deserialize<'de> for Signature {
 }
 
 /// Basic packet structure for the BitCraps protocol
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BitchatPacket {
     pub version: u8,
     pub packet_type: u8,
@@ -481,7 +493,7 @@ pub struct BitchatPacket {
 }
 
 /// TLV (Type-Length-Value) field for extensible packet format
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TlvField {
     pub field_type: u8,
     pub length: u16,
@@ -528,7 +540,7 @@ impl BitchatPacket {
         None
     }
 
-    /// Get the receiver from TLV data  
+    /// Get the receiver from TLV data
     pub fn get_receiver(&self) -> Option<PeerId> {
         // Parse receiver from TLV data
         for field in &self.tlv_data {
@@ -980,6 +992,9 @@ impl PacketUtils {
 pub const PACKET_TYPE_PING: u8 = 0x01;
 pub const PACKET_TYPE_PONG: u8 = 0x02;
 pub const PACKET_TYPE_DISCOVERY: u8 = 0x03;
+pub const PACKET_TYPE_HEARTBEAT: u8 = 0x04;
+pub const PACKET_TYPE_DICE_COMMIT: u8 = 0x05;
+pub const PACKET_TYPE_DICE_REVEAL: u8 = 0x06;
 pub const PACKET_TYPE_GAME_DATA: u8 = 0x10;
 pub const PACKET_TYPE_CONSENSUS_VOTE: u8 = 0x1C;
 
@@ -1102,7 +1117,7 @@ mod tests {
         let sender = [1u8; 32];
         let mut packet = PacketUtils::create_ping(sender);
 
-        let serialized = packet.serialize().unwrap();
+        let serialized = BitchatPacket::serialize(&mut packet).unwrap();
         let mut cursor = std::io::Cursor::new(serialized);
         let deserialized = BitchatPacket::deserialize(&mut cursor).unwrap();
 
@@ -1130,5 +1145,29 @@ mod tests {
         let tokens = CrapTokens::from_crap(5.5).unwrap();
         assert_eq!(tokens.amount(), 5_500_000);
         assert_eq!(tokens.to_crap(), 5.5);
+    }
+
+    #[test]
+    fn test_packet_utils_functions() {
+        let peer_id = random_peer_id();
+        let game_id = [1u8; 16];
+
+        // Test create_game_packet function
+        let game_packet = create_game_packet(peer_id, game_id, 8, 1000);
+        assert_eq!(game_packet.packet_type, PACKET_TYPE_GAME_DATA);
+        assert_eq!(game_packet.source, peer_id);
+        assert_eq!(game_packet.get_sender(), Some(peer_id));
+
+        // Test create_ping_packet function
+        let ping_packet = create_ping_packet(peer_id);
+        assert_eq!(ping_packet.packet_type, PACKET_TYPE_PING);
+        assert_eq!(ping_packet.source, peer_id);
+        assert_eq!(ping_packet.get_sender(), Some(peer_id));
+
+        // Test create_discovery_packet function
+        let discovery_packet = create_discovery_packet(peer_id);
+        assert_eq!(discovery_packet.packet_type, PACKET_TYPE_DISCOVERY);
+        assert_eq!(discovery_packet.source, peer_id);
+        assert_eq!(discovery_packet.get_sender(), Some(peer_id));
     }
 }

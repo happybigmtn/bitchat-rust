@@ -72,7 +72,9 @@ impl NoiseSession {
         match &mut self.state {
             NoiseSessionState::HandshakeInProgress { handshake_state } => {
                 // Use growable buffer with a reasonable initial size for handshake
-                let buffer_slice = self.buffer.get_mut(payload.len() + 1024)
+                let buffer_slice = self
+                    .buffer
+                    .get_mut(payload.len() + 1024)
                     .map_err(|_| snow::Error::Input)?;
                 let len = handshake_state.write_message(payload, buffer_slice)?;
                 self.buffer.mark_used(len);
@@ -86,7 +88,9 @@ impl NoiseSession {
         match &mut self.state {
             NoiseSessionState::HandshakeInProgress { handshake_state } => {
                 // Use growable buffer with reasonable size for handshake response
-                let buffer_slice = self.buffer.get_mut(message.len() + 1024)
+                let buffer_slice = self
+                    .buffer
+                    .get_mut(message.len() + 1024)
                     .map_err(|_| snow::Error::Input)?;
                 let len = handshake_state.read_message(message, buffer_slice)?;
                 self.buffer.mark_used(len);

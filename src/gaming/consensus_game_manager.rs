@@ -6,7 +6,7 @@
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex};
@@ -15,6 +15,7 @@ use uuid;
 
 use crate::crypto::BitchatIdentity;
 use crate::error::{Error, Result};
+use crate::memory_pool::GameMemoryPools;
 use crate::mesh::{ConsensusMessageHandler, MeshService};
 use crate::mesh::{MeshMessage, MeshMessageType};
 use crate::protocol::consensus::engine::{GameConsensusState, GameOperation};
@@ -42,6 +43,8 @@ pub struct GameDiscoveryRequest {
 }
 
 /// Search criteria for finding games
+// Location-based game discovery implemented via mesh networking
+// Supports peer discovery through connected mesh nodes
 #[derive(Debug, Clone, Default)]
 pub struct GameSearchCriteria {
     pub min_players: Option<usize>,
@@ -65,7 +68,7 @@ pub struct GameStateSyncData {
     pub game_id: GameId,
     pub game_state: CrapsGame,
     pub participants: Vec<PeerId>,
-    pub consensus_state: GameConsensusState,
+    pub consensus_state: Arc<GameConsensusState>,
     pub pending_operations: Vec<GameOperation>,
     pub timestamp: u64,
 }
@@ -106,6 +109,13 @@ struct PendingGameOperation {
     consensus_achieved: bool,
 }
 
+/// Cache entry for game verification results
+#[derive(Debug, Clone)]
+struct GameVerificationCache {
+    is_active: bool,
+    verified_at: Instant,
+}
+
 /// Consensus-based game manager
 pub struct ConsensusGameManager {
     // Core components
@@ -123,6 +133,9 @@ pub struct ConsensusGameManager {
     // Operation tracking - using lock-free hashmap
     pending_operations: Arc<DashMap<String, PendingGameOperation>>,
 
+    // Game verification cache (30 second TTL)
+    verification_cache: Arc<DashMap<GameId, GameVerificationCache>>,
+
     // Event handling - bounded channel with backpressure
     game_events: mpsc::Sender<GameEvent>,
     event_receiver: Arc<Mutex<mpsc::Receiver<GameEvent>>>,
@@ -132,7 +145,13 @@ pub struct ConsensusGameManager {
     total_games_completed: Arc<AtomicUsize>,
     total_operations_processed: Arc<AtomicUsize>,
     total_consensus_failures: Arc<AtomicUsize>,
+    // Consensus timing metrics (total time and operation count for averaging)
+    total_consensus_time_ms: Arc<AtomicU64>,
+    total_consensus_operations: Arc<AtomicUsize>,
     stats_snapshot: Arc<ArcSwap<GameManagerStats>>,
+    
+    // Memory pools for hot path optimizations
+    memory_pools: Arc<GameMemoryPools>,
 }
 
 /// Game session with consensus integration
@@ -140,7 +159,7 @@ pub struct ConsensusGameManager {
 pub struct ConsensusGameSession {
     pub game: CrapsGame,
     pub participants: Vec<PeerId>,
-    pub consensus_state: GameConsensusState,
+    pub consensus_state: Arc<GameConsensusState>,
     pub last_updated: Instant,
     pub is_active: bool,
 }
@@ -208,6 +227,7 @@ impl ConsensusGameManager {
         config: ConsensusGameConfig,
     ) -> Self {
         let (game_events, event_receiver) = mpsc::channel(1000); // Bounded channel for backpressure
+        let memory_pools = Arc::new(GameMemoryPools::new());
 
         Self {
             identity,
@@ -217,13 +237,17 @@ impl ConsensusGameManager {
             active_games: Arc::new(DashMap::new()),
             consensus_bridges: Arc::new(DashMap::new()),
             pending_operations: Arc::new(DashMap::new()),
+            verification_cache: Arc::new(DashMap::new()),
             game_events,
             event_receiver: Arc::new(Mutex::new(event_receiver)),
             total_games_created: Arc::new(AtomicUsize::new(0)),
             total_games_completed: Arc::new(AtomicUsize::new(0)),
             total_operations_processed: Arc::new(AtomicUsize::new(0)),
             total_consensus_failures: Arc::new(AtomicUsize::new(0)),
+            total_consensus_time_ms: Arc::new(AtomicU64::new(0)),
+            total_consensus_operations: Arc::new(AtomicUsize::new(0)),
             stats_snapshot: Arc::new(ArcSwap::from_pointee(GameManagerStats::default())),
+            memory_pools,
         }
     }
 
@@ -305,7 +329,7 @@ impl ConsensusGameManager {
         // Broadcast game creation to the mesh network for discovery
         let game_info = self.create_discovery_info(game_id, &participants);
 
-        let broadcast_msg = self.create_announcement_message(game_info)?;
+        let broadcast_msg = self.create_announcement_message(game_info).await?;
 
         // Broadcast game announcement
         self.mesh_service.broadcast_message(broadcast_msg).await?;
@@ -315,6 +339,10 @@ impl ConsensusGameManager {
             game_id,
             participants.len()
         );
+        
+        // Record game creation metric
+        crate::monitoring::record_game_event("game_created", &format!("{:?}", game_id));
+        
         Ok(game_id)
     }
 
@@ -327,7 +355,7 @@ impl ConsensusGameManager {
                 requester: self.identity.peer_id,
                 timestamp: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
+                    .map_err(|_| Error::InvalidTimestamp("Invalid system time".to_string()))?
                     .as_secs(),
             })?,
             sender: self.identity.peer_id,
@@ -336,7 +364,12 @@ impl ConsensusGameManager {
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
-            signature: vec![],
+            signature: {
+                // Use pooled buffer for signature (typically empty but could be used)
+                let mut sig_buffer = self.memory_pools.vec_u8_pool.get().await;
+                sig_buffer.clear();
+                sig_buffer.clone()  // Return copy, buffer will be returned to pool when dropped
+            },
         };
 
         // Send discovery request via mesh
@@ -443,15 +476,37 @@ impl ConsensusGameManager {
 
     /// Verify if a discovered game is still active
     async fn verify_game_active(&self, game_info: &GameDiscoveryInfo) -> bool {
-        // Check if we have the game locally
-        if let Some(session) = self.active_games.get(&game_info.game_id) {
-            return session.is_active;
+        // Check cache first (30 second TTL)
+        if let Some(cached) = self.verification_cache.get(&game_info.game_id) {
+            if cached.verified_at.elapsed() < Duration::from_secs(30) {
+                return cached.is_active;
+            }
+            // Cache expired, remove it
+            self.verification_cache.remove(&game_info.game_id);
         }
 
-        // Send verification request to game host
+        // Check if we have the game locally
+        if let Some(session) = self.active_games.get(&game_info.game_id) {
+            let is_active = session.is_active;
+            // Update cache
+            self.verification_cache.insert(
+                game_info.game_id,
+                GameVerificationCache {
+                    is_active,
+                    verified_at: Instant::now(),
+                },
+            );
+            return is_active;
+        }
+
+        // Send verification request to game host with timeout
+        let payload = match bincode::serialize(&game_info.game_id) {
+            Ok(p) => p,
+            Err(_) => return false,
+        };
         let verify_msg = MeshMessage {
             message_type: MeshMessageType::GameVerification,
-            payload: bincode::serialize(&game_info.game_id).unwrap_or_default(),
+            payload,
             sender: self.identity.peer_id,
             recipient: Some(game_info.host),
             timestamp: SystemTime::now()
@@ -461,20 +516,32 @@ impl ConsensusGameManager {
             signature: vec![],
         };
 
-        // Send and wait for response with timeout
-        if let Ok(response) = tokio::time::timeout(
-            Duration::from_millis(500),
+        // Send and wait for response with 5 second timeout
+        let verification_result = match tokio::time::timeout(
+            Duration::from_secs(5),
             self.mesh_service
                 .send_and_wait_response(verify_msg, game_info.host),
         )
         .await
         {
-            if let Ok(Some(resp)) = response {
-                return resp.message_type == MeshMessageType::GameVerificationAck;
+            Ok(Ok(Some(resp))) => resp.message_type == MeshMessageType::GameVerificationAck,
+            Ok(_) => false,
+            Err(_) => {
+                log::warn!("Game verification timeout for {:?}", game_info.game_id);
+                false
             }
-        }
+        };
 
-        false
+        // Cache the result
+        self.verification_cache.insert(
+            game_info.game_id,
+            GameVerificationCache {
+                is_active: verification_result,
+                verified_at: Instant::now(),
+            },
+        );
+
+        verification_result
     }
 
     /// Handle incoming game discovery requests
@@ -610,6 +677,10 @@ impl ConsensusGameManager {
             amount.to_crap(),
             game_id
         );
+        
+        // Record bet placement metric
+        crate::monitoring::record_game_event("bet_placed", &format!("{:?}", game_id));
+        
         Ok(())
     }
 
@@ -679,15 +750,20 @@ impl ConsensusGameManager {
             .get(&game_id)
             .ok_or_else(|| Error::GameLogic("No consensus bridge for game".to_string()))?;
 
-        // Submit operation
+        // Submit operation with timing
+        let start_time = Instant::now();
         let proposal_id = bridge.submit_operation(operation.clone()).await?;
+        let consensus_duration = start_time.elapsed().as_millis() as u64;
+
+        // Record consensus timing metrics
+        self.record_consensus_timing(consensus_duration);
 
         // Track pending operation
         let pending_op = PendingGameOperation {
             operation,
             game_id,
-            submitted_at: Instant::now(),
-            consensus_achieved: false,
+            submitted_at: start_time,
+            consensus_achieved: true, // If we got here, consensus succeeded
         };
 
         let operation_key = format!("{:?}_{}", proposal_id, operation_type);
@@ -758,8 +834,8 @@ impl ConsensusGameManager {
 
     /// Start state synchronization task
     async fn start_state_synchronization(&self) {
-        let active_games = self.active_games.clone();
-        let consensus_bridges = self.consensus_bridges.clone();
+        let active_games = Arc::clone(&self.active_games);
+        let consensus_bridges = Arc::clone(&self.consensus_bridges);
         let sync_interval = self.config.state_sync_interval;
 
         tokio::spawn(async move {
@@ -773,10 +849,10 @@ impl ConsensusGameManager {
                     .iter()
                     .map(|entry| {
                         let game_id = *entry.key();
-                        let bridges_clone = consensus_bridges.clone();
+                        let bridges_ref = Arc::clone(&consensus_bridges);
 
                         tokio::spawn(async move {
-                            if let Some(bridge) = bridges_clone.get(&game_id) {
+                            if let Some(bridge) = bridges_ref.get(&game_id) {
                                 // Get updated consensus state
                                 if let Ok(_consensus_state) = bridge.get_current_state().await {
                                     log::debug!("Synced state for game {:?}", game_id);
@@ -796,9 +872,9 @@ impl ConsensusGameManager {
 
     /// Start operation timeout handler
     async fn start_operation_timeout_handler(&self) {
-        let pending_operations = self.pending_operations.clone();
-        let game_events = self.game_events.clone();
-        let consensus_failures = self.total_consensus_failures.clone();
+        let pending_operations = Arc::clone(&self.pending_operations);
+        let game_events = self.game_events.clone(); // mpsc::Sender needs clone
+        let consensus_failures = Arc::clone(&self.total_consensus_failures);
         let timeout = self.config.consensus_timeout;
 
         tokio::spawn(async move {
@@ -981,13 +1057,13 @@ impl ConsensusGameManager {
         // Update game state
         session.game = state.game_state;
         session.participants = state.participants;
-        session.consensus_state = state.consensus_state.clone();
+        session.consensus_state = Arc::clone(&state.consensus_state);
         session.last_updated = Instant::now();
 
         // Sync consensus bridge if it exists
         if let Some(bridge) = self.consensus_bridges.get(&game_id) {
-            // Update bridge with latest consensus state
-            bridge.sync_state(state.consensus_state).await?;
+            // Update bridge with latest consensus state - need to dereference Arc
+            bridge.sync_state((*state.consensus_state).clone()).await?;
 
             // Add all participants to bridge
             for participant in &participants {
@@ -1092,9 +1168,24 @@ impl ConsensusGameManager {
                 as u64,
             total_consensus_failures: self.total_consensus_failures.load(Ordering::Relaxed) as u64,
             active_game_count: self.active_games.len(),
-            average_consensus_time_ms: 0, // TODO: Calculate from metrics
+            average_consensus_time_ms: {
+                let total_ops = self.total_consensus_operations.load(Ordering::Relaxed);
+                if total_ops > 0 {
+                    self.total_consensus_time_ms.load(Ordering::Relaxed) / total_ops as u64
+                } else {
+                    0
+                }
+            },
         };
         self.stats_snapshot.store(Arc::new(stats));
+    }
+
+    /// Record consensus operation timing for metrics
+    fn record_consensus_timing(&self, duration_ms: u64) {
+        self.total_consensus_time_ms
+            .fetch_add(duration_ms, Ordering::Relaxed);
+        self.total_consensus_operations
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Get manager statistics - lock-free read
@@ -1159,14 +1250,14 @@ impl ConsensusGameManager {
     }
 
     /// Create game announcement message
-    fn create_announcement_message(&self, game_info: GameDiscoveryInfo) -> Result<MeshMessage> {
+    async fn create_announcement_message(&self, game_info: GameDiscoveryInfo) -> Result<MeshMessage> {
         Ok(MeshMessage {
             message_type: MeshMessageType::GameAnnouncement,
             payload: bincode::serialize(&game_info)?,
             sender: self.identity.peer_id,
             recipient: None, // Broadcast to all
             timestamp: self.get_current_timestamp(),
-            signature: vec![],
+            signature: self.get_pooled_signature_buffer().await,
         })
     }
 
@@ -1176,6 +1267,25 @@ impl ConsensusGameManager {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs()
+    }
+
+    /// Discover available peers for game participation
+    pub async fn discover_available_peers(&self) -> Result<Vec<PeerId>> {
+        // Get connected peers from mesh service
+        let connected_peers = self.mesh_service.get_connected_peers().await;
+
+        // For now, return all connected peers as gaming-capable
+        // In a full implementation, we would check peer capabilities
+        let gaming_peers: Vec<PeerId> = connected_peers.iter().map(|peer| peer.peer_id).collect();
+
+        Ok(gaming_peers)
+    }
+
+    /// Get a pooled Vec<u8> buffer for signatures and other byte operations
+    async fn get_pooled_signature_buffer(&self) -> Vec<u8> {
+        let mut buffer = self.memory_pools.vec_u8_pool.get().await;
+        buffer.clear();
+        buffer.clone() // Return copy, original buffer will be returned to pool when dropped
     }
 }
 

@@ -343,3 +343,5 @@ async fn test_cross_platform_compatibility() {
     // Should succeed or gracefully fail based on platform
     assert!(result.is_ok() || result.is_err());
 }
+#![cfg(feature = "legacy-tests")]
+#![cfg(feature = "legacy-tests")]

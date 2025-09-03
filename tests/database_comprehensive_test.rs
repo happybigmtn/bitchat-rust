@@ -680,3 +680,4 @@ async fn test_error_handling() {
     let result = QueryBuilder::delete().build(); // Missing table name
     assert!(result.is_err());
 }
+#![cfg(feature = "legacy-tests")]

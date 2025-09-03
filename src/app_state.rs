@@ -13,6 +13,7 @@ use bitcraps::{
     MeshService, PeerId, PersistenceManager, ProofOfRelay, Result,
     SessionManager as BitchatSessionManager, TokenLedger, TransportCoordinator, TREASURY_ADDRESS,
 };
+use bitcraps::transport::tcp_transport::TcpTransportConfig;
 
 use bitcraps::gaming::{ConsensusGameConfig, ConsensusGameManager};
 use bitcraps::mesh::{ConsensusMessageConfig, ConsensusMessageHandler, MeshConsensusIntegration};
@@ -39,7 +40,7 @@ pub struct BitCrapsApp {
     pub session_manager: Arc<BitchatSessionManager>,
     pub ledger: Arc<TokenLedger>,
     pub game_runtime: Arc<GameRuntime>,
-    pub _discovery: Arc<BluetoothDiscovery>,
+    pub _discovery: Option<Arc<BluetoothDiscovery>>, 
     pub _persistence: Arc<PersistenceManager>,
     pub proof_of_relay: Arc<ProofOfRelay>,
     pub config: AppConfig,
@@ -77,12 +78,37 @@ impl BitCrapsApp {
         );
 
         // Step 4: Setup transport layer
-        println!("📡 Setting up Bluetooth transport...");
+        println!("📡 Setting up transports...");
         let mut transport_coordinator = TransportCoordinator::new();
-        transport_coordinator
-            .init_bluetooth(identity.peer_id)
-            .await
-            .map_err(|e| Error::Network(format!("Failed to initialize Bluetooth: {}", e)))?;
+        // TCP: initialize and optionally listen/connect
+        if config.listen_tcp.is_some() || !config.connect_tcp.is_empty() {
+            use std::net::SocketAddr;
+            transport_coordinator
+                .init_tcp_transport(TcpTransportConfig::default(), identity.peer_id)
+                .await?;
+
+            if let Some(addr_str) = &config.listen_tcp {
+                let addr: SocketAddr = addr_str
+                    .parse()
+                    .map_err(|e| Error::Network(format!("Invalid --listen-tcp addr: {}", e)))?;
+                transport_coordinator.listen_tcp(addr).await?;
+            }
+
+            for addr_str in &config.connect_tcp {
+                let addr: SocketAddr = addr_str
+                    .parse()
+                    .map_err(|e| Error::Network(format!("Invalid --connect-tcp addr: {}", e)))?;
+                let _ = transport_coordinator.connect_tcp(addr).await?;
+            }
+        }
+
+        // BLE: initialize only if enabled
+        if config.enable_ble {
+            transport_coordinator
+                .init_bluetooth(identity.peer_id)
+                .await
+                .map_err(|e| Error::Network(format!("Failed to initialize Bluetooth: {}", e)))?;
+        }
         let transport_coordinator = Arc::new(transport_coordinator);
 
         // Step 5: Initialize mesh service
@@ -91,25 +117,33 @@ impl BitCrapsApp {
         let mut mesh_service = MeshService::new(identity.clone(), transport_coordinator.clone());
 
         // Step 6: Setup discovery
-        println!("🔍 Starting peer discovery...");
-        let discovery = Arc::new(
-            BluetoothDiscovery::new(identity.clone())
-                .await
-                .map_err(|e| Error::Network(e.to_string()))?,
-        );
+        // Optional BLE discovery
+        let discovery = if config.enable_ble {
+            println!("🔍 Starting BLE peer discovery...");
+            Some(
+                Arc::new(
+                    BluetoothDiscovery::new(identity.clone())
+                        .await
+                        .map_err(|e| Error::Network(e.to_string()))?,
+                ),
+            )
+        } else {
+            None
+        };
 
-        // Step 7: Initialize game runtime with treasury
-        println!("🎰 Starting game runtime with treasury participant...");
-        let (game_runtime, _game_sender) = GameRuntime::new(Default::default(), [0; 32]);
-        let game_runtime = Arc::new(game_runtime);
-
-        // Step 8: Setup proof-of-relay consensus
+        // Step 7: Setup proof-of-relay consensus
         println!("⚡ Initializing proof-of-relay consensus...");
         let proof_of_relay = Arc::new(ProofOfRelay::new(ledger.clone()));
 
         // Wire up proof of relay to mesh service
         mesh_service.set_proof_of_relay(proof_of_relay.clone());
         let mesh_service = Arc::new(mesh_service);
+
+        // Step 8: Initialize game runtime with mesh service
+        println!("🎰 Starting game runtime with treasury participant...");
+        let (game_runtime, _game_sender) =
+            GameRuntime::new(Default::default(), [0; 32], mesh_service.clone());
+        let game_runtime = Arc::new(game_runtime);
 
         // Step 9: Initialize P2P consensus components
         println!("🤝 Setting up P2P consensus system...");

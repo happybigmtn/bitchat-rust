@@ -182,13 +182,13 @@ impl Color {
     pub fn hex(&self) -> String {
         format!("#{:02X}{:02X}{:02X}{:02X}", self.r, self.g, self.b, self.a)
     }
-    
+
     pub fn from_hex(hex: &str) -> Option<Self> {
         let hex = hex.trim_start_matches('#');
         if hex.len() != 6 && hex.len() != 8 {
             return None;
         }
-        
+
         let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
         let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
         let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
@@ -197,7 +197,7 @@ impl Color {
         } else {
             255
         };
-        
+
         Some(Color { r, g, b, a })
     }
 }
@@ -235,40 +235,40 @@ impl MobileUI {
         let theme = Arc::new(Theme::default());
         let state = Arc::new(RwLock::new(AppState::default()));
         let navigation = Arc::new(RwLock::new(NavigationStack::new()));
-        
+
         Self {
             state,
             navigation,
             theme,
         }
     }
-    
+
     /// Initialize the UI
     pub async fn initialize(&self) -> Result<(), UIError> {
         // Load saved state
         self.load_state().await?;
-        
+
         // Initialize navigation
         self.navigation.write().await.push(Screen::Splash);
-        
+
         // Setup theme
         self.apply_theme().await?;
-        
+
         Ok(())
     }
-    
+
     /// Navigate to a screen
     pub async fn navigate_to(&self, screen: Screen) -> Result<(), UIError> {
         self.navigation.write().await.push(screen);
         Ok(())
     }
-    
+
     /// Go back to previous screen
     pub async fn navigate_back(&self) -> Result<(), UIError> {
         self.navigation.write().await.pop();
         Ok(())
     }
-    
+
     /// Update app state
     pub async fn update_state<F>(&self, updater: F) -> Result<(), UIError>
     where
@@ -279,24 +279,24 @@ impl MobileUI {
         self.save_state().await?;
         Ok(())
     }
-    
+
     /// Get current state
     pub async fn get_state(&self) -> AppState {
         self.state.read().await.clone()
     }
-    
+
     /// Load saved state
     async fn load_state(&self) -> Result<(), UIError> {
         // In production, would load from persistent storage
         Ok(())
     }
-    
+
     /// Save current state
     async fn save_state(&self) -> Result<(), UIError> {
         // In production, would save to persistent storage
         Ok(())
     }
-    
+
     /// Apply theme settings
     async fn apply_theme(&self) -> Result<(), UIError> {
         // In production, would apply theme to native UI
@@ -311,12 +311,12 @@ impl NavigationStack {
             current_index: 0,
         }
     }
-    
+
     pub fn push(&mut self, screen: Screen) {
         self.stack.push(screen);
         self.current_index = self.stack.len() - 1;
     }
-    
+
     pub fn pop(&mut self) -> Option<Screen> {
         if self.stack.len() > 1 {
             self.current_index = self.current_index.saturating_sub(1);
@@ -325,11 +325,11 @@ impl NavigationStack {
             None
         }
     }
-    
+
     pub fn current(&self) -> Option<&Screen> {
         self.stack.get(self.current_index)
     }
-    
+
     pub fn clear(&mut self) {
         self.stack.clear();
         self.current_index = 0;
@@ -422,13 +422,13 @@ impl std::error::Error for UIError {}
 pub trait UIRenderer {
     /// Render a screen
     fn render_screen(&self, screen: &Screen, state: &AppState, theme: &Theme);
-    
+
     /// Show dialog
     fn show_dialog(&self, title: &str, message: &str, buttons: Vec<DialogButton>);
-    
+
     /// Show toast notification
     fn show_toast(&self, message: &str, duration: ToastDuration);
-    
+
     /// Update status bar
     fn update_status_bar(&self, style: StatusBarStyle);
 }

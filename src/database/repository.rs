@@ -20,7 +20,7 @@ impl UserRepository {
         self.pool
             .with_connection(|conn| {
                 conn.execute(
-                    "INSERT INTO users (id, username, public_key, created_at, updated_at) 
+                    "INSERT INTO users (id, username, public_key, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?)",
                     params![
                         id,
@@ -41,7 +41,7 @@ impl UserRepository {
             .with_connection(|conn| {
                 let mut stmt = conn
                     .prepare(
-                        "SELECT id, username, public_key, reputation, created_at, updated_at 
+                        "SELECT id, username, public_key, reputation, created_at, updated_at
                  FROM users WHERE id = ?",
                     )
                     .map_err(|e| Error::Database(e.to_string()))?;
@@ -83,7 +83,7 @@ impl UserRepository {
             .with_connection(|conn| {
                 let mut stmt = conn
                     .prepare(
-                        "SELECT id, username, public_key, reputation, created_at, updated_at 
+                        "SELECT id, username, public_key, reputation, created_at, updated_at
                  FROM users ORDER BY reputation DESC LIMIT ?",
                     )
                     .map_err(|e| Error::Database(e.to_string()))?;
@@ -123,7 +123,7 @@ impl GameRepository {
         self.pool
             .with_connection(|conn| {
                 conn.execute(
-                    "INSERT INTO games (id, state, pot_size, phase, created_at) 
+                    "INSERT INTO games (id, state, pot_size, phase, created_at)
                  VALUES (?, ?, ?, ?, ?)",
                     params![
                         &game.id,
@@ -144,7 +144,7 @@ impl GameRepository {
         self.pool
             .with_connection(|conn| {
                 conn.execute(
-                    "UPDATE games SET state = ?, pot_size = ?, phase = ?, 
+                    "UPDATE games SET state = ?, pot_size = ?, phase = ?,
                  completed_at = ?, winner_id = ? WHERE id = ?",
                     params![
                         serde_json::to_string(&game.state)
@@ -167,7 +167,7 @@ impl GameRepository {
             .with_connection(|conn| {
                 let mut stmt = conn
                     .prepare(
-                        "SELECT id, state, pot_size, phase, created_at, completed_at, winner_id 
+                        "SELECT id, state, pot_size, phase, created_at, completed_at, winner_id
                  FROM games WHERE id = ?",
                     )
                     .map_err(|e| Error::Database(e.to_string()))?;
@@ -204,8 +204,8 @@ impl GameRepository {
             .with_connection(|conn| {
                 let mut stmt = conn
                     .prepare(
-                        "SELECT id, state, pot_size, phase, created_at, completed_at, winner_id 
-                 FROM games WHERE completed_at IS NULL 
+                        "SELECT id, state, pot_size, phase, created_at, completed_at, winner_id
+                 FROM games WHERE completed_at IS NULL
                  ORDER BY created_at DESC LIMIT ?",
                     )
                     .map_err(|e| Error::Database(e.to_string()))?;
@@ -253,8 +253,8 @@ impl TransactionRepository {
         self.pool
             .with_connection(|conn| {
                 conn.execute(
-                    "INSERT INTO transactions 
-                 (id, from_user_id, to_user_id, amount, transaction_type, status, created_at) 
+                    "INSERT INTO transactions
+                 (id, from_user_id, to_user_id, amount, transaction_type, status, created_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?)",
                     params![
                         &tx.id,
@@ -294,10 +294,10 @@ impl TransactionRepository {
             .with_connection(|conn| {
                 let mut stmt = conn
                     .prepare(
-                        "SELECT id, from_user_id, to_user_id, amount, transaction_type, 
-                 status, created_at, confirmed_at 
-                 FROM transactions 
-                 WHERE from_user_id = ? OR to_user_id = ? 
+                        "SELECT id, from_user_id, to_user_id, amount, transaction_type,
+                 status, created_at, confirmed_at
+                 FROM transactions
+                 WHERE from_user_id = ? OR to_user_id = ?
                  ORDER BY created_at DESC LIMIT ?",
                     )
                     .map_err(|e| Error::Database(e.to_string()))?;
@@ -329,7 +329,7 @@ impl TransactionRepository {
                 // Calculate balance from transactions
                 let received: i64 = conn
                     .query_row(
-                        "SELECT COALESCE(SUM(amount), 0) FROM transactions 
+                        "SELECT COALESCE(SUM(amount), 0) FROM transactions
                  WHERE to_user_id = ? AND status = 'confirmed'",
                         params![user_id],
                         |row| row.get(0),
@@ -338,7 +338,7 @@ impl TransactionRepository {
 
                 let sent: i64 = conn
                     .query_row(
-                        "SELECT COALESCE(SUM(amount), 0) FROM transactions 
+                        "SELECT COALESCE(SUM(amount), 0) FROM transactions
                  WHERE from_user_id = ? AND status = 'confirmed'",
                         params![user_id],
                         |row| row.get(0),
@@ -365,9 +365,9 @@ impl StatsRepository {
         self.pool
             .with_connection(|conn| {
                 conn.execute(
-                    "INSERT OR REPLACE INTO game_statistics 
-                 (game_id, total_bets, total_wagered, total_won, house_edge, 
-                  duration_seconds, player_count, max_pot_size, created_at) 
+                    "INSERT OR REPLACE INTO game_statistics
+                 (game_id, total_bets, total_wagered, total_won, house_edge,
+                  duration_seconds, player_count, max_pot_size, created_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     params![
                         game_id,
@@ -391,9 +391,9 @@ impl StatsRepository {
         self.pool
             .with_connection(|conn| {
                 conn.execute(
-                    "INSERT OR REPLACE INTO player_statistics 
-                 (player_id, games_played, games_won, total_wagered, total_won, 
-                  win_rate, avg_bet_size, biggest_win, longest_streak, updated_at) 
+                    "INSERT OR REPLACE INTO player_statistics
+                 (player_id, games_played, games_won, total_wagered, total_won,
+                  win_rate, avg_bet_size, biggest_win, longest_streak, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     params![
                         player_id,
@@ -419,8 +419,8 @@ impl StatsRepository {
             .with_connection(|conn| {
                 let mut stmt = conn
                     .prepare(
-                        "SELECT games_played, games_won, total_wagered, total_won, 
-                 win_rate, avg_bet_size, biggest_win, longest_streak 
+                        "SELECT games_played, games_won, total_wagered, total_won,
+                 win_rate, avg_bet_size, biggest_win, longest_streak
                  FROM player_statistics WHERE player_id = ?",
                     )
                     .map_err(|e| Error::Database(e.to_string()))?;
@@ -451,9 +451,9 @@ impl StatsRepository {
             .with_connection(|conn| {
                 let mut stmt = conn
                     .prepare(
-                        "SELECT u.username, p.games_won, p.total_won, p.win_rate 
-                 FROM player_statistics p 
-                 JOIN users u ON p.player_id = u.id 
+                        "SELECT u.username, p.games_won, p.total_won, p.win_rate
+                 FROM player_statistics p
+                 JOIN users u ON p.player_id = u.id
                  ORDER BY p.total_won DESC LIMIT ?",
                     )
                     .map_err(|e| Error::Database(e.to_string()))?;

@@ -483,7 +483,7 @@ impl ByzantineConsensusEngine {
     async fn calculate_quorum(&self) -> usize {
         let participants = self.participants.read().await;
         let total = participants.len();
-        
+
         // CRITICAL FIX: Use ceiling of 2n/3 for Byzantine fault tolerance
         // This ensures safety when exactly n/3 nodes are Byzantine
         // Mathematical proof: need more than 2/3 of all nodes to vote

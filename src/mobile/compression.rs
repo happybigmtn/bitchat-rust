@@ -379,7 +379,7 @@ struct ContentTypeDetector {
     json_patterns: Vec<&'static [u8]>,
     /// Binary patterns
     binary_patterns: Vec<&'static [u8]>,
-    /// Game state patterns  
+    /// Game state patterns
     game_patterns: Vec<&'static [u8]>,
 }
 

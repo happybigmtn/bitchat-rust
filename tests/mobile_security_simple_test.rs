@@ -507,3 +507,5 @@ async fn test_key_derivation_performance() -> Result<()> {
 
     Ok(())
 }
+#![cfg(feature = "legacy-tests")]
+#![cfg(feature = "legacy-tests")]

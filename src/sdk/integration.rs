@@ -194,7 +194,7 @@ mod tests {
     #[tokio::test]
     async fn test_webhook_registration() {
         let mut helper = IntegrationHelper::new();
-        
+
         let webhook_config = WebhookConfig {
             url: "https://example.com/webhook".to_string(),
             secret: Some("secret".to_string()),

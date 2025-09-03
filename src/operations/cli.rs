@@ -1,5 +1,5 @@
 //! Operations CLI Tool for BitCraps
-//! 
+//!
 //! Command-line interface for managing BitCraps operations
 
 use std::collections::HashMap;
@@ -386,7 +386,7 @@ impl BitCrapsOpsApp {
                     println!("Deploying {} version {} to {}...", pipeline, version, environment);
                     let deployment_id = self.deployment_manager.deploy(&pipeline, &version, &environment).await?;
                     println!("Deployment started with ID: {}", deployment_id);
-                    
+
                     // Monitor deployment progress
                     self.monitor_deployment(&deployment_id).await?;
                 }
@@ -400,7 +400,7 @@ impl BitCrapsOpsApp {
                     println!("Are you sure you want to rollback deployment {}? (y/N)", deployment_id);
                     // In a real implementation, would wait for user input
                 }
-                
+
                 println!("Rolling back deployment {}...", deployment_id);
                 let rollback_id = self.deployment_manager.rollback(&deployment_id).await?;
                 println!("Rollback started with ID: {}", rollback_id);
@@ -415,21 +415,21 @@ impl BitCrapsOpsApp {
             DeploymentActions::History { limit, environment } => {
                 println!("Deployment History (showing {} entries):", limit);
                 let history = self.deployment_manager.get_deployment_history(Some(limit)).await;
-                
+
                 for record in history {
                     if let Some(env_filter) = &environment {
                         if record.environment != *env_filter {
                             continue;
                         }
                     }
-                    
-                    println!("  {} - {} ({}) - {:?} - Started: {:?}", 
-                             record.id, record.version, record.environment, 
+
+                    println!("  {} - {} ({}) - {:?} - Started: {:?}",
+                             record.id, record.version, record.environment,
                              record.status, record.started_at);
                 }
             },
         }
-        
+
         Ok(())
     }
 
@@ -444,7 +444,7 @@ impl BitCrapsOpsApp {
             MonitoringActions::Metrics { category, format } => {
                 println!("System Metrics (format: {}):", format);
                 let metrics = self.infrastructure_monitor.get_current_metrics().await;
-                
+
                 match format.as_str() {
                     "json" => println!("{}", serde_json::to_string_pretty(&metrics).unwrap_or_default()),
                     "prometheus" => self.print_prometheus_metrics(&metrics).await,
@@ -454,12 +454,12 @@ impl BitCrapsOpsApp {
             MonitoringActions::Alerts { critical_only } => {
                 println!("Active Alerts:");
                 let alerts = self.infrastructure_monitor.get_active_alerts().await;
-                
+
                 for alert in alerts {
                     if critical_only && !matches!(alert.severity, crate::monitoring::alerting::AlertSeverity::Critical) {
                         continue;
                     }
-                    
+
                     println!("  [{}] {} - {}", alert.severity as u8, alert.name, alert.description);
                 }
             },
@@ -469,7 +469,7 @@ impl BitCrapsOpsApp {
                 println!("Monitoring rule added successfully");
             },
         }
-        
+
         Ok(())
     }
 
@@ -484,9 +484,9 @@ impl BitCrapsOpsApp {
             BackupActions::List { limit } => {
                 println!("Available Backups (showing {} entries):", limit);
                 let backups = self.backup_manager.list_backups(Some(limit)).await;
-                
+
                 for backup in backups {
-                    println!("  {} - {} - {} - Created: {:?}", 
+                    println!("  {} - {} - {} - Created: {:?}",
                              backup.id, backup.backup_type, backup.size_mb, backup.created_at);
                 }
             },
@@ -495,7 +495,7 @@ impl BitCrapsOpsApp {
                     println!("Are you sure you want to restore backup {}? (y/N)", backup_id);
                     // Would wait for confirmation
                 }
-                
+
                 println!("Restoring backup {}...", backup_id);
                 self.backup_manager.restore_backup(&backup_id, environment.as_deref()).await?;
                 println!("Backup restored successfully");
@@ -510,7 +510,7 @@ impl BitCrapsOpsApp {
                 }
             },
         }
-        
+
         Ok(())
     }
 
@@ -520,7 +520,7 @@ impl BitCrapsOpsApp {
             HealthActions::Check { component, format } => {
                 println!("Health Check Results (component: {}):", component);
                 let health_status = self.health_checker.check_health(&component).await?;
-                
+
                 match format.as_str() {
                     "json" => println!("{}", serde_json::to_string_pretty(&health_status).unwrap_or_default()),
                     _ => self.print_health_table(&health_status).await,
@@ -533,13 +533,13 @@ impl BitCrapsOpsApp {
             HealthActions::History { limit, component } => {
                 println!("Health History (showing {} entries):", limit);
                 let history = self.health_checker.get_health_history(limit, component.as_deref()).await;
-                
+
                 for entry in history {
                     println!("  {} - {:?} - {}", entry.timestamp, entry.status, entry.component);
                 }
             },
         }
-        
+
         Ok(())
     }
 
@@ -574,7 +574,7 @@ impl BitCrapsOpsApp {
                 println!("Auto-scaling disabled");
             },
         }
-        
+
         Ok(())
     }
 
@@ -604,7 +604,7 @@ impl BitCrapsOpsApp {
                 self.print_resource_usage(&resource_type).await?;
             },
         }
-        
+
         Ok(())
     }
 
@@ -612,7 +612,7 @@ impl BitCrapsOpsApp {
     async fn handle_maintenance_commands(&self, cmd: MaintenanceCommands) -> Result<(), OpsError> {
         match cmd.action {
             MaintenanceActions::Schedule { maintenance_type, start_time, duration, description } => {
-                println!("Scheduling {} maintenance for {} (duration: {}m)...", 
+                println!("Scheduling {} maintenance for {} (duration: {}m)...",
                          maintenance_type, start_time, duration);
                 // Schedule maintenance
                 println!("Maintenance scheduled successfully");
@@ -634,24 +634,24 @@ impl BitCrapsOpsApp {
                     println!("Are you sure you want to run {} maintenance now? (y/N)", task_type);
                     // Would wait for confirmation
                 }
-                
+
                 println!("Running {} maintenance...", task_type);
                 // Run maintenance task
                 println!("Maintenance completed");
             },
         }
-        
+
         Ok(())
     }
 
     // Helper methods for specific operations...
-    
+
     async fn monitor_deployment(&self, deployment_id: &str) -> Result<(), OpsError> {
         println!("Monitoring deployment progress...");
-        
+
         loop {
             let status = self.deployment_manager.get_deployment_status(deployment_id).await?;
-            
+
             match status {
                 super::deployment::DeploymentStatus::Completed => {
                     println!("✓ Deployment completed successfully!");
@@ -667,7 +667,7 @@ impl BitCrapsOpsApp {
                 },
             }
         }
-        
+
         Ok(())
     }
 
@@ -693,11 +693,11 @@ impl BitCrapsOpsApp {
         println!("Running health monitoring loop...");
         loop {
             let _health_status = self.health_checker.check_health("all").await?;
-            
+
             if auto_heal {
                 // Perform auto-healing if needed
             }
-            
+
             sleep(Duration::from_secs(interval)).await;
         }
     }
@@ -807,14 +807,14 @@ impl std::error::Error for OpsError {}
 /// Main CLI entry point
 pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     let cli = BitCrapsOpsCli::parse();
-    
+
     // Initialize logging
     let level = if cli.verbose {
         tracing::Level::DEBUG
     } else {
         tracing::Level::INFO
     };
-    
+
     tracing_subscriber::fmt()
         .with_max_level(level)
         .init();
@@ -822,6 +822,6 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     // Create and run application
     let app = BitCrapsOpsApp::new(&cli.config).await?;
     app.run(cli).await?;
-    
+
     Ok(())
 }

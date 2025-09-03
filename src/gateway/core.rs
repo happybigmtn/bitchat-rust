@@ -216,24 +216,24 @@ pub struct GatewayNode {
     identity: Arc<BitchatIdentity>,
     config: GatewayConfig,
     mesh_service: Arc<MeshService>,
-    
+
     // Peer management
     local_peers: Arc<RwLock<HashMap<PeerId, LocalPeer>>>,
     internet_peers: Arc<RwLock<HashMap<PeerId, InternetPeer>>>,
-    
+
     // Gateway registry and routing
     gateway_registry: Arc<RwLock<HashMap<PeerId, GatewayInfo>>>,
     routing_table: Arc<RwLock<HashMap<PeerId, GatewayRoute>>>,
-    
+
     // Monitoring and statistics
     bandwidth_monitor: Arc<BandwidthMonitor>,
     connection_manager: Arc<ConnectionManager>,
     relay_stats: Arc<RwLock<RelayStatistics>>,
-    
+
     // Event handling
     event_sender: mpsc::UnboundedSender<GatewayEvent>,
     event_receiver: Arc<Mutex<mpsc::UnboundedReceiver<GatewayEvent>>>,
-    
+
     // Control
     is_running: Arc<RwLock<bool>>,
     shutdown_sender: Arc<Mutex<Option<oneshot::Sender<()>>>>,
@@ -420,19 +420,19 @@ pub enum GatewayEvent {
     LocalPeerDisconnected { peer_id: PeerId, reason: String },
     InternetPeerConnected { peer_id: PeerId, address: SocketAddr },
     InternetPeerDisconnected { peer_id: PeerId, reason: String },
-    
+
     // Relay events
     MessageRelayed { from: PeerId, to: PeerId, bytes: usize },
     RelayRewardEarned { tokens: u64 },
-    
+
     // System events
     BandwidthLimitReached { interface: String, limit_mbps: f64 },
     ConnectionLimitReached { current: usize, limit: usize },
-    
+
     // Discovery events
     GatewayDiscovered { gateway: GatewayInfo },
     GatewayLost { peer_id: PeerId, reason: String },
-    
+
     // Error events
     ProtocolError { peer_id: Option<PeerId>, error: String },
     SecurityViolation { source: SocketAddr, violation: String },
@@ -474,7 +474,7 @@ impl GatewayNode {
         mesh_service: Arc<MeshService>,
     ) -> Result<Self> {
         let (event_sender, event_receiver) = mpsc::channel(1000); // Bounded gateway events
-        
+
         Ok(Self {
             identity,
             mesh_service,
@@ -492,20 +492,20 @@ impl GatewayNode {
             config,
         })
     }
-    
+
     /// Start the gateway node
     pub async fn start(&self) -> Result<()> {
         *self.is_running.write().await = true;
-        
+
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
         *self.shutdown_sender.lock().await = Some(shutdown_sender);
-        
+
         // Initialize relay statistics
         {
             let mut stats = self.relay_stats.write().await;
             stats.uptime_start = Some(Instant::now());
         }
-        
+
         // Start all components
         self.start_local_interface().await?;
         self.start_internet_interface().await?;
@@ -513,41 +513,41 @@ impl GatewayNode {
         self.start_heartbeat_service().await?;
         self.start_bandwidth_monitoring().await?;
         self.start_connection_management().await?;
-        
+
         if self.config.enable_relay_rewards {
             self.start_relay_rewards().await?;
         }
-        
+
         log::info!(
             "Gateway node started - local:{}, internet:{}",
             self.config.local_interface.bind_address,
             self.config.internet_interface.bind_address
         );
-        
+
         Ok(())
     }
-    
+
     /// Stop the gateway node
     pub async fn stop(&self) {
         *self.is_running.write().await = false;
-        
+
         // Trigger shutdown
         if let Some(sender) = self.shutdown_sender.lock().await.take() {
             let _ = sender.send(());
         }
-        
+
         log::info!("Gateway node stopped");
     }
-    
+
     /// Get gateway statistics
     pub async fn get_stats(&self) -> GatewayStats {
         let local_peers = self.local_peers.read().await;
         let internet_peers = self.internet_peers.read().await;
         let gateway_registry = self.gateway_registry.read().await;
         let relay_stats = self.relay_stats.read().await;
-        
+
         let bandwidth_usage = self.bandwidth_monitor.get_usage().await;
-        
+
         GatewayStats {
             local_peers: local_peers.len(),
             internet_peers: internet_peers.len(),
@@ -567,49 +567,49 @@ impl GatewayNode {
             error_rate: relay_stats.error_count as f64 / relay_stats.messages_relayed.max(1) as f64,
         }
     }
-    
+
     /// Get next gateway event
     pub async fn next_event(&self) -> Option<GatewayEvent> {
         self.event_receiver.lock().await.recv().await
     }
-    
+
     // Private implementation methods will be added here
     async fn start_local_interface(&self) -> Result<()> {
         // Implementation for starting local BLE mesh interface
         log::info!("Started local interface at {}", self.config.local_interface.bind_address);
         Ok(())
     }
-    
+
     async fn start_internet_interface(&self) -> Result<()> {
         // Implementation for starting internet interface
         log::info!("Started internet interface at {}", self.config.internet_interface.bind_address);
         Ok(())
     }
-    
+
     async fn start_gateway_discovery(&self) -> Result<()> {
         // Implementation for gateway discovery
         log::info!("Started gateway discovery service");
         Ok(())
     }
-    
+
     async fn start_heartbeat_service(&self) -> Result<()> {
         // Implementation for heartbeat service
         log::info!("Started heartbeat service");
         Ok(())
     }
-    
+
     async fn start_bandwidth_monitoring(&self) -> Result<()> {
         // Implementation for bandwidth monitoring
         log::info!("Started bandwidth monitoring");
         Ok(())
     }
-    
+
     async fn start_connection_management(&self) -> Result<()> {
         // Implementation for connection management
         log::info!("Started connection management");
         Ok(())
     }
-    
+
     async fn start_relay_rewards(&self) -> Result<()> {
         // Implementation for relay rewards
         log::info!("Started relay rewards system");
@@ -627,16 +627,16 @@ impl BandwidthMonitor {
             alert_threshold: 0.8, // Alert at 80% of limit
         }
     }
-    
+
     /// Get current bandwidth usage
     pub async fn get_usage(&self) -> BandwidthUsage {
         let local_usage = *self.local_usage.lock().await;
         let internet_usage = *self.internet_usage.lock().await;
-        
+
         let total_usage = local_usage + internet_usage;
-        let total_limit = self.limits.local_interface.max_bandwidth_mbps + 
+        let total_limit = self.limits.local_interface.max_bandwidth_mbps +
                          self.limits.internet_interface.max_bandwidth_mbps;
-        
+
         BandwidthUsage {
             local_mbps: local_usage,
             internet_mbps: internet_usage,
@@ -649,11 +649,11 @@ impl BandwidthMonitor {
             },
         }
     }
-    
+
     /// Update bandwidth usage
     pub async fn update_usage(&self, is_local: bool, bytes: usize) {
         let mbps = (bytes as f64 * 8.0) / 1_000_000.0;
-        
+
         if is_local {
             let mut usage = self.local_usage.lock().await;
             *usage = (*usage * 0.9) + (mbps * 0.1); // Exponential moving average
@@ -661,7 +661,7 @@ impl BandwidthMonitor {
             let mut usage = self.internet_usage.lock().await;
             *usage = (*usage * 0.9) + (mbps * 0.1);
         }
-        
+
         // Add sample to history
         let mut history = self.usage_history.write().await;
         let sample = BandwidthSample {
@@ -670,15 +670,15 @@ impl BandwidthMonitor {
             internet_mbps: *self.internet_usage.lock().await,
             total_connections: 0, // Would be updated with actual connection count
         };
-        
+
         history.push_back(sample);
-        
+
         // Keep only last hour of samples (assuming 1 sample per second)
         if history.len() > 3600 {
             history.pop_front();
         }
     }
-    
+
     /// Check if bandwidth limit is reached
     pub async fn is_limit_reached(&self, is_local: bool) -> bool {
         if is_local {
@@ -719,7 +719,7 @@ mod tests {
     use super::*;
     use crate::crypto::{BitchatKeypair, BitchatIdentity};
     use crate::transport::TransportCoordinator;
-    
+
     #[tokio::test]
     async fn test_gateway_node_creation() {
         let keypair = BitchatKeypair::generate();
@@ -727,28 +727,28 @@ mod tests {
         let transport = Arc::new(TransportCoordinator::new());
         let mesh = Arc::new(MeshService::new(identity.clone(), transport));
         let config = GatewayConfig::default();
-        
+
         let gateway = GatewayNode::new(identity, config, mesh).unwrap();
-        
+
         let stats = gateway.get_stats().await;
         assert_eq!(stats.local_peers, 0);
         assert_eq!(stats.internet_peers, 0);
         assert_eq!(stats.known_gateways, 0);
     }
-    
+
     #[tokio::test]
     async fn test_bandwidth_monitor() {
         let config = GatewayConfig::default();
         let monitor = BandwidthMonitor::new(config);
-        
+
         // Test initial state
         let usage = monitor.get_usage().await;
         assert_eq!(usage.local_mbps, 0.0);
         assert_eq!(usage.internet_mbps, 0.0);
-        
+
         // Test usage update
         monitor.update_usage(true, 1_000_000).await; // 1MB = 8Mbps instantaneous
-        
+
         let usage = monitor.get_usage().await;
         assert!(usage.local_mbps > 0.0);
         assert!(usage.local_mbps < 8.0); // Should be less due to moving average

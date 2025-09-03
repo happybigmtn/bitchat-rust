@@ -489,26 +489,31 @@ impl CachedConsensusRound {
         Ok(dice_roll)
     }
 
-    /// Generate merkle proof for this round's validity
-    pub fn generate_validity_proof(&mut self) -> Result<MerkleProof> {
+    /// Get reference to cached validity proof (zero-copy)
+    pub fn get_validity_proof(&mut self) -> Result<&MerkleProof> {
         if let Some(ref proof) = self.validity_proof {
-            return Ok(proof.clone());
+            return Ok(proof);
         }
 
-        // Create merkle tree from all commitments
+        // Generate and cache proof if not present
         let commitment_hashes: Vec<Hash256> = self.commitments.iter().map(|(_, c)| *c).collect();
         let tree = MerkleTree::new(&commitment_hashes)?;
 
-        // Generate proof for first commitment (as example)
         match tree.generate_proof(0) {
             Ok(proof) => {
-                self.validity_proof = Some(proof.clone());
-                Ok(proof)
+                self.validity_proof = Some(proof);
+                Ok(self.validity_proof.as_ref().unwrap())
             }
             Err(_) => Err(Error::ValidationError(
                 "Failed to generate validity proof".to_string(),
             )),
         }
+    }
+
+    /// Generate merkle proof for this round's validity (legacy cloning version)
+    pub fn generate_validity_proof(&mut self) -> Result<MerkleProof> {
+        // Use the efficient reference version and clone only when needed
+        self.get_validity_proof().map(|proof| proof.clone())
     }
 
     /// Hash nonce with round ID for commitment

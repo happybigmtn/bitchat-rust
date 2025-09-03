@@ -5,10 +5,15 @@
 
 use super::config::GameRuntimeConfig;
 use crate::error::{Error, Result};
+use crate::mesh::MeshService;
 use crate::protocol::craps::CrapsGame;
-use crate::protocol::{new_game_id, DiceRoll, GameId, PeerId};
+use crate::protocol::reputation::{ReputationManager, MIN_REP_TO_PLAY};
+use crate::protocol::{
+    new_game_id, BitchatPacket, DiceRoll, GameId, PeerId, PACKET_TYPE_GAME_DATA,
+};
 use crate::protocol::{Bet, BetType};
 use crate::security::{SecurityConfig, SecurityManager};
+use crate::token::TokenLedger;
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -50,6 +55,8 @@ pub struct PlayerJoinRequest {
     pub game_id: GameId,
     pub player: PeerId,
     pub timestamp: u64,
+    /// Optional password for joining password-protected games
+    pub password: Option<String>,
 }
 
 /// Player successfully joined broadcast
@@ -366,11 +373,24 @@ pub struct GameLifecycleManager {
     games: Arc<RwLock<HashMap<GameId, ActiveGame>>>,
     game_timeouts: Arc<RwLock<HashMap<GameId, Instant>>>,
     security_manager: Arc<SecurityManager>,
+    mesh_service: Arc<MeshService>,
+    token_ledger: Option<Arc<TokenLedger>>,
+    reputation_manager: Option<Arc<tokio::sync::RwLock<ReputationManager>>>,
 }
 
 impl GameLifecycleManager {
+    /// Create a BitchatPacket for game messages
+    fn create_game_message_packet<T: Serialize>(&self, message: &T) -> Result<BitchatPacket> {
+        let serialized_data = bincode::serialize(message)
+            .map_err(|e| Error::Protocol(format!("Failed to serialize game message: {}", e)))?;
+
+        let mut packet = BitchatPacket::new(PACKET_TYPE_GAME_DATA);
+        packet.payload = Some(serialized_data);
+        Ok(packet)
+    }
+
     /// Create a new game lifecycle manager with security hardening
-    pub fn new(config: Arc<GameRuntimeConfig>) -> Self {
+    pub fn new(config: Arc<GameRuntimeConfig>, mesh_service: Arc<MeshService>) -> Self {
         let security_config = SecurityConfig::default();
         let security_manager = Arc::new(SecurityManager::new(security_config));
 
@@ -379,6 +399,9 @@ impl GameLifecycleManager {
             games: Arc::new(RwLock::new(HashMap::new())),
             game_timeouts: Arc::new(RwLock::new(HashMap::new())),
             security_manager,
+            mesh_service,
+            token_ledger: None,
+            reputation_manager: None,
         }
     }
 
@@ -386,6 +409,7 @@ impl GameLifecycleManager {
     pub fn new_with_security(
         config: Arc<GameRuntimeConfig>,
         security_config: SecurityConfig,
+        mesh_service: Arc<MeshService>,
     ) -> Self {
         let security_manager = Arc::new(SecurityManager::new(security_config));
 
@@ -394,7 +418,23 @@ impl GameLifecycleManager {
             games: Arc::new(RwLock::new(HashMap::new())),
             game_timeouts: Arc::new(RwLock::new(HashMap::new())),
             security_manager,
+            mesh_service,
+            token_ledger: None,
+            reputation_manager: None,
         }
+    }
+
+    /// Set token ledger dependency
+    pub fn set_token_ledger(&mut self, token_ledger: Arc<TokenLedger>) {
+        self.token_ledger = Some(token_ledger);
+    }
+
+    /// Set reputation manager dependency
+    pub fn set_reputation_manager(
+        &mut self,
+        reputation_manager: Arc<tokio::sync::RwLock<ReputationManager>>,
+    ) {
+        self.reputation_manager = Some(reputation_manager);
     }
 
     /// Create a new game
@@ -499,29 +539,108 @@ impl GameLifecycleManager {
 
     /// Validate player eligibility to join a game
     async fn validate_player_eligibility(&self, player: PeerId, config: &GameConfig) -> Result<()> {
-        // Check minimum buy-in (this would integrate with the token ledger)
-        // For now, we'll do a basic validation
         log::debug!("Validating player eligibility for {:?}", player);
-
-        // TODO: Check player balance meets minimum buy-in
-        // TODO: Check player reputation score if required
-        // TODO: Check if player is banned or restricted
 
         // Basic validation - ensure non-zero player ID
         if player == [0u8; 32] {
             return Err(Error::GameError("Invalid player ID".into()));
         }
 
-        // Check if game requires password
-        if let Some(_password) = &config.password {
-            // TODO: Implement password validation
-            log::debug!("Game requires password validation");
+        // 1. Check player balance meets minimum buy-in
+        if let Some(token_ledger) = &self.token_ledger {
+            let balance = token_ledger.get_balance(&player).await;
+            if balance < config.min_buy_in {
+                return Err(Error::GameError(format!(
+                    "Insufficient balance: {} CRAP required, {} CRAP available",
+                    config.min_buy_in as f64 / 1_000_000.0,
+                    balance as f64 / 1_000_000.0
+                )));
+            }
+            log::debug!(
+                "Player {} has sufficient balance: {} CRAP",
+                hex::encode(&player[0..8]),
+                balance as f64 / 1_000_000.0
+            );
+        } else {
+            log::warn!("Token ledger not available, skipping balance check");
         }
 
+        // 2. Check player reputation score if required
+        if let Some(reputation_manager) = &self.reputation_manager {
+            let reputation_guard = reputation_manager.read().await;
+            if !reputation_guard.can_participate(&player) {
+                return Err(Error::GameError(
+                    "Player reputation too low to participate in games".into(),
+                ));
+            }
+            let trust_level = reputation_guard.get_trust_level(&player);
+            log::debug!(
+                "Player {} reputation check passed (trust: {:.2})",
+                hex::encode(&player[0..8]),
+                trust_level
+            );
+        } else {
+            log::warn!("Reputation manager not available, skipping reputation check");
+        }
+
+        // 3. Check if player is banned or restricted
+        if let Some(reputation_manager) = &self.reputation_manager {
+            let reputation_guard = reputation_manager.read().await;
+
+            if reputation_guard.is_banned(&player) {
+                if let Some(ban_expiry) = reputation_guard.get_ban_expiry(&player) {
+                    return Err(Error::GameError(format!(
+                        "Player is temporarily banned until timestamp: {}",
+                        ban_expiry
+                    )));
+                } else {
+                    return Err(Error::GameError("Player is banned from games".into()));
+                }
+            }
+
+            let reputation_score = reputation_guard.get_reputation_score(&player);
+            if reputation_score < MIN_REP_TO_PLAY {
+                return Err(Error::GameError(format!(
+                    "Player reputation score ({}) is below minimum required ({})",
+                    reputation_score, MIN_REP_TO_PLAY
+                )));
+            }
+
+            log::debug!(
+                "Player {} ban/reputation check passed (score: {})",
+                hex::encode(&player[0..8]),
+                reputation_score
+            );
+        }
+
+        // Check if game requires password
+        if let Some(required_password) = &config.password {
+            // Current API does not accept a provided password parameter here.
+            // Until the join request carries a password through to this validation,
+            // reject attempts to join password-protected games.
+            log::debug!(
+                "Game requires password validation for password: {}",
+                if required_password.len() > 8 {
+                    format!("{}...", &required_password[..8])
+                } else {
+                    required_password.clone()
+                }
+            );
+            return Err(Error::GameError(
+                "Password required to join this game".into(),
+            ));
+        }
+
+        log::info!(
+            "Player {:?} validation successful",
+            hex::encode(&player[0..8])
+        );
         Ok(())
     }
 
     /// Broadcast player join request for consensus approval
+    /// Tests: See tests/concurrent_player_joins_test.rs for integration tests
+    /// Benchmarks: See benches/broadcast_latency_bench.rs for performance tests
     async fn broadcast_player_join_request(
         &self,
         game_id: GameId,
@@ -535,6 +654,7 @@ impl GameLifecycleManager {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            password: None,
         };
 
         log::info!(
@@ -551,8 +671,11 @@ impl GameLifecycleManager {
 
                 tokio::spawn(async move {
                     log::debug!("Sending join request to participant {:?}", participant);
-                    // TODO: Implement actual network broadcast via mesh service
-                    // This would use the mesh service to send the message
+
+                    // Create packet with serialized message - this is a join request to a specific peer
+                    // In a production system, we might want to send this to specific participants
+                    // For now, we'll log that the join request would be sent
+                    log::debug!("Join request would be sent to participant {:?} - actual peer-specific messaging not yet implemented", participant);
                     Ok::<(), Error>(())
                 })
             })
@@ -594,15 +717,24 @@ impl GameLifecycleManager {
             all_participants.len()
         );
 
-        // Broadcast to all participants in parallel (including the new player)
+        // Create packet for broadcasting player joined event to all participants
+        let packet = self.create_game_message_packet(&message)?;
+
+        // Broadcast to all participants via mesh service
+        if let Err(e) = self.mesh_service.broadcast_packet(packet).await {
+            log::error!("Failed to broadcast player joined message: {:?}", e);
+            return Err(e);
+        }
+
+        // For compatibility with the existing parallel structure, create empty tasks
         let broadcast_tasks: Vec<_> = all_participants
             .iter()
             .map(|&participant| {
-                let message_clone = message.clone();
-
                 tokio::spawn(async move {
-                    log::debug!("Notifying participant {:?} of new player", participant);
-                    // TODO: Implement actual network broadcast via mesh service
+                    log::debug!(
+                        "Player joined message broadcasted to participant {:?}",
+                        participant
+                    );
                     Ok::<(), Error>(())
                 })
             })
@@ -694,12 +826,20 @@ impl GameLifecycleManager {
             remaining_participants.len()
         );
 
+        // Create packet for broadcasting player left event
+        let packet = self.create_game_message_packet(&message)?;
+
+        // Broadcast to all remaining participants via mesh service
+        if let Err(e) = self.mesh_service.broadcast_packet(packet).await {
+            log::error!("Failed to broadcast player left message: {:?}", e);
+            return Err(e);
+        }
+
         for participant in remaining_participants {
             log::debug!(
-                "Notifying participant {:?} of player departure",
+                "Player departure message broadcasted to participant {:?}",
                 participant
             );
-            // TODO: Implement actual network broadcast via mesh service
         }
 
         Ok(())
@@ -949,15 +1089,24 @@ impl GameLifecycleManager {
             participants.len()
         );
 
-        // Broadcast dice roll result in parallel for better performance
+        // Create packet for broadcasting dice roll result
+        let packet = self.create_game_message_packet(&message)?;
+
+        // Broadcast dice roll result to all participants via mesh service
+        if let Err(e) = self.mesh_service.broadcast_packet(packet).await {
+            log::error!("Failed to broadcast dice roll result: {:?}", e);
+            return Err(e);
+        }
+
+        // For compatibility with existing parallel structure, create confirmation tasks
         let broadcast_tasks: Vec<_> = participants
             .iter()
             .map(|&participant| {
-                let message_clone = message.clone();
-
                 tokio::spawn(async move {
-                    log::debug!("Sending dice roll to participant {:?}", participant);
-                    // TODO: Implement actual network broadcast via mesh service
+                    log::debug!(
+                        "Dice roll result broadcasted to participant {:?}",
+                        participant
+                    );
                     Ok::<(), Error>(())
                 })
             })
@@ -997,15 +1146,24 @@ impl GameLifecycleManager {
                 .as_secs(),
         };
 
-        // Broadcast bet resolutions in parallel
+        // Create packet for broadcasting bet resolutions
+        let packet = self.create_game_message_packet(&message)?;
+
+        // Broadcast bet resolutions to all participants via mesh service
+        if let Err(e) = self.mesh_service.broadcast_packet(packet).await {
+            log::error!("Failed to broadcast bet resolutions: {:?}", e);
+            return Err(e);
+        }
+
+        // For compatibility with existing parallel structure, create confirmation tasks
         let broadcast_tasks: Vec<_> = participants
             .iter()
             .map(|&participant| {
-                let message_clone = message.clone();
-
                 tokio::spawn(async move {
-                    log::debug!("Sending bet resolutions to participant {:?}", participant);
-                    // TODO: Implement actual network broadcast via mesh service
+                    log::debug!(
+                        "Bet resolutions broadcasted to participant {:?}",
+                        participant
+                    );
                     Ok::<(), Error>(())
                 })
             })
@@ -1125,12 +1283,20 @@ impl GameLifecycleManager {
             participants.len()
         );
 
+        // Create packet for broadcasting turn state change
+        let packet = self.create_game_message_packet(&message)?;
+
+        // Broadcast turn state change to all participants via mesh service
+        if let Err(e) = self.mesh_service.broadcast_packet(packet).await {
+            log::error!("Failed to broadcast turn state change: {:?}", e);
+            return Err(e);
+        }
+
         for participant in participants {
             log::debug!(
-                "Notifying participant {:?} of turn state change",
+                "Turn state change broadcasted to participant {:?}",
                 participant
             );
-            // TODO: Implement actual network broadcast via mesh service
         }
 
         Ok(())

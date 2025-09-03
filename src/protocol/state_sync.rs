@@ -4,14 +4,16 @@
 //! handling network partitions, state divergence, and recovery mechanisms.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::RwLock;
 
 use crate::error::{Error, Result};
-use crate::protocol::consensus::engine::GameConsensusState;
-use crate::protocol::craps::CrapsGame;
+use crate::protocol::consensus::engine::{ConsensusEngine, GameConsensusState};
+use crate::protocol::consensus_coordinator::ConsensusCoordinator;
 use crate::protocol::p2p_messages::{CompressedGameState, ConsensusMessage, ConsensusPayload};
 use crate::protocol::{GameId, Hash256, PeerId};
 
@@ -75,7 +77,7 @@ pub struct StateCheckpoint {
 pub struct StateDelta {
     /// Starting sequence number
     pub from_sequence: u64,
-    /// Ending sequence number  
+    /// Ending sequence number
     pub to_sequence: u64,
     /// State operations applied
     pub operations: Vec<StateOperation>,
@@ -112,11 +114,43 @@ struct PeerStateInfo {
     is_synchronized: bool,
 }
 
+/// Metrics for state synchronization monitoring
+#[derive(Debug, Default)]
+pub struct SyncMetrics {
+    pub sync_requests_sent: AtomicU64,
+    pub sync_requests_received: AtomicU64,
+    pub sync_requests_failed: AtomicU64,
+    pub sync_latency_total_ms: AtomicU64,
+    pub sync_latency_count: AtomicU64,
+}
+
+impl SyncMetrics {
+    pub fn record_sync_latency(&self, latency: Duration) {
+        let ms = latency.as_millis() as u64;
+        self.sync_latency_total_ms.fetch_add(ms, Ordering::Relaxed);
+        self.sync_latency_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn average_latency_ms(&self) -> f64 {
+        let total = self.sync_latency_total_ms.load(Ordering::Relaxed) as f64;
+        let count = self.sync_latency_count.load(Ordering::Relaxed) as f64;
+        if count > 0.0 {
+            total / count
+        } else {
+            0.0
+        }
+    }
+}
+
 /// State synchronization manager
 pub struct StateSynchronizer {
     config: StateSyncConfig,
     game_id: GameId,
     local_peer_id: PeerId,
+
+    // Dependencies for accessing consensus state
+    consensus_coordinator: Arc<ConsensusCoordinator>,
+    consensus_engine: Arc<tokio::sync::Mutex<ConsensusEngine>>,
 
     // Current state tracking
     current_sequence: Arc<RwLock<u64>>,
@@ -134,6 +168,9 @@ pub struct StateSynchronizer {
     // Byzantine fault tolerance
     conflicting_states: Arc<RwLock<HashMap<u64, HashMap<Hash256, HashSet<PeerId>>>>>,
     partition_groups: Arc<RwLock<Vec<HashSet<PeerId>>>>,
+
+    // Monitoring
+    metrics: Option<Arc<SyncMetrics>>,
 }
 
 impl StateSynchronizer {
@@ -143,11 +180,15 @@ impl StateSynchronizer {
         game_id: GameId,
         local_peer_id: PeerId,
         initial_state: &GameConsensusState,
+        consensus_coordinator: Arc<ConsensusCoordinator>,
+        consensus_engine: Arc<tokio::sync::Mutex<ConsensusEngine>>,
     ) -> Self {
         Self {
             config,
             game_id,
             local_peer_id,
+            consensus_coordinator,
+            consensus_engine,
             current_sequence: Arc::new(RwLock::new(initial_state.sequence_number)),
             current_state_hash: Arc::new(RwLock::new(initial_state.state_hash)),
             sync_status: Arc::new(RwLock::new(SyncStatus::Synchronized)),
@@ -157,6 +198,7 @@ impl StateSynchronizer {
             active_sync_requests: Arc::new(RwLock::new(HashMap::new())),
             conflicting_states: Arc::new(RwLock::new(HashMap::new())),
             partition_groups: Arc::new(RwLock::new(vec![])),
+            metrics: Some(Arc::new(SyncMetrics::default())),
         }
     }
 
@@ -334,8 +376,53 @@ impl StateSynchronizer {
                 },
             );
 
-            // TODO: Send via consensus coordinator
-            // coordinator.send_to_peer(peer_id, message).await?;
+            // Send sync request via consensus coordinator with monitoring
+            let request_start = std::time::Instant::now();
+
+            // Add metrics for state sync request/response latency
+            if let Some(metrics) = &self.metrics {
+                metrics.sync_requests_sent.fetch_add(1, Ordering::Relaxed);
+            }
+
+            // Implement retry mechanism with exponential backoff for failed sync requests
+            let mut backoff = Duration::from_millis(100);
+            let max_retries = 5;
+            let mut attempts = 0;
+
+            loop {
+                match self
+                    .consensus_coordinator
+                    .send_to_peer(peer_id, message.clone())
+                    .await
+                {
+                    Ok(_) => {
+                        // Track latency
+                        let latency = request_start.elapsed();
+                        if let Some(metrics) = &self.metrics {
+                            metrics.record_sync_latency(latency);
+                        }
+                        break;
+                    }
+                    Err(e) if attempts < max_retries => {
+                        attempts += 1;
+                        log::warn!(
+                            "State sync request failed (attempt {}/{}): {:?}, retrying in {:?}",
+                            attempts,
+                            max_retries,
+                            e,
+                            backoff
+                        );
+                        tokio::time::sleep(backoff).await;
+                        backoff = backoff.saturating_mul(2).min(Duration::from_secs(5));
+                    }
+                    Err(e) => {
+                        if let Some(metrics) = &self.metrics {
+                            metrics.sync_requests_failed.fetch_add(1, Ordering::Relaxed);
+                        }
+                        return Err(e);
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -433,9 +520,15 @@ impl StateSynchronizer {
             ));
         }
 
-        // Update peer state
-        self.update_peer_state(sender, compressed_state.sequence, [0u8; 32])
-            .await; // TODO: Get actual hash
+        // Update peer state with actual hash calculated from state
+        let state_hash = {
+            let mut hasher = Sha256::new();
+            hasher.update(&state_bytes);
+            hasher.update(compressed_state.sequence.to_le_bytes());
+            hasher.finalize().into()
+        };
+        self.update_peer_state(sender, compressed_state.sequence, state_hash)
+            .await;
 
         Ok(())
     }
@@ -489,27 +582,17 @@ impl StateSynchronizer {
 
     /// Create checkpoint at sequence
     async fn create_checkpoint(&self, sequence: u64) -> Result<StateCheckpoint> {
-        // TODO: Get actual game state from consensus engine
-        let game_state = GameConsensusState {
-            game_id: self.game_id,
-            state_hash: *self.current_state_hash.read().await,
-            sequence_number: sequence,
-            timestamp: SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            game_state: CrapsGame::new(self.game_id, self.local_peer_id),
-            player_balances: rustc_hash::FxHashMap::default(),
-            last_proposer: self.local_peer_id,
-            confirmations: 0,
-            is_finalized: true,
+        // Get actual game state from consensus engine
+        let game_state = {
+            let consensus_engine = self.consensus_engine.lock().await;
+            consensus_engine.get_current_state().clone()
         };
 
         let checkpoint = StateCheckpoint {
             sequence,
             game_state,
             state_hash: *self.current_state_hash.read().await,
-            participants: vec![self.local_peer_id], // TODO: Get actual participants
+            participants: self.consensus_coordinator.get_participants(),
             timestamp: SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

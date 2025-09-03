@@ -180,7 +180,7 @@ impl Card {
 impl Component for Card {
     fn render(&self, theme: &Theme) -> ComponentView {
         let mut children_views = Vec::new();
-        
+
         if let Some(title) = &self.title {
             children_views.push(ComponentView::Text(TextView {
                 text: title.clone(),

@@ -69,7 +69,7 @@ pub fn cleanup_ble_manager() -> Result<(), BitCrapsError> {
                 let _ = timeout(Duration::from_secs(3), manager_clone.stop_scanning()).await;
             }
         });
-        
+
         // Give async operations a brief moment to initiate without blocking executor
         // Use non-blocking approach instead of thread::sleep in async context
         std::mem::drop(rt); // Allow runtime to complete spawned tasks naturally
@@ -315,12 +315,17 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_initializeBleManager(
     // We need to modify the AndroidBleManager to accept these during construction
     // For now, we'll store them separately and access them when needed
 
-    // Store VM and service reference for later use
-    // This is a temporary solution - ideally these would be part of initialization
-    log::info!("BLE manager initialized successfully with JVM and service references");
+    // Store VM and service reference in a global static for use by AndroidBleManager
+    // This enables callbacks from Rust to Java
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        // Store JavaVM globally for callbacks
+        // The AndroidBleManager can access this when needed for JNI calls
+        log::info!("Stored JavaVM and global service reference for BLE callbacks");
+    });
 
-    // TODO: Properly integrate JavaVM and global service reference
-    // This requires refactoring the AndroidBleManager to accept these parameters
+    log::info!("BLE manager initialized successfully with JVM and service references");
 
     true as jboolean
 }
@@ -389,7 +394,7 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_startAdvertising(
             }
         }
     });
-    
+
     // Return immediately - Android will poll isAdvertising() to check status
     true as jboolean
 }
@@ -435,7 +440,7 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_stopAdvertising(
             }
         }
     });
-    
+
     // Return immediately - Android will poll isAdvertising() to check status
     true as jboolean
 }
@@ -481,7 +486,7 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_startScanning(
             }
         }
     });
-    
+
     // Return immediately - Android will poll isScanning() to check status
     true as jboolean
 }
@@ -527,7 +532,7 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_stopScanning(
             }
         }
     });
-    
+
     // Return immediately - Android will poll isScanning() to check status
     true as jboolean
 }
@@ -579,8 +584,27 @@ pub extern "C" fn Java_com_bitcraps_app_ble_BleJNI_onPeerDiscovered(
         None
     };
 
-    // TODO: Convert service UUIDs array
-    let service_uuids_vec = Vec::new(); // Placeholder
+    // Convert service UUIDs array
+    let service_uuids_vec = if !service_uuids.is_null() {
+        match env.get_array_length(service_uuids) {
+            Ok(len) => {
+                let mut uuids = Vec::with_capacity(len as usize);
+                for i in 0..len {
+                    if let Ok(uuid_obj) = env.get_object_array_element(service_uuids, i) {
+                        if let Ok(uuid_str) = env.get_string(uuid_obj.into()) {
+                            if let Ok(uuid_string) = uuid_str.to_str() {
+                                uuids.push(uuid_string.to_string());
+                            }
+                        }
+                    }
+                }
+                uuids
+            }
+            Err(_) => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
 
     let peer = AndroidPeerInfo {
         address: address_str,

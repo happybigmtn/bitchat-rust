@@ -9,7 +9,8 @@ use uuid::Uuid;
 
 use crate::error::{Error, Result};
 use crate::protocol::PeerId;
-use crate::transport::{AdvertisingConfig, TransportCoordinator, BITCRAPS_SERVICE_UUID};
+use crate::transport::ble_peripheral::BITCRAPS_SERVICE_UUID;
+use crate::transport::{ble_peripheral::AdvertisingConfig, TransportCoordinator};
 
 /// Complete BLE configuration for BitChat
 #[derive(Debug, Clone, Serialize, Deserialize)]

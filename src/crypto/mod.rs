@@ -90,11 +90,10 @@ impl GameCrypto {
     /// Compute HMAC-SHA256
     pub fn hmac(key: &[u8], data: &[u8]) -> [u8; 32] {
         type HmacSha256 = Hmac<Sha256>;
-        let mut mac = HmacSha256::new_from_slice(key)
-            .unwrap_or_else(|_| {
-                // Fallback to a default key if provided key is invalid
-                HmacSha256::new_from_slice(&[0u8; 32]).unwrap()
-            });
+        let mut mac = HmacSha256::new_from_slice(key).unwrap_or_else(|_| {
+            // Fallback to a default key if provided key is invalid
+            HmacSha256::new_from_slice(&[0u8; 32]).unwrap()
+        });
         mac.update(data);
         mac.finalize().into_bytes().into()
     }
@@ -468,11 +467,10 @@ impl GameCrypto {
     pub fn create_hmac(key: &[u8], message: &[u8]) -> [u8; 32] {
         type HmacSha256 = Hmac<Sha256>;
 
-        let mut mac = HmacSha256::new_from_slice(key)
-            .unwrap_or_else(|_| {
-                // Fallback to a default key if provided key is invalid
-                HmacSha256::new_from_slice(&[0u8; 32]).unwrap()
-            });
+        let mut mac = HmacSha256::new_from_slice(key).unwrap_or_else(|_| {
+            // Fallback to a default key if provided key is invalid
+            HmacSha256::new_from_slice(&[0u8; 32]).unwrap()
+        });
         mac.update(message);
 
         let result = mac.finalize().into_bytes();

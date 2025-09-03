@@ -59,7 +59,7 @@ extern "C" {
         actual_encrypted_size: *mut usize,
     ) -> c_int;
 
-    /// Retrieve and decrypt data using Android Keystore key  
+    /// Retrieve and decrypt data using Android Keystore key
     fn android_keystore_decrypt_retrieve(
         keystore_alias: *const c_char,
         key_alias: *const c_char,

@@ -12,7 +12,6 @@ use tokio::time::interval;
 use crate::crypto::BitchatIdentity;
 use crate::error::{Error, Result};
 use crate::mesh::MeshService;
-use crate::utils::AdaptiveInterval;
 use crate::protocol::consensus::engine::{ConsensusEngine, GameConsensusState, GameOperation};
 use crate::protocol::consensus::ProposalId;
 use crate::protocol::consensus_coordinator::ConsensusCoordinator;
@@ -20,6 +19,7 @@ use crate::protocol::p2p_messages::{
     CompressedGameState, ConsensusMessage, ConsensusPayload, RoundId,
 };
 use crate::protocol::{BitchatPacket, GameId, PeerId, PACKET_TYPE_CONSENSUS_VOTE};
+use crate::utils::AdaptiveInterval;
 
 /// Configuration for the network consensus bridge
 #[derive(Debug, Clone)]
@@ -204,14 +204,14 @@ impl NetworkConsensusBridge {
     }
 
     /// Get current consensus state
-    pub async fn get_current_state(&self) -> Result<GameConsensusState> {
+    pub async fn get_current_state(&self) -> Result<Arc<GameConsensusState>> {
         let consensus = self.consensus_engine.lock().await;
-        Ok(consensus.get_current_state().clone())
+        Ok(consensus.get_current_state_arc())
     }
 
     /// Get network participants
     pub async fn get_participants(&self) -> Vec<PeerId> {
-        self.participants.read().await.clone()
+        self.participants.read().await.iter().copied().collect() // More efficient than clone()
     }
 
     /// Add a new participant to consensus
@@ -343,7 +343,7 @@ impl NetworkConsensusBridge {
                 // In practice, this would receive actual mesh events
                 // For now, we simulate by checking for packets periodically
                 // The actual implementation would integrate with MeshService's event system
-                
+
                 // When real mesh events are processed, signal activity:
                 // if mesh_events_processed {
                 //     event_interval.signal_activity();

@@ -7,6 +7,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, Semaphore};
 
+use super::bounded_queue::{BoundedEventQueue, OverflowBehavior, QueueConfig};
+use super::TransportEvent;
+
 /// Quality of Service requirements for connections
 #[derive(Debug, Clone, Copy)]
 pub enum QoSPriority {
@@ -16,6 +19,43 @@ pub enum QoSPriority {
     Normal,
     /// Background sync and maintenance
     Background,
+}
+
+/// Load balancing strategy for connection pool
+#[derive(Debug, Clone, Copy)]
+pub enum LoadBalancingStrategy {
+    /// Round-robin selection
+    RoundRobin,
+    /// Weighted round-robin based on connection quality
+    WeightedRoundRobin,
+    /// Least connections first
+    LeastConnections,
+    /// Quality-based selection (best connection first)
+    QualityBased,
+}
+
+/// Pool configuration for tuning
+#[derive(Debug, Clone)]
+pub struct PoolConfig {
+    pub max_connections: usize,
+    pub rebalance_interval: Duration,
+    pub health_check_interval: Duration,
+    pub connection_timeout: Duration,
+    pub max_idle_time: Duration,
+    pub load_balancing: LoadBalancingStrategy,
+}
+
+impl Default for PoolConfig {
+    fn default() -> Self {
+        Self {
+            max_connections: 50,
+            rebalance_interval: Duration::from_secs(30),
+            health_check_interval: Duration::from_secs(60),
+            connection_timeout: Duration::from_secs(30),
+            max_idle_time: Duration::from_secs(300),
+            load_balancing: LoadBalancingStrategy::WeightedRoundRobin,
+        }
+    }
 }
 
 /// Connection quality metrics
@@ -39,9 +79,7 @@ impl ConnectionScore {
         let reliability = self.reliability_score;
 
         // Weighted average
-        (latency_score * 0.3 + loss_score * 0.4 + reliability * 0.3)
-            .max(0.0)
-            .min(1.0)
+        (latency_score * 0.3 + loss_score * 0.4 + reliability * 0.3).clamp(0.0, 1.0)
     }
 
     /// Categorize connection quality
@@ -81,7 +119,7 @@ pub trait ConnectionHandle: Send + Sync {
     fn close(&self);
 }
 
-/// Enhanced Bluetooth connection pool
+/// Enhanced Bluetooth connection pool with bounded queues
 pub struct BluetoothConnectionPool {
     /// Separate pools by connection quality
     high_quality: Arc<RwLock<VecDeque<PooledConnection>>>,
@@ -102,11 +140,36 @@ pub struct BluetoothConnectionPool {
 
     /// Metrics
     metrics: Arc<RwLock<PoolMetrics>>,
+
+    /// Bounded event queue for pool events
+    event_queue: BoundedEventQueue<TransportEvent>,
+
+    /// Load balancing strategy
+    load_balancer: LoadBalancingStrategy,
 }
 
-/// Pool configuration
+/// Enhanced pool configuration with tuning parameters
 #[derive(Debug, Clone)]
-pub struct PoolConfig {
+pub struct EnhancedPoolConfig {
+    /// Maximum total connections
+    pub max_connections: usize,
+    /// Rebalancing interval
+    pub rebalance_interval: Duration,
+    /// Health check interval
+    pub health_check_interval: Duration,
+    /// Connection timeout
+    pub connection_timeout: Duration,
+    /// Max idle time before cleanup
+    pub max_idle_time: Duration,
+    /// Load balancing strategy
+    pub load_balancing: LoadBalancingStrategy,
+    /// Event queue configuration
+    pub event_queue_config: QueueConfig,
+}
+
+/// Legacy pool configuration (kept for compatibility)
+#[derive(Debug, Clone)]
+pub struct LegacyPoolConfig {
     /// Maximum total connections
     pub max_connections: usize,
     /// Maximum idle connections per quality tier
@@ -119,17 +182,7 @@ pub struct PoolConfig {
     pub health_check_interval: Duration,
 }
 
-impl Default for PoolConfig {
-    fn default() -> Self {
-        Self {
-            max_connections: 500, // 10x improvement from original 50
-            max_idle_per_tier: 50,
-            idle_timeout: Duration::from_secs(300), // 5 minutes
-            max_lifetime: Duration::from_secs(3600), // 1 hour
-            health_check_interval: Duration::from_secs(30),
-        }
-    }
-}
+// Duplicate Default implementation removed - using the first one
 
 /// Pool metrics for monitoring
 #[derive(Debug, Clone, Default)]
@@ -148,6 +201,7 @@ impl BluetoothConnectionPool {
     /// Create new connection pool
     pub fn new(config: PoolConfig) -> Self {
         let max_connections = config.max_connections;
+        let load_balancer = config.load_balancing.clone();
 
         Self {
             high_quality: Arc::new(RwLock::new(VecDeque::new())),
@@ -158,6 +212,8 @@ impl BluetoothConnectionPool {
             config,
             connection_semaphore: Arc::new(Semaphore::new(max_connections)),
             metrics: Arc::new(RwLock::new(PoolMetrics::default())),
+            event_queue: BoundedEventQueue::new(),
+            load_balancer,
         }
     }
 
@@ -233,7 +289,7 @@ impl BluetoothConnectionPool {
 
         // Check if connection should be retired
         if !connection.connection.is_connected()
-            || connection.acquired_at.elapsed() > self.config.max_lifetime
+            || connection.acquired_at.elapsed() > self.config.max_idle_time
         {
             connection.connection.close();
             self.update_metrics_on_close().await;
@@ -253,7 +309,8 @@ impl BluetoothConnectionPool {
         let mut pool_guard = pool.write().await;
 
         // Respect max idle limit
-        if pool_guard.len() < self.config.max_idle_per_tier {
+        if pool_guard.len() < (self.config.max_connections / 3) {
+            // Use 1/3 of max connections per tier
             connection.last_used = Instant::now();
             pool_guard.push_back(connection);
         } else {
@@ -334,7 +391,7 @@ impl BluetoothConnectionPool {
 
             while let Some(conn) = pool_guard.pop_front() {
                 if conn.connection.is_connected()
-                    && conn.last_used.elapsed() < self.config.idle_timeout
+                    && conn.last_used.elapsed() < self.config.max_idle_time
                 {
                     healthy_connections.push_back(conn);
                 } else {

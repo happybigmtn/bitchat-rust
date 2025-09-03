@@ -81,11 +81,31 @@ impl SessionLifecycleManager {
         Ok(())
     }
 
-    pub async fn get_session(&self, _peer_id: &PeerId) -> Option<NoiseSession> {
-        let _sessions = self.sessions.read().await;
-        // TODO: NoiseSession doesn't implement Clone
-        // sessions.get(peer_id).map(|ms| ms.session.clone())
-        None
+    pub async fn get_session_ref(
+        &self,
+        peer_id: &PeerId,
+    ) -> Option<tokio::sync::RwLockReadGuard<'_, std::collections::HashMap<PeerId, ManagedSession>>>
+    {
+        let sessions = self.sessions.read().await;
+        if sessions.contains_key(peer_id) {
+            Some(sessions)
+        } else {
+            None
+        }
+    }
+
+    /// Get session mutably for cryptographic operations that modify state
+    pub async fn get_session_mut(
+        &self,
+        peer_id: &PeerId,
+    ) -> Option<tokio::sync::RwLockWriteGuard<'_, std::collections::HashMap<PeerId, ManagedSession>>>
+    {
+        let sessions = self.sessions.write().await;
+        if sessions.contains_key(peer_id) {
+            Some(sessions)
+        } else {
+            None
+        }
     }
 
     pub async fn update_activity(&self, peer_id: &PeerId) {

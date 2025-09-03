@@ -20,9 +20,9 @@ mod tests {
         let player1: PeerId = [1u8; 32];
         let player2: PeerId = [2u8; 32];
         let participants = vec![player1, player2];
-        
+
         let initial_game = CrapsGame::new(game_id, player1);
-        
+
         let result = ConsensusEngine::new(
             config,
             game_id,
@@ -30,7 +30,7 @@ mod tests {
             player1,
             initial_game,
         );
-        
+
         assert!(result.is_ok());
     }
 

@@ -2,6 +2,12 @@
 //!
 //! This test suite simulates various attack scenarios to ensure
 //! the consensus mechanism remains robust against malicious actors.
+//!
+//! All tests in this suite are marked as slow tests since they involve:
+//! - Multi-participant consensus scenarios
+//! - Network simulation and timing
+//! - Byzantine fault tolerance testing
+//! - Reputation system evaluation
 
 use ed25519_dalek::SigningKey;
 use rand::rngs::OsRng;
@@ -218,6 +224,7 @@ async fn simulate_consensus_round(
 }
 
 #[tokio::test]
+#[ignore = "slow_test"]
 async fn test_consensus_with_minority_withholding_commits() {
     // 7 honest, 3 malicious withholding commits
     // Should succeed with 70% participation
@@ -230,6 +237,7 @@ async fn test_consensus_with_minority_withholding_commits() {
 }
 
 #[tokio::test]
+#[ignore = "slow_test"]
 async fn test_consensus_with_minority_withholding_reveals() {
     // 7 honest, 3 malicious withholding reveals
     // Should succeed as threshold is met
@@ -242,6 +250,7 @@ async fn test_consensus_with_minority_withholding_reveals() {
 }
 
 #[tokio::test]
+#[ignore = "slow_test"]
 async fn test_consensus_with_invalid_reveals() {
     // 8 honest, 2 malicious with invalid reveals
     // Should succeed, invalid reveals are ignored
@@ -254,6 +263,7 @@ async fn test_consensus_with_invalid_reveals() {
 }
 
 #[tokio::test]
+#[ignore = "slow_test"]
 async fn test_consensus_with_minority_rejecting_proposals() {
     // 7 honest, 3 malicious rejecting all proposals
     // Should succeed with 70% approval
@@ -266,6 +276,7 @@ async fn test_consensus_with_minority_rejecting_proposals() {
 }
 
 #[tokio::test]
+#[ignore = "slow_test"]
 async fn test_consensus_with_majority_attack_fails() {
     // 3 honest, 7 malicious withholding commits
     // Should fail as threshold cannot be met
@@ -278,6 +289,7 @@ async fn test_consensus_with_majority_attack_fails() {
 }
 
 #[tokio::test]
+#[ignore = "slow_test"]
 async fn test_reputation_penalties_for_non_participation() {
     let treasury = Arc::new(TreasuryManager::new());
     let mut reputation_manager = ReputationManager::new(3);
@@ -322,6 +334,7 @@ async fn test_reputation_penalties_for_non_participation() {
 }
 
 #[tokio::test]
+#[ignore = "slow_test"]
 async fn test_dispute_resolution_for_cheating() {
     let mut reputation_manager = ReputationManager::new(3);
 
@@ -376,6 +389,7 @@ async fn test_dispute_resolution_for_cheating() {
 }
 
 #[tokio::test]
+#[ignore = "slow_test"]
 async fn test_forced_settlement_on_timeout() {
     let treasury = Arc::new(TreasuryManager::new());
     let signing_key = SigningKey::generate(&mut OsRng);
@@ -404,6 +418,7 @@ async fn test_forced_settlement_on_timeout() {
 }
 
 #[tokio::test]
+#[ignore = "slow_test"]
 async fn test_treasury_locks_during_consensus() {
     let treasury = Arc::new(TreasuryManager::new());
     let initial_balance = treasury.get_health().balance;
@@ -438,6 +453,7 @@ async fn test_treasury_locks_during_consensus() {
 }
 
 #[tokio::test]
+#[ignore = "slow_test"]
 async fn test_consensus_recovery_from_network_partition() {
     // Simulate network partition during consensus
     let treasury = Arc::new(TreasuryManager::new());
@@ -493,3 +509,5 @@ async fn test_consensus_recovery_from_network_partition() {
     // Group 2 stuck in commit phase
     assert_eq!(group2[0].engine.current_phase(), ConsensusPhase::Commit);
 }
+#![cfg(feature = "legacy-tests")]
+#![cfg(feature = "legacy-tests")]

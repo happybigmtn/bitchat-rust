@@ -1,53 +1,92 @@
 # Chapter 3: Library Architecture - Complete Implementation Analysis
+
+Implementation Status: Partial
+- Lines of code analyzed: to be confirmed
+- Key files: see references within chapter
+- Gaps/Future Work: clarifications pending
+
 ## Deep Dive into `src/lib.rs` - Computer Science Concepts in Production Code
 
 ---
 
-## Complete Implementation Analysis: 114 Lines of Production Code
+## Complete Implementation Analysis: 110 Lines of Production Code
 
 This chapter provides comprehensive coverage of the entire library architecture implementation. We'll examine every significant line of code, understanding not just what it does but why it was implemented this way, with particular focus on module orchestration, dependency management, and architectural patterns that enable a complex distributed system.
 
 ### Module Overview: The Complete System Architecture
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                  BitCraps Library Root                    │
-│                                                           │
-│  ┌─────────────────── Core Layer ──────────────────┐     │
-│  │ error | config | database | validation | logging │     │
-│  └──────────────────────────────────────────────────┘     │
-│                           ▼                               │
-│  ┌─────────────── Infrastructure Layer ────────────┐     │
-│  │ resilience | keystore | persistence | cache     │     │
-│  └──────────────────────────────────────────────────┘     │
-│                           ▼                               │
-│  ┌──────────────── Protocol Layer ─────────────────┐     │
-│  │ protocol | crypto | transport | mesh | discovery│     │
-│  └──────────────────────────────────────────────────┘     │
-│                           ▼                               │
-│  ┌──────────────── Application Layer ──────────────┐     │
-│  │ gaming | session | token | coordinator          │     │
-│  └──────────────────────────────────────────────────┘     │
-│                           ▼                               │
-│  ┌────────────── Presentation Layer ───────────────┐     │
-│  │ ui | platform | mobile | monitoring             │     │
-│  └──────────────────────────────────────────────────┘     │
-│                           ▼                               │
-│  ┌─────────────── Performance Layer ───────────────┐     │
-│  │ optimization | performance | benchmarking       │     │
-│  └──────────────────────────────────────────────────┘     │
-└──────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                     BitCraps Library Root                       │
+│                                                                 │
+│  ┌──────────────────── Core Layer ────────────────────┐         │
+│  │ error | config | database | validation | logging    │         │
+│  └────────────────────────────────────────────────────┘         │
+│                              ▼                                  │
+│  ┌─────────────── Infrastructure Layer ──────────────┐         │
+│  │ resilience | keystore | persistence | cache |      │         │
+│  │ memory_pool | utils | security                     │         │
+│  └────────────────────────────────────────────────────┘         │
+│                              ▼                                  │
+│  ┌────────────── Protocol & Network Layer ───────────┐         │
+│  │ protocol | crypto | transport | mesh | discovery | │         │
+│  │ coordinator | session                              │         │
+│  └────────────────────────────────────────────────────┘         │
+│                              ▼                                  │
+│  ┌──────────── Application & Business Layer ─────────┐         │
+│  │ app | gaming | token | treasury | economics |      │         │
+│  │ contracts                                           │         │
+│  └────────────────────────────────────────────────────┘         │
+│                              ▼                                  │
+│  ┌────────────── Platform & Interface Layer ─────────┐         │
+│  │ ui | platform | mobile | monitoring                │         │
+│  └────────────────────────────────────────────────────┘         │
+│                              ▼                                  │
+│  ┌────────────── Performance & Analysis Layer ───────┐         │
+│  │ optimization | performance | profiling              │         │
+│  └────────────────────────────────────────────────────┘         │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-**Total Implementation**: 114 lines orchestrating 24 major modules
+**Total Implementation**: 110 lines orchestrating 32 major modules
 
 ## Part I: Complete Code Analysis - Computer Science Concepts in Practice
 
-### Module Declaration and Dependency Graph (Lines 19-42)
+### Module Declaration and Dependency Graph (Lines 19-50)
 
 ```rust
-pub mod error;
+pub mod app; // Main application coordinator
+pub mod cache; // Multi-tier caching system
 pub mod config;
+pub mod contracts; // Smart contract integration and cross-chain bridges
+pub mod coordinator; // Network coordination and monitoring
+pub mod crypto; // Cryptographic foundations
+pub mod database;
+pub mod discovery; // Peer discovery (Bluetooth, DHT)
+pub mod economics; // Advanced token economics and supply management
+pub mod error;
+pub mod gaming; // Gaming interfaces and session management
+pub mod keystore; // Secure key management
+pub mod logging; // Production logging and observability
+pub mod memory_pool; // Memory pooling for performance optimization
+pub mod mesh; // Mesh networking coordination
+pub mod mobile; // Mobile platform bindings and UniFFI interface
+pub mod monitoring; // Production monitoring and metrics
+pub mod optimization; // Performance optimizations
+pub mod performance; // Performance benchmarking and analysis
+pub mod persistence; // Data persistence layer
+pub mod platform; // Platform-specific integrations (Android, iOS)
+pub mod profiling; // Performance profiling and analysis
+pub mod protocol; // Core protocol and binary serialization
+pub mod resilience; // Network resilience and fault tolerance
+pub mod security;
+pub mod session; // Session management with Noise protocol
+pub mod token; // Token economics and CRAP tokens
+pub mod transport; // Network transport layer (Bluetooth mesh)
+pub mod treasury; // Treasury management and automated market making
+pub mod ui; // User interface (CLI and TUI)
+pub mod utils; // Utility functions and helpers
+pub mod validation; // Security hardening and input validation
 pub mod database;
 pub mod validation;
 pub mod logging;      // Production logging and observability
@@ -75,19 +114,19 @@ pub mod performance;  // Performance benchmarking and analysis
 **Computer Science Foundation: Directed Acyclic Graph (DAG) Architecture**
 
 This module structure forms a **directed acyclic graph** where:
-- **Nodes**: Modules (24 total)
+- **Nodes**: Modules (32 total)
 - **Edges**: Dependencies (implicit through `use` statements)
 - **Property**: No circular dependencies (enforced by Rust compiler)
 
 **Dependency Layers (Topological Sort):**
 ```
-Layer 0 (No deps): error
-Layer 1 (Core): config, validation, logging
-Layer 2 (Storage): database, persistence, cache, keystore
+Layer 0 (No deps): error, utils
+Layer 1 (Core): config, validation, logging, security
+Layer 2 (Storage): database, persistence, cache, keystore, memory_pool
 Layer 3 (Crypto): crypto, resilience
-Layer 4 (Network): protocol, transport, mesh, discovery
-Layer 5 (Business): gaming, session, token, coordinator
-Layer 6 (Interface): ui, platform, mobile, monitoring
+Layer 4 (Network): protocol, transport, mesh, discovery, coordinator, session
+Layer 5 (Business): app, gaming, token, treasury, economics, contracts
+Layer 6 (Interface): ui, platform, mobile, monitoring, profiling
 Layer 7 (Meta): optimization, performance
 ```
 
@@ -124,24 +163,40 @@ Research shows metaphors improve comprehension by:
 2. **Creating Mental Models**: Spatial metaphors aid memory
 3. **Reducing Cognitive Load**: Complex becomes familiar
 
-### Re-export Pattern for API Surface (Lines 49-91)
+### Re-export Pattern for API Surface (Lines 57-87)
 
 ```rust
 // Re-export commonly used types for easy access
+pub use coordinator::{HealthMetrics, MultiTransportCoordinator, NetworkMonitor, NetworkTopology};
+pub use crypto::{BitchatIdentity, BitchatKeypair, GameCrypto, ProofOfWork};
+pub use discovery::{BluetoothDiscovery, DhtDiscovery, DhtPeer, DiscoveredPeer};
 pub use error::{Error, Result};
-pub use protocol::{
-    PeerId, GameId, BetType, DiceRoll, CrapTokens,
-};
+pub use mesh::{MeshPeer, MeshService};
+pub use protocol::craps::{CrapsGame, GamePhase};
+pub use protocol::runtime::GameRuntime;
 pub use protocol::versioning::{
-    ProtocolVersion, ProtocolFeature, ProtocolCompatibility, VersionedMessage,
+    ProtocolCompatibility, ProtocolFeature, ProtocolVersion, VersionedMessage,
 };
-pub use crypto::{
-    BitchatKeypair, BitchatIdentity, GameCrypto, ProofOfWork,
+pub use protocol::{BetType, CrapTokens, DiceRoll, GameId, PeerId};
+pub use transport::{BluetoothTransport, TransportAddress, TransportCoordinator};
+pub use app::{ApplicationConfig, BitCrapsApp};
+pub use contracts::{
+    BlockchainNetwork, BridgeContract, ContractManager, StakingContract, TokenContract,
 };
-pub use transport::{
-    TransportCoordinator, BluetoothTransport, TransportAddress,
+pub use economics::{AdvancedStakingPosition, EconomicsConfig, EconomicsStats, TokenEconomics};
+pub use monitoring::{HealthCheck, NetworkDashboard, NetworkMetrics};
+pub use persistence::PersistenceManager;
+pub use security::{
+    DosProtection, InputValidator, RateLimiter, SecurityConfig, SecurityEvent, SecurityEventLogger,
+    SecurityLevel, SecurityLimits, SecurityManager,
 };
-// ... more re-exports
+pub use session::{BitchatSession, SessionLimits, SessionManager};
+pub use token::{Account, ProofOfRelay, TokenLedger, TransactionType};
+pub use treasury::{
+    AutomatedMarketMaker, TreasuryConfig, TreasuryManager, TreasuryStats, TreasuryWallet,
+};
+pub use ui::{Cli, Commands};
+pub use utils::{AdaptiveInterval, AdaptiveIntervalConfig};
 ```
 
 **Computer Science Foundation: Facade Pattern**
@@ -153,6 +208,9 @@ External API Surface:
 bitcraps::Error           (not bitcraps::error::Error)
 bitcraps::PeerId          (not bitcraps::protocol::PeerId)
 bitcraps::GameRuntime     (not bitcraps::protocol::runtime::GameRuntime)
+bitcraps::BitCrapsApp     (not bitcraps::app::BitCrapsApp)
+bitcraps::TokenEconomics  (not bitcraps::economics::TokenEconomics)
+bitcraps::SecurityManager (not bitcraps::security::SecurityManager)
 ```
 
 **Benefits of Flat Re-exports:**
@@ -167,7 +225,7 @@ The re-exports create a **spanning tree** over the module graph where:
 - Leaves: Individual types
 - Path length: 1 (direct access) vs 2-3 (through modules)
 
-### Configuration Structure (Lines 94-113)
+### Configuration Structure (Lines 89-109)
 
 ```rust
 #[derive(Debug, Clone)]

@@ -17,32 +17,41 @@ pub mod intelligent_coordinator;
 pub mod kademlia;
 pub mod keystore;
 pub mod mtu_discovery;
+// NAT traversal support gated by feature flag
+#[cfg(feature = "nat-traversal")]
 pub mod nat_traversal;
 pub mod pow_identity;
+// Secure GATT server (requires BLE support)
+#[cfg(feature = "bluetooth")]
 pub mod secure_gatt_server;
 pub mod security;
+// TCP transport with optional TLS support
 pub mod tcp_transport;
 pub mod traits;
 
 // Platform-specific BLE peripheral implementations
-#[cfg(target_os = "android")]
+// Android BLE support requires both target platform and android feature
+#[cfg(all(target_os = "android", feature = "android"))]
 pub mod android_ble;
+// iOS/macOS BLE support with platform detection
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 pub mod ios_ble;
+// Linux BLE support via BlueZ
 #[cfg(target_os = "linux")]
 pub mod linux_ble;
 
+// Test modules organized by speed
 #[cfg(test)]
-mod connection_limits_test;
+mod connection_limits_test; // Fast unit test
+
+#[cfg(all(test, feature = "physical_device_tests"))]
+mod ble_integration_test; // Slow integration test
 
 #[cfg(test)]
-mod ble_integration_test;
+mod multi_transport_test; // Medium speed test
 
-#[cfg(test)]
-mod multi_transport_test;
-
-use serde::{Deserialize, Serialize};
 use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -51,16 +60,28 @@ use tokio::sync::{mpsc, RwLock};
 use tokio::time::interval;
 
 use crate::error::{Error, Result};
+use crate::memory_pool::GameMemoryPools;
 use crate::protocol::{BitchatPacket, PeerId};
+use bounded_queue::{BoundedQueueError, BoundedTransportEventQueue, OverflowBehavior, QueueConfig};
 
-pub use ble_config::*;
-pub use ble_peripheral::*;
-pub use bluetooth::*;
-pub use crypto::*;
-pub use enhanced_bluetooth::*;
-pub use keystore::*;
-pub use security::*;
-pub use traits::*;
+// Specific re-exports to avoid ambiguous glob conflicts
+pub use ble_config::{BleConfigBuilder, BleTransportConfig};
+pub use ble_peripheral::AdvertisingConfig;
+pub use ble_peripheral::{BlePeripheral, PeripheralEvent};
+pub use bluetooth::{BluetoothStats, BluetoothTransport};
+pub use crypto::TransportCrypto; // CryptoEvent not implemented yet
+pub use enhanced_bluetooth::{EnhancedBluetoothStats, EnhancedBluetoothTransport};
+pub use keystore::{KeystoreConfig, SecureTransportKeystore};
+pub use security::{BleSecurityConfig, EnhancedTransportSecurity};
+pub use traits::Transport;
+
+// NAT traversal re-exports (conditional)
+#[cfg(feature = "nat-traversal")]
+pub use nat_traversal::{NatType, NetworkHandler, TransportMode};
+
+// Conditional re-exports based on features
+#[cfg(feature = "bluetooth")]
+pub use secure_gatt_server::{GattService, SecureGattServer};
 
 /// Transport address types for different connection methods
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -200,7 +221,26 @@ struct ConnectionMetadata {
     established_at: Instant,
 }
 
-/// Transport coordinator managing multiple transport types
+/// Pending message for backpressure queue
+#[derive(Debug, Clone)]
+struct PendingMessage {
+    peer_id: PeerId,
+    data: Vec<u8>,
+    timestamp: Instant,
+    retry_count: u8,
+    priority: MessagePriority,
+}
+
+/// Message priority for backpressure handling
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum MessagePriority {
+    Low = 0,
+    Normal = 1,
+    High = 2,
+    Critical = 3,
+}
+
+/// Transport coordinator managing multiple transport types with backpressure
 pub struct TransportCoordinator {
     bluetooth: Option<Arc<RwLock<BluetoothTransport>>>,
     enhanced_bluetooth: Option<Arc<RwLock<EnhancedBluetoothTransport>>>,
@@ -216,6 +256,12 @@ pub struct TransportCoordinator {
     discovery_task: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
     active_transports: Arc<DashMap<String, TransportType>>,
     failover_enabled: bool,
+    /// Bounded event queue with backpressure
+    bounded_event_queue: BoundedTransportEventQueue,
+    /// Message send queue with backpressure
+    send_queue: bounded_queue::BoundedEventQueue<PendingMessage>,
+    /// Memory pools for packet buffer optimization
+    memory_pools: Arc<GameMemoryPools>,
 }
 
 #[derive(Debug, Clone)]
@@ -242,7 +288,30 @@ impl TransportCoordinator {
     }
 
     pub fn new_with_config(limits: ConnectionLimits, config: CoordinatorConfig) -> Self {
-        let (event_sender, event_receiver) = mpsc::channel(1000); // Bounded transport events
+        let (event_sender, event_receiver) = mpsc::channel(1000); // Legacy unbounded channel
+
+        // Create bounded event queue with backpressure for high-load scenarios
+        let event_queue_config = QueueConfig {
+            max_size: 10_000,
+            overflow_behavior: match config.enable_failover {
+                true => OverflowBehavior::DropOldest, // Prioritize new events
+                false => OverflowBehavior::Backpressure, // Apply backpressure
+            },
+            backpressure_timeout: Duration::from_millis(100),
+            enable_metrics: true,
+        };
+        let bounded_event_queue = BoundedTransportEventQueue::with_config(event_queue_config);
+
+        // Create send queue for message backpressure
+        let send_queue_config = QueueConfig {
+            max_size: 5_000,
+            overflow_behavior: OverflowBehavior::Backpressure,
+            backpressure_timeout: Duration::from_millis(50),
+            enable_metrics: true,
+        };
+        let send_queue = bounded_queue::BoundedEventQueue::with_config(send_queue_config);
+
+        let memory_pools = Arc::new(GameMemoryPools::new());
 
         let coordinator = Self {
             bluetooth: None,
@@ -259,12 +328,20 @@ impl TransportCoordinator {
             discovery_task: Arc::new(RwLock::new(None)),
             active_transports: Arc::new(DashMap::new()),
             failover_enabled: config.enable_failover,
+            bounded_event_queue,
+            send_queue,
+            memory_pools,
         };
 
         // Start cleanup task for connection attempts
         coordinator.start_cleanup_task();
 
         coordinator
+    }
+
+    /// Get a pooled Vec<u8> buffer for temporary use
+    pub async fn get_buffer(&self) -> crate::memory_pool::PooledObject<Vec<u8>> {
+        self.memory_pools.vec_u8_pool.get().await
     }
 
     /// Start background task to clean up old connection attempts
@@ -287,40 +364,47 @@ impl TransportCoordinator {
     /// Enforce connection capacity limits by evicting oldest connections if needed
     async fn enforce_connection_capacity(&self) {
         let max_connections = self.connection_limits.max_total_connections;
-        
+
         // Check if we need to evict connections
         while self.connections.len() >= max_connections {
             // Find the oldest connection
-            let oldest = self.connections
+            let oldest = self
+                .connections
                 .iter()
                 .min_by_key(|entry| entry.value().established_at)
                 .map(|entry| (*entry.key(), entry.value().clone()));
-            
+
             if let Some((peer_id, metadata)) = oldest {
                 // Remove the oldest connection
                 self.connections.remove(&peer_id);
-                
+
                 // Decrement the connection count for this address
-                if let Some(mut count) = self.connection_counts_per_address.get_mut(&metadata.address) {
+                if let Some(mut count) = self
+                    .connection_counts_per_address
+                    .get_mut(&metadata.address)
+                {
                     *count = count.saturating_sub(1);
                     if *count == 0 {
                         drop(count);
                         self.connection_counts_per_address.remove(&metadata.address);
                     }
                 }
-                
+
                 log::warn!(
                     "Evicted oldest connection to peer {:?} (established at {:?}) to enforce capacity limit of {}",
                     peer_id,
                     metadata.established_at,
                     max_connections
                 );
-                
+
                 // Send disconnection event
-                let _ = self.event_sender.send(TransportEvent::Disconnected {
-                    peer_id,
-                    reason: "Connection evicted due to capacity limit".to_string(),
-                }).await;
+                let _ = self
+                    .event_sender
+                    .send(TransportEvent::Disconnected {
+                        peer_id,
+                        reason: "Connection evicted due to capacity limit".to_string(),
+                    })
+                    .await;
             } else {
                 // No connections to evict, break the loop
                 break;
@@ -486,14 +570,16 @@ impl TransportCoordinator {
 
         for transport_instance in transports_guard.iter_mut() {
             // Mark as failed if no activity for too long (simplified health check)
-            if now.duration_since(transport_instance.last_activity) > Duration::from_secs(300) {
-                if transport_instance.health != TransportHealth::Failed {
-                    transport_instance.health = TransportHealth::Failed;
-                    let _ = event_sender.send(TransportEvent::Error {
+            if now.duration_since(transport_instance.last_activity) > Duration::from_secs(300)
+                && transport_instance.health != TransportHealth::Failed
+            {
+                transport_instance.health = TransportHealth::Failed;
+                let _ = event_sender
+                    .send(TransportEvent::Error {
                         peer_id: None,
                         error: "Transport health check failed".to_string(),
-                    }).await;
-                }
+                    })
+                    .await;
             }
         }
     }
@@ -510,7 +596,10 @@ impl TransportCoordinator {
     /// Update connection counts when a connection is established
     async fn increment_connection_count(&self, address: &TransportAddress) {
         // DashMap provides thread-safe operations
-        let mut entry = self.connection_counts_per_address.entry(address.clone()).or_insert(0);
+        let mut entry = self
+            .connection_counts_per_address
+            .entry(address.clone())
+            .or_insert(0);
         *entry += 1;
     }
 
@@ -569,21 +658,27 @@ impl TransportCoordinator {
     pub async fn init_tcp_transport(
         &mut self,
         config: tcp_transport::TcpTransportConfig,
+        local_peer_id: PeerId,
     ) -> Result<()> {
         log::info!("Initializing TCP transport");
 
-        let tcp_transport = tcp_transport::TcpTransport::new(config);
+        let tcp_transport = tcp_transport::TcpTransport::new_with_sender(
+            config,
+            local_peer_id,
+            self.event_sender.clone(),
+        );
         self.tcp_transport = Some(Arc::new(RwLock::new(tcp_transport)));
 
         // Register as active transport
-        self.active_transports.insert("tcp".to_string(), TransportType::Tcp);
+        self.active_transports
+            .insert("tcp".to_string(), TransportType::Tcp);
 
         log::info!("TCP transport initialized successfully");
         Ok(())
     }
 
     /// Enable TCP transport with default config on specified port
-    pub async fn enable_tcp(&mut self, _port: u16) -> Result<()> {
+    pub async fn enable_tcp(&mut self, _port: u16, local_peer_id: PeerId) -> Result<()> {
         let config = tcp_transport::TcpTransportConfig {
             max_connections: 100,
             connection_timeout: Duration::from_secs(10),
@@ -593,7 +688,32 @@ impl TransportCoordinator {
             connection_pool_size: 20,
         };
 
-        self.init_tcp_transport(config).await
+        self.init_tcp_transport(config, local_peer_id).await
+    }
+
+    /// Listen on a TCP address using the TCP transport
+    pub async fn listen_tcp(&self, addr: std::net::SocketAddr) -> Result<()> {
+        if let Some(tcp) = &self.tcp_transport {
+            let mut tcp = tcp.write().await;
+            tcp.listen(TransportAddress::Tcp(addr))
+                .await
+                .map_err(|e| Error::Network(format!("TCP listen failed: {}", e)))?;
+            Ok(())
+        } else {
+            Err(Error::Network("TCP transport not initialized".to_string()))
+        }
+    }
+
+    /// Connect to a TCP peer
+    pub async fn connect_tcp(&self, addr: std::net::SocketAddr) -> Result<PeerId> {
+        if let Some(tcp) = &self.tcp_transport {
+            let mut tcp = tcp.write().await;
+            tcp.connect(TransportAddress::Tcp(addr))
+                .await
+                .map_err(|e| Error::Network(format!("TCP connect failed: {}", e)))
+        } else {
+            Err(Error::Network("TCP transport not initialized".to_string()))
+        }
     }
 
     /// Enable concurrent operation of multiple transports
@@ -674,10 +794,12 @@ impl TransportCoordinator {
 
                     if !is_healthy {
                         log::debug!("Transport {} is unhealthy", name);
-                        let _ = event_sender.send(TransportEvent::Error {
-                            peer_id: None,
-                            error: format!("Transport {} health check failed", name),
-                        }).await;
+                        let _ = event_sender
+                            .send(TransportEvent::Error {
+                                peer_id: None,
+                                error: format!("Transport {} health check failed", name),
+                            })
+                            .await;
                     } else {
                         log::debug!("Transport {} is healthy", name);
                     }
@@ -805,7 +927,7 @@ impl TransportCoordinator {
 
                     // Enforce capacity limits before adding new connection
                     self.enforce_connection_capacity().await;
-                    
+
                     // Update connection tracking with metadata
                     let metadata = ConnectionMetadata {
                         address: address.clone(),
@@ -819,6 +941,9 @@ impl TransportCoordinator {
                         peer_id,
                         address: address.clone(),
                     });
+                    
+                    // Record network metric
+                    crate::monitoring::record_network_event("peer_connected", Some(&format!("{:?}", peer_id)));
 
                     return Ok(());
                 }
@@ -852,6 +977,8 @@ impl TransportCoordinator {
         String,
         std::pin::Pin<std::boxed::Box<dyn std::future::Future<Output = Result<()>> + Send>>,
     )> {
+        // Use pooled Vec<u8> and then into_inner for reuse, though we need Vec<(String, Future)>
+        // For this specific case, we'll use a regular Vec since the type is complex and usage is infrequent
         let mut attempts = Vec::new();
 
         match address {
@@ -959,8 +1086,8 @@ impl TransportCoordinator {
     ) -> Result<()> {
         // In a real implementation, this would call transport_instance.transport.connect()
         // For now, simulate a connection attempt that might fail
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
+        use rand::{rngs::OsRng, Rng};
+        let mut rng = OsRng;
         if rng.gen_bool(0.7) {
             // 70% success rate for simulation
             Ok(())
@@ -985,7 +1112,7 @@ impl TransportCoordinator {
                         Ok(_) => {
                             // Enforce capacity limits before adding new connection
                             self.enforce_connection_capacity().await;
-                            
+
                             // Connection successful - update tracking with metadata
                             let metadata = ConnectionMetadata {
                                 address: address.clone(),
@@ -1025,7 +1152,8 @@ impl TransportCoordinator {
         // DashMap provides thread-safe operations
         if let Some((_, metadata)) = self.connections.remove(&peer_id) {
             // Decrement connection count for this address
-            self.decrement_connection_count(&metadata.address.clone()).await;
+            self.decrement_connection_count(&metadata.address.clone())
+                .await;
 
             // Perform actual disconnect based on transport type
             match metadata.address {
@@ -1047,6 +1175,9 @@ impl TransportCoordinator {
                 peer_id,
                 reason: "User requested disconnect".to_string(),
             });
+            
+            // Record network metric
+            crate::monitoring::record_network_event("peer_disconnected", Some(&format!("{:?}", peer_id)));
         }
 
         Ok(())
@@ -1065,7 +1196,11 @@ impl TransportCoordinator {
     /// Get connection statistics
     pub async fn connection_stats(&self) -> ConnectionStats {
         let connections_len = self.connections.len();
-        let total_connections_by_address: usize = self.connection_counts_per_address.iter().map(|entry| *entry.value()).sum();
+        let total_connections_by_address: usize = self
+            .connection_counts_per_address
+            .iter()
+            .map(|entry| *entry.value())
+            .sum();
         let attempts = self.connection_attempts.read().await;
 
         let now = Instant::now();
@@ -1076,7 +1211,11 @@ impl TransportCoordinator {
 
         ConnectionStats {
             total_connections: connections_len,
-            connections_by_address: self.connection_counts_per_address.iter().map(|entry| (entry.key().clone(), *entry.value())).collect(),
+            connections_by_address: self
+                .connection_counts_per_address
+                .iter()
+                .map(|entry| (entry.key().clone(), *entry.value()))
+                .collect(),
             recent_connection_attempts: recent_attempts,
             connection_limit: self.connection_limits.max_total_connections,
         }
@@ -1086,7 +1225,7 @@ impl TransportCoordinator {
     pub async fn send_to_peer(&self, peer_id: PeerId, data: Vec<u8>) -> Result<()> {
         if let Some(metadata) = self.connections.get(&peer_id) {
             let address = metadata.address.clone(); // Extract address from metadata
-            // Try sending based on the known connection address
+                                                    // Try sending based on the known connection address
             let primary_result = self.send_via_address(peer_id, &address, &data).await;
 
             if primary_result.is_ok() {
@@ -1227,9 +1366,7 @@ impl TransportCoordinator {
 
     /// Broadcast packet to all connected peers
     pub async fn broadcast_packet(&self, packet: BitchatPacket) -> Result<()> {
-        let mut serialized_packet = packet.clone();
-        let data = serialized_packet
-            .serialize()
+        let data = bincode::serialize(&packet)
             .map_err(|e| Error::Protocol(format!("Packet serialization failed: {}", e)))?;
 
         // Use DashMap iter() directly instead of read().await

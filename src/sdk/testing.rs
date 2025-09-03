@@ -1,5 +1,5 @@
 //! Testing Framework for BitCraps SDK
-//! 
+//!
 //! Comprehensive testing utilities for game development and integration testing
 
 use std::collections::HashMap;

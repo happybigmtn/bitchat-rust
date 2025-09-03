@@ -39,7 +39,7 @@ pub struct PayoutLookupTable {
     payout_multipliers: [[u32; 13]; 64],
 
     /// Binary lookup for win/lose/push decisions
-    /// Size: 64 bet types * 13 dice totals * 1 byte = 832 bytes  
+    /// Size: 64 bet types * 13 dice totals * 1 byte = 832 bytes
     resolution_type: [[ResolutionType; 13]; 64],
 
     /// Special bet state requirements

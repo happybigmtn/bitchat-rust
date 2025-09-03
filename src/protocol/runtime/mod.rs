@@ -11,6 +11,7 @@ pub mod statistics;
 pub mod treasury_manager;
 
 use crate::error::Result;
+use crate::mesh::MeshService;
 use crate::protocol::{GameId, PeerId};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
@@ -100,6 +101,7 @@ impl GameRuntime {
     pub fn new(
         config: GameRuntimeConfig,
         local_peer_id: PeerId,
+        mesh_service: Arc<MeshService>,
     ) -> (Self, mpsc::Sender<GameCommand>) {
         let (event_tx, _) = broadcast::channel(1000);
         let (command_tx, command_rx) = mpsc::channel(100);
@@ -107,7 +109,7 @@ impl GameRuntime {
         let config = Arc::new(config);
 
         // Initialize specialized managers
-        let game_manager = Arc::new(GameLifecycleManager::new(config.clone()));
+        let game_manager = Arc::new(GameLifecycleManager::new(config.clone(), mesh_service));
         let treasury = Arc::new(TreasuryManager::new(config.treasury_rake));
         let player_manager = Arc::new(PlayerManager::new());
         let consensus_coordinator = Arc::new(ConsensusCoordinator::new(

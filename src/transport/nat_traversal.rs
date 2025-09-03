@@ -2,7 +2,7 @@
 //!
 //! This module provides NAT traversal capabilities including:
 //! - STUN client for public IP discovery with constant-time parsing
-//! - NAT type detection  
+//! - NAT type detection
 //! - Hole punching techniques
 //! - TURN relay support (placeholder)
 //! - DoS protection and input validation
@@ -64,7 +64,7 @@ pub struct TurnServer {
 
 /// TURN allocation state
 #[derive(Debug, Clone)]
-struct TurnAllocation {
+pub struct TurnAllocation {
     pub server_addr: SocketAddr,
     pub relay_addr: SocketAddr,
     pub target_peer: SocketAddr,
@@ -101,7 +101,7 @@ pub struct ReliableMessage {
 
 /// Cached STUN server response
 #[derive(Debug, Clone)]
-struct StunResponse {
+pub struct StunResponse {
     pub public_address: SocketAddr,
     pub cached_at: Instant,
     pub ttl: Duration,
@@ -109,7 +109,7 @@ struct StunResponse {
 
 /// Connection pool entry
 #[derive(Debug)]
-struct PooledConnection {
+pub struct PooledConnection {
     pub stream: TcpStream,
     pub created_at: Instant,
     pub last_used: Instant,
@@ -117,7 +117,7 @@ struct PooledConnection {
 
 /// STUN server with performance tracking
 #[derive(Debug, Clone)]
-struct TrackedStunServer {
+pub struct TrackedStunServer {
     pub address: String,
     pub response_time: Duration,
     pub success_rate: f64,
@@ -1101,7 +1101,7 @@ impl NetworkHandler {
         indication.extend_from_slice(&[0x00, 0x01]); // IPv4 family
 
         // XOR port and address
-        let xor_port = (msg.destination.port() ^ 0x2112) as u16;
+        let xor_port = msg.destination.port() ^ 0x2112;
         indication.extend_from_slice(&xor_port.to_be_bytes());
 
         if let std::net::IpAddr::V4(ip) = msg.destination.ip() {
@@ -1163,7 +1163,7 @@ impl NetworkHandler {
         request.extend_from_slice(&[0x00, 0x01]); // IPv4 family
 
         // XOR port and address
-        let xor_port = (peer_addr.port() ^ 0x2112) as u16;
+        let xor_port = peer_addr.port() ^ 0x2112;
         request.extend_from_slice(&xor_port.to_be_bytes());
 
         if let std::net::IpAddr::V4(ip) = peer_addr.ip() {
@@ -1175,12 +1175,6 @@ impl NetworkHandler {
     }
 
     /// Send TURN request with authentication
-    // TODO: [Network] Complete TURN relay implementation (RFC 5766)
-    //       Current implementation only has basic structure, missing:
-    //       - Channel binding for efficient data transfer
-    //       - Refresh mechanism to maintain allocations
-    //       - Error handling for 438 (Stale Nonce) responses
-    //       Priority: Medium - Required for symmetric NAT traversal
     async fn send_turn_request_with_auth(
         &self,
         turn_server: &TurnServer,
@@ -1271,6 +1265,219 @@ impl NetworkHandler {
             "No relay address in TURN response".to_string(),
         ))
     }
+
+    /// Bind a channel for efficient data transfer to a peer
+    pub async fn bind_turn_channel(
+        &self,
+        turn_server: &TurnServer,
+        peer_addr: SocketAddr,
+        channel_number: u16,
+    ) -> Result<()> {
+        // Channel number must be in range 0x4000-0x7FFF
+        if !(0x4000..=0x7FFF).contains(&channel_number) {
+            return Err(Error::Network("Invalid channel number".to_string()));
+        }
+
+        // Create ChannelBind request
+        let mut request = Vec::with_capacity(256);
+
+        // STUN header for ChannelBind (0x0009)
+        request.extend_from_slice(&[0x00, 0x09]); // Message type
+        request.extend_from_slice(&[0x00, 0x00]); // Message length (placeholder)
+        request.extend_from_slice(&[0x21, 0x12, 0xA4, 0x42]); // Magic cookie
+
+        // Transaction ID
+        let mut transaction_id = [0u8; 12];
+        rand::rngs::OsRng.fill_bytes(&mut transaction_id);
+        request.extend_from_slice(&transaction_id);
+
+        // CHANNEL-NUMBER attribute (0x000C)
+        request.extend_from_slice(&[0x00, 0x0C]); // Type
+        request.extend_from_slice(&[0x00, 0x04]); // Length
+        request.extend_from_slice(&channel_number.to_be_bytes());
+        request.extend_from_slice(&[0x00, 0x00]); // Reserved
+
+        // XOR-PEER-ADDRESS attribute (0x0012)
+        request.extend_from_slice(&[0x00, 0x12]); // Type
+        request.extend_from_slice(&[0x00, 0x08]); // Length
+        request.push(0x00); // Reserved
+        request.push(0x01); // Family (IPv4)
+
+        // XOR port and address
+        let xor_port = peer_addr.port() ^ 0x2112;
+        request.extend_from_slice(&xor_port.to_be_bytes());
+
+        if let std::net::IpAddr::V4(ip) = peer_addr.ip() {
+            let xor_addr = u32::from_be_bytes(ip.octets()) ^ 0x2112A442;
+            request.extend_from_slice(&xor_addr.to_be_bytes());
+        }
+
+        // Update message length
+        let msg_len = (request.len() - 20) as u16;
+        request[2..4].copy_from_slice(&msg_len.to_be_bytes());
+
+        // Send authenticated request
+        let response = self
+            .send_turn_request_with_auth(
+                turn_server,
+                request,
+                &turn_server.username,
+                &turn_server.password,
+            )
+            .await?;
+
+        // Check for success
+        if response.len() >= 2 && response[0] == 0x01 && response[1] == 0x09 {
+            log::info!("Channel {} bound to {}", channel_number, peer_addr);
+            Ok(())
+        } else {
+            Err(Error::Network("Channel bind failed".to_string()))
+        }
+    }
+
+    /// Refresh TURN allocation to maintain it
+    pub async fn refresh_turn_allocation(
+        &self,
+        turn_server: &TurnServer,
+        lifetime: Option<Duration>,
+    ) -> Result<()> {
+        // Create Refresh request
+        let mut request = Vec::with_capacity(256);
+
+        // STUN header for Refresh (0x0004)
+        request.extend_from_slice(&[0x00, 0x04]); // Message type
+        request.extend_from_slice(&[0x00, 0x00]); // Message length (placeholder)
+        request.extend_from_slice(&[0x21, 0x12, 0xA4, 0x42]); // Magic cookie
+
+        // Transaction ID
+        let mut transaction_id = [0u8; 12];
+        rand::rngs::OsRng.fill_bytes(&mut transaction_id);
+        request.extend_from_slice(&transaction_id);
+
+        // LIFETIME attribute (0x000D) if specified
+        if let Some(duration) = lifetime {
+            request.extend_from_slice(&[0x00, 0x0D]); // Type
+            request.extend_from_slice(&[0x00, 0x04]); // Length
+            let seconds = duration.as_secs().min(3600) as u32; // Max 1 hour
+            request.extend_from_slice(&seconds.to_be_bytes());
+        }
+
+        // Update message length
+        let msg_len = (request.len() - 20) as u16;
+        request[2..4].copy_from_slice(&msg_len.to_be_bytes());
+
+        // Send authenticated request
+        let response = self
+            .send_turn_request_with_auth(
+                turn_server,
+                request,
+                &turn_server.username,
+                &turn_server.password,
+            )
+            .await?;
+
+        // Check for success
+        if response.len() >= 2 && response[0] == 0x01 && response[1] == 0x04 {
+            log::info!("TURN allocation refreshed");
+            Ok(())
+        } else {
+            Err(Error::Network("Refresh failed".to_string()))
+        }
+    }
+
+    /// Handle stale nonce error (438) by retrying with new nonce
+    async fn handle_stale_nonce(
+        &self,
+        turn_server: &TurnServer,
+        original_request: Vec<u8>,
+        error_response: &[u8],
+    ) -> Result<Vec<u8>> {
+        // Extract NONCE from error response
+        let nonce = self.extract_nonce_from_response(error_response)?;
+
+        // Rebuild request with new nonce
+        let mut new_request = original_request.clone();
+
+        // Add NONCE attribute (0x0015)
+        new_request.extend_from_slice(&[0x00, 0x15]); // Type
+        let nonce_len = nonce.len() as u16;
+        new_request.extend_from_slice(&nonce_len.to_be_bytes());
+        new_request.extend_from_slice(&nonce);
+
+        // Padding
+        let padding = (4 - (nonce.len() % 4)) % 4;
+        new_request.extend_from_slice(&vec![0u8; padding]);
+
+        // Update message length
+        let msg_len = (new_request.len() - 20) as u16;
+        new_request[2..4].copy_from_slice(&msg_len.to_be_bytes());
+
+        // Retry with new nonce
+        self.send_turn_request_with_auth(
+            turn_server,
+            new_request,
+            &turn_server.username,
+            &turn_server.password,
+        )
+        .await
+    }
+
+    /// Extract nonce from TURN error response
+    fn extract_nonce_from_response(&self, response: &[u8]) -> Result<Vec<u8>> {
+        if response.len() < 20 {
+            return Err(Error::Network("Invalid error response".to_string()));
+        }
+
+        let mut offset = 20;
+        while offset + 4 <= response.len() {
+            let attr_type = u16::from_be_bytes([response[offset], response[offset + 1]]);
+            let attr_len =
+                u16::from_be_bytes([response[offset + 2], response[offset + 3]]) as usize;
+
+            if attr_type == 0x0015 {
+                // NONCE attribute found
+                let nonce_start = offset + 4;
+                let nonce_end = nonce_start + attr_len;
+                if nonce_end <= response.len() {
+                    return Ok(response[nonce_start..nonce_end].to_vec());
+                }
+            }
+
+            offset += 4 + attr_len;
+            // Align to 4-byte boundary
+            offset = (offset + 3) & !3;
+        }
+
+        Err(Error::Network("No nonce in error response".to_string()))
+    }
+
+    /// Start automatic refresh timer for TURN allocation
+    pub fn start_turn_refresh_timer(
+        self: Arc<Self>,
+        turn_server: TurnServer,
+        refresh_interval: Duration,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(refresh_interval);
+            interval.tick().await; // Skip first immediate tick
+
+            loop {
+                interval.tick().await;
+
+                match self
+                    .refresh_turn_allocation(&turn_server, Some(refresh_interval * 2))
+                    .await
+                {
+                    Ok(_) => log::debug!("TURN allocation refreshed successfully"),
+                    Err(e) => {
+                        log::error!("Failed to refresh TURN allocation: {}", e);
+                        // Could implement reconnection logic here
+                        break;
+                    }
+                }
+            }
+        })
+    }
 }
 
 #[cfg(test)]
@@ -1280,8 +1487,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_stun_request_creation() {
-        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind test socket");
-        let handler = NetworkHandler::new(socket, None, "127.0.0.1:0".parse().expect("Valid test address"));
+        let socket = UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("Failed to bind test socket");
+        let handler = NetworkHandler::new(
+            socket,
+            None,
+            "127.0.0.1:0".parse().expect("Valid test address"),
+        );
 
         let transaction_id = [1u8; 12];
         let request = handler.create_stun_binding_request(transaction_id);
@@ -1295,11 +1508,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_nat_type_detection() {
-        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind test socket");
-        let handler = NetworkHandler::new(socket, None, "127.0.0.1:0".parse().expect("Valid test address"));
+        let socket = UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("Failed to bind test socket");
+        let handler = NetworkHandler::new(
+            socket,
+            None,
+            "127.0.0.1:0".parse().expect("Valid test address"),
+        );
 
         // Test with empty STUN servers
-        let nat_type = handler.detect_nat_type().await.expect("NAT detection failed");
+        let nat_type = handler
+            .detect_nat_type()
+            .await
+            .expect("NAT detection failed");
         assert_eq!(nat_type, NatType::Unknown);
     }
 }

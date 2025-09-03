@@ -494,7 +494,7 @@ impl GatewayNode {
                         Ok(n) => {
                             // Mark buffer usage for memory optimization
                             buffer.mark_used(n);
-                            
+
                             // Update bandwidth monitoring
                             bandwidth_monitor.update_usage(is_local, n).await;
 

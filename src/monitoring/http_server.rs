@@ -229,7 +229,7 @@ async fn handle_health(server: Arc<MonitoringServer>) -> Result<impl Reply, Reje
     let mut overall_healthy = true;
 
     // Basic health check
-    let basic_health = server.health_check.check_health();
+    let basic_health = server.health_check.check_health().await;
     checks.push(HealthCheckResult {
         name: "system".to_string(),
         status: basic_health.status.clone(),
@@ -409,7 +409,7 @@ async fn handle_status(server: Arc<MonitoringServer>) -> Result<impl Reply, Reje
     };
 
     // Gather resource status
-    let health = server.health_check.check_health();
+    let health = server.health_check.check_health().await;
     let resources = ResourceStatus {
         memory_mb: health.memory_mb,
         cpu_percent: 0.0,  // Would need actual CPU monitoring

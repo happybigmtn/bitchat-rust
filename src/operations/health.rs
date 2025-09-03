@@ -19,7 +19,7 @@ impl HealthChecker {
 
     pub async fn check_health(&self, component: &str) -> Result<HealthStatus, HealthError> {
         tracing::info!("Checking health for component: {}", component);
-        
+
         // Simulate health check
         Ok(HealthStatus::Healthy)
     }

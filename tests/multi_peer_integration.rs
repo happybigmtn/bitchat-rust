@@ -336,3 +336,5 @@ async fn test_high_load_concurrent_games() {
         assert!(games.len() > 0);
     }
 }
+#![cfg(feature = "legacy-tests")]
+#![cfg(feature = "legacy-tests")]

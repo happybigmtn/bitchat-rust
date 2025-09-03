@@ -84,7 +84,7 @@ impl LoopBudget {
     /// Check if we can proceed with the next iteration
     pub fn can_proceed(&self) -> bool {
         self.reset_window_if_needed();
-        
+
         let current = self.current_iterations.load(Ordering::Relaxed);
         current < self.max_iterations_per_window
     }
@@ -92,7 +92,7 @@ impl LoopBudget {
     /// Consume budget for one iteration
     pub fn consume(&self, count: u64) {
         self.current_iterations.fetch_add(count, Ordering::Relaxed);
-        
+
         // Reset backoff on successful iteration
         if let Ok(mut backoff) = self.backoff.current_backoff.lock() {
             *backoff = self.backoff.initial_backoff;
@@ -111,13 +111,13 @@ impl LoopBudget {
                 }
             };
             let duration = *current;
-            
+
             // Increase backoff for next time
             let next = Duration::from_millis(
-                (current.as_millis() as f64 * self.backoff.multiplier) as u64
+                (current.as_millis() as f64 * self.backoff.multiplier) as u64,
             );
             *current = next.min(self.backoff.max_backoff);
-            
+
             duration
         };
 
@@ -172,9 +172,9 @@ pub struct LoopStats {
 impl<T> BoundedLoop<T> {
     /// Create new bounded loop with receiver and budget
     pub fn new(
-        receiver: mpsc::Receiver<T>, 
+        receiver: mpsc::Receiver<T>,
         budget: LoopBudget,
-        overflow_handler: OverflowHandler<T>
+        overflow_handler: OverflowHandler<T>,
     ) -> Self {
         Self {
             receiver,
@@ -185,7 +185,7 @@ impl<T> BoundedLoop<T> {
     }
 
     /// Process messages with budget control
-    pub async fn process_with_budget<F, Fut>(&mut self, mut handler: F) 
+    pub async fn process_with_budget<F, Fut>(&mut self, mut handler: F)
     where
         F: FnMut(T) -> Fut,
         Fut: std::future::Future<Output = ()>,
@@ -236,9 +236,9 @@ pub struct CircuitBreaker {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CircuitState {
-    Closed,      // Normal operation
-    Open,        // Failing, rejecting requests
-    HalfOpen,    // Testing if recovered
+    Closed,   // Normal operation
+    Open,     // Failing, rejecting requests
+    HalfOpen, // Testing if recovered
 }
 
 impl CircuitBreaker {
@@ -262,7 +262,7 @@ impl CircuitBreaker {
                 poisoned.into_inner()
             }
         };
-        
+
         match *state {
             CircuitState::Closed => true,
             CircuitState::Open => {
@@ -297,7 +297,7 @@ impl CircuitBreaker {
     /// Record a failed operation
     pub fn record_failure(&self) {
         let failures = self.current_failures.fetch_add(1, Ordering::Relaxed) + 1;
-        
+
         if failures >= self.failure_threshold {
             let mut state = match self.state.lock() {
                 Ok(guard) => guard,
@@ -307,7 +307,7 @@ impl CircuitBreaker {
                 }
             };
             *state = CircuitState::Open;
-            
+
             let mut last_failure = match self.last_failure.lock() {
                 Ok(guard) => guard,
                 Err(poisoned) => {
@@ -357,23 +357,23 @@ impl LoadShedder {
     /// Check if we should shed this request
     pub fn should_shed(&self) -> bool {
         let queue_size = self.current_queue_size.load(Ordering::Relaxed);
-        
+
         if queue_size >= self.max_queue_size {
             // Update shed probability based on overload
             let overload_factor = (queue_size as f64) / (self.max_queue_size as f64);
             let shed_prob = (overload_factor - 1.0).max(0.0).min(1.0);
-            
+
             if let Ok(mut prob) = self.shed_probability.lock() {
                 *prob = shed_prob;
             }
-            
+
             // Probabilistic shedding
             if fastrand::f64() < shed_prob {
                 self.shed_count.fetch_add(1, Ordering::Relaxed);
                 return true;
             }
         }
-        
+
         false
     }
 
@@ -396,13 +396,13 @@ mod tests {
     #[tokio::test]
     async fn test_loop_budget_basic() {
         let budget = LoopBudget::new(10); // 10 per second
-        
+
         // Should allow first 10 iterations
         for _ in 0..10 {
             assert!(budget.can_proceed());
             budget.consume(1);
         }
-        
+
         // Should block 11th iteration
         assert!(!budget.can_proceed());
     }
@@ -411,13 +411,13 @@ mod tests {
     async fn test_loop_budget_window_reset() {
         pause();
         let budget = LoopBudget::new(5);
-        
+
         // Consume budget
         for _ in 0..5 {
             budget.consume(1);
         }
         assert!(!budget.can_proceed());
-        
+
         // Advance time and check reset
         advance(Duration::from_secs(1)).await;
         assert!(budget.can_proceed());
@@ -426,20 +426,20 @@ mod tests {
     #[tokio::test]
     async fn test_circuit_breaker() {
         let breaker = CircuitBreaker::new(3, Duration::from_secs(5));
-        
+
         // Should start closed
         assert!(breaker.allow_request());
         assert_eq!(breaker.state(), CircuitState::Closed);
-        
+
         // Record failures
         for _ in 0..3 {
             breaker.record_failure();
         }
-        
+
         // Should be open now
         assert!(!breaker.allow_request());
         assert_eq!(breaker.state(), CircuitState::Open);
-        
+
         // Record success should close it
         breaker.record_success();
         assert!(breaker.allow_request());
@@ -449,11 +449,11 @@ mod tests {
     #[tokio::test]
     async fn test_load_shedder() {
         let shedder = LoadShedder::new(100);
-        
+
         // Should not shed when under capacity
         shedder.update_queue_size(50);
         assert!(!shedder.should_shed());
-        
+
         // Should shed when over capacity
         shedder.update_queue_size(150);
         // Note: probabilistic, so we can't guarantee it will shed on first try

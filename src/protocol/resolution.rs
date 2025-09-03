@@ -13,7 +13,7 @@ pub trait BetResolver {
     /// Resolve come-out roll bets
     fn resolve_comeout_roll(&self, roll: DiceRoll) -> Vec<BetResolution>;
 
-    /// Resolve point phase roll bets  
+    /// Resolve point phase roll bets
     fn resolve_point_roll(&mut self, roll: DiceRoll) -> Vec<BetResolution>;
 
     /// Resolve one-roll proposition bets

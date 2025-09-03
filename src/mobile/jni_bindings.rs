@@ -13,9 +13,6 @@ use jni::sys::{jboolean, jint, jlong, jobjectArray, jstring};
 use jni::JNIEnv;
 
 use super::*;
-use std::time::Duration;
-use tokio::time::timeout;
-use tokio::sync::oneshot;
 
 /// Android-specific JNI interface for BitCraps
 #[cfg(target_os = "android")]
@@ -206,7 +203,7 @@ pub extern "C" fn Java_com_bitcraps_BitCrapsNative_startDiscovery(
             }
         }
     });
-    
+
     // Return immediately - Android should poll node status for confirmation
     true as jboolean
 }
@@ -247,7 +244,7 @@ pub extern "C" fn Java_com_bitcraps_BitCrapsNative_stopDiscovery(
             }
         }
     });
-    
+
     // Return immediately - Android should poll node status for confirmation
     true as jboolean
 }
@@ -277,13 +274,13 @@ pub extern "C" fn Java_com_bitcraps_BitCrapsNative_pollEvent(
     let rt = tokio::runtime::Runtime::new().unwrap();
     let node_clone = node.clone();
     let (tx, rx) = oneshot::channel();
-    
+
     rt.spawn(async move {
         // Use very short timeout for polling to prevent ANR
         let result = timeout(Duration::from_millis(50), node_clone.poll_event()).await;
         let _ = tx.send(result);
     });
-    
+
     // Try to get result immediately, return null if not ready
     match rx.try_recv() {
         Ok(Ok(Some(event))) => {

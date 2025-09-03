@@ -39,7 +39,7 @@ pub struct TreasuryConfig {
     /// Hot wallet maximum balance percentage
     pub hot_wallet_limit: f64,
 
-    /// Cold wallet minimum balance percentage  
+    /// Cold wallet minimum balance percentage
     pub cold_wallet_minimum: f64,
 
     /// Rebalancing threshold for hot/cold wallets
@@ -623,6 +623,280 @@ impl TreasuryManager {
         }
     }
 
+    /// Validate AMM invariants and maintain mathematical consistency
+    pub async fn validate_amm_invariants(
+        &self,
+        amm_id: [u8; 32],
+    ) -> Result<AmmInvariantValidation> {
+        let amms = self.amms.read().await;
+        let amm = amms
+            .get(&amm_id)
+            .ok_or_else(|| Error::InvalidData("AMM pool not found".to_string()))?;
+
+        let mut validation = AmmInvariantValidation {
+            amm_id,
+            is_valid: true,
+            violations: Vec::new(),
+            k_constant: 0.0,
+            price_deviation: 0.0,
+            liquidity_balance: 0.0,
+            reserve_ratio: 0.0,
+        };
+
+        // Invariant 1: Constant Product (k = x * y must be preserved across swaps)
+        let k_constant = amm.token_a_reserve.0 as f64 * amm.token_b_reserve.0 as f64;
+        validation.k_constant = k_constant;
+
+        // Check if k is reasonable (not zero, not infinite)
+        if k_constant <= 0.0 || !k_constant.is_finite() {
+            validation.is_valid = false;
+            validation
+                .violations
+                .push("K constant is invalid (zero, negative, or infinite)".to_string());
+        }
+
+        // Invariant 2: Reserve balance consistency
+        let total_reserves = amm.token_a_reserve.0 + amm.token_b_reserve.0;
+        if total_reserves == 0 {
+            validation.is_valid = false;
+            validation
+                .violations
+                .push("Total reserves cannot be zero".to_string());
+        }
+
+        let reserve_ratio = if amm.token_b_reserve.0 > 0 {
+            amm.token_a_reserve.0 as f64 / amm.token_b_reserve.0 as f64
+        } else {
+            f64::INFINITY
+        };
+        validation.reserve_ratio = reserve_ratio;
+
+        // Check for extreme reserve ratios (potential manipulation)
+        if !reserve_ratio.is_finite() || reserve_ratio > 10000.0 || reserve_ratio < 0.0001 {
+            validation.is_valid = false;
+            validation.violations.push(format!(
+                "Extreme reserve ratio detected: {:.6}",
+                reserve_ratio
+            ));
+        }
+
+        // Invariant 3: Liquidity token supply consistency
+        let expected_liquidity = (k_constant.sqrt()) as u64;
+        let actual_liquidity = amm.liquidity_token_supply.0;
+        let liquidity_deviation = if expected_liquidity > 0 {
+            (actual_liquidity as f64 / expected_liquidity as f64 - 1.0).abs()
+        } else {
+            1.0
+        };
+        validation.liquidity_balance = liquidity_deviation;
+
+        // Allow up to 5% deviation in liquidity calculation due to fees and rounding
+        if liquidity_deviation > 0.05 {
+            validation.violations.push(format!(
+                "Liquidity supply deviation too high: {:.2}% (expected: {}, actual: {})",
+                liquidity_deviation * 100.0,
+                expected_liquidity,
+                actual_liquidity
+            ));
+        }
+
+        // Invariant 4: Fee rate bounds
+        if amm.swap_fee_rate < 0.0 || amm.swap_fee_rate > 0.1 {
+            validation.is_valid = false;
+            validation.violations.push(format!(
+                "Invalid fee rate: {:.4} (must be 0-10%)",
+                amm.swap_fee_rate
+            ));
+        }
+
+        // Invariant 5: Price impact limits
+        if amm.price_impact_limit <= 0.0 || amm.price_impact_limit > 1.0 {
+            validation.is_valid = false;
+            validation.violations.push(format!(
+                "Invalid price impact limit: {:.2}%",
+                amm.price_impact_limit * 100.0
+            ));
+        }
+
+        // Invariant 6: Slippage tolerance bounds
+        if amm.slippage_tolerance < 0.0 || amm.slippage_tolerance > 0.5 {
+            validation.is_valid = false;
+            validation.violations.push(format!(
+                "Invalid slippage tolerance: {:.2}%",
+                amm.slippage_tolerance * 100.0
+            ));
+        }
+
+        // Invariant 7: Price consistency check
+        let calculated_price = if amm.token_a_reserve.0 > 0 {
+            amm.token_b_reserve.0 as f64 / amm.token_a_reserve.0 as f64
+        } else {
+            0.0
+        };
+        let price_deviation = if amm.last_price > 0.0 {
+            (calculated_price / amm.last_price - 1.0).abs()
+        } else {
+            0.0
+        };
+        validation.price_deviation = price_deviation;
+
+        // Allow up to 1% deviation in stored price vs calculated price
+        if price_deviation > 0.01 {
+            validation.violations.push(format!(
+                "Price deviation too high: {:.2}% (stored: {:.6}, calculated: {:.6})",
+                price_deviation * 100.0,
+                amm.last_price,
+                calculated_price
+            ));
+        }
+
+        // Invariant 8: Volume and fees collected consistency
+        if amm.fees_collected.0 as f64 > amm.volume_24h.0 as f64 * amm.swap_fee_rate {
+            validation.is_valid = false;
+            validation
+                .violations
+                .push("Fees collected exceed maximum possible from volume".to_string());
+        }
+
+        // Check for any violations
+        if !validation.violations.is_empty() {
+            validation.is_valid = false;
+        }
+
+        if validation.is_valid {
+            log::debug!(
+                "AMM invariants validated successfully for pool {}: k={:.2e}, ratio={:.6}",
+                hex::encode(&amm_id[..8]),
+                k_constant,
+                reserve_ratio
+            );
+        } else {
+            log::error!(
+                "AMM invariant violations detected for pool {}: {:?}",
+                hex::encode(&amm_id[..8]),
+                validation.violations
+            );
+        }
+
+        Ok(validation)
+    }
+
+    /// Validate all AMM pools and fix any inconsistencies
+    pub async fn validate_all_amm_invariants(&self) -> Result<Vec<AmmInvariantValidation>> {
+        // Collect AMM IDs first to avoid lock issues
+        let amm_ids: Vec<[u8; 32]> = {
+            let amms = self.amms.read().await;
+            amms.keys().copied().collect()
+        };
+
+        let mut validations = Vec::new();
+
+        for amm_id in amm_ids {
+            let validation = self.validate_amm_invariants(amm_id).await?;
+            validations.push(validation);
+        }
+
+        let total_pools = validations.len();
+        let valid_pools = validations.iter().filter(|v| v.is_valid).count();
+        let invalid_pools = total_pools - valid_pools;
+
+        if invalid_pools > 0 {
+            log::error!(
+                "AMM invariant validation summary: {}/{} pools valid, {} violations found",
+                valid_pools,
+                total_pools,
+                invalid_pools
+            );
+        } else {
+            log::info!(
+                "AMM invariant validation passed for all {} pools",
+                total_pools
+            );
+        }
+
+        Ok(validations)
+    }
+
+    /// Auto-fix AMM invariants where possible (emergency function)
+    pub async fn auto_fix_amm_invariants(&self, amm_id: [u8; 32]) -> Result<bool> {
+        let validation = self.validate_amm_invariants(amm_id).await?;
+
+        if validation.is_valid {
+            return Ok(false); // No fix needed
+        }
+
+        let mut amms = self.amms.write().await;
+        let amm = amms
+            .get_mut(&amm_id)
+            .ok_or_else(|| Error::InvalidData("AMM pool not found".to_string()))?;
+
+        let mut fixed = false;
+
+        // Fix extreme fee rates
+        if amm.swap_fee_rate < 0.0 {
+            amm.swap_fee_rate = 0.003; // 0.3% default
+            fixed = true;
+        } else if amm.swap_fee_rate > 0.1 {
+            amm.swap_fee_rate = 0.01; // 1% maximum
+            fixed = true;
+        }
+
+        // Fix extreme price impact limits
+        if amm.price_impact_limit <= 0.0 || amm.price_impact_limit > 1.0 {
+            amm.price_impact_limit = 0.05; // 5% default
+            fixed = true;
+        }
+
+        // Fix extreme slippage tolerance
+        if amm.slippage_tolerance < 0.0 || amm.slippage_tolerance > 0.5 {
+            amm.slippage_tolerance = 0.01; // 1% default
+            fixed = true;
+        }
+
+        // Recalculate correct liquidity supply based on constant product
+        if amm.token_a_reserve.0 > 0 && amm.token_b_reserve.0 > 0 {
+            let k = amm.token_a_reserve.0 as f64 * amm.token_b_reserve.0 as f64;
+            let correct_liquidity = k.sqrt() as u64;
+            let deviation = if amm.liquidity_token_supply.0 > 0 {
+                (correct_liquidity as f64 / amm.liquidity_token_supply.0 as f64 - 1.0).abs()
+            } else {
+                1.0
+            };
+
+            if deviation > 0.1 {
+                // More than 10% deviation
+                amm.liquidity_token_supply = CrapTokens::from(correct_liquidity);
+                fixed = true;
+            }
+        }
+
+        // Recalculate last price from reserves
+        if amm.token_a_reserve.0 > 0 {
+            let correct_price = amm.token_b_reserve.0 as f64 / amm.token_a_reserve.0 as f64;
+            let price_deviation = if amm.last_price > 0.0 {
+                (correct_price / amm.last_price - 1.0).abs()
+            } else {
+                1.0
+            };
+
+            if price_deviation > 0.05 {
+                // More than 5% deviation
+                amm.last_price = correct_price;
+                fixed = true;
+            }
+        }
+
+        if fixed {
+            log::warn!(
+                "Auto-fixed AMM invariants for pool {}: {} violations corrected",
+                hex::encode(&amm_id[..8]),
+                validation.violations.len()
+            );
+        }
+
+        Ok(fixed)
+    }
+
     /// Get comprehensive treasury statistics
     pub async fn get_treasury_stats(&self) -> TreasuryStats {
         let wallets = self.wallets.read().await;
@@ -734,6 +1008,18 @@ impl TreasuryManager {
             .unwrap_or_default()
             .as_secs()
     }
+}
+
+/// AMM invariant validation result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AmmInvariantValidation {
+    pub amm_id: [u8; 32],
+    pub is_valid: bool,
+    pub violations: Vec<String>,
+    pub k_constant: f64,
+    pub price_deviation: f64,
+    pub liquidity_balance: f64,
+    pub reserve_ratio: f64,
 }
 
 /// Treasury statistics

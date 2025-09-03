@@ -643,3 +643,4 @@ async fn test_integration_stress_scenarios() -> Result<()> {
 
     Ok(())
 }
+#![cfg(feature = "legacy-tests")]

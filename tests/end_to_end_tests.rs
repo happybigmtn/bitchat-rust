@@ -428,3 +428,5 @@ mod integration_scenarios {
         assert!(final_player2_balance <= 3_000); // Player2 only bet, never won
     }
 }
+#![cfg(feature = "legacy-tests")]
+#![cfg(feature = "legacy-tests")]

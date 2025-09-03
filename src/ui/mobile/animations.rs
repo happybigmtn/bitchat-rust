@@ -16,13 +16,13 @@ pub struct AnimationController {
 pub trait Animation: Send + Sync {
     /// Update the animation state
     fn update(&mut self, delta_time: Duration) -> bool;
-    
+
     /// Get the current animation value
     fn value(&self) -> AnimationValue;
-    
+
     /// Check if animation is complete
     fn is_complete(&self) -> bool;
-    
+
     /// Reset the animation to start
     fn reset(&mut self);
 }
@@ -80,7 +80,7 @@ impl DiceAnimation {
             },
         }
     }
-    
+
     pub fn with_duration(mut self, duration: Duration) -> Self {
         self.total_frames = (duration.as_millis() as u32 * 60) / 1000;
         self
@@ -92,10 +92,10 @@ impl Animation for DiceAnimation {
         if self.state == DiceAnimationState::Complete {
             return false;
         }
-        
+
         self.current_frame += 1;
         let progress = self.current_frame as f32 / self.total_frames as f32;
-        
+
         match self.state {
             DiceAnimationState::Rolling => {
                 // Rotate dice while rolling
@@ -103,11 +103,11 @@ impl Animation for DiceAnimation {
                 self.transform.rotation.0 += rotation_delta;
                 self.transform.rotation.1 += rotation_delta * 0.7;
                 self.transform.rotation.2 += rotation_delta * 1.3;
-                
+
                 // Add bounce effect
                 let bounce = (progress * std::f32::consts::PI * 4.0).sin() * self.bounce_height;
                 self.transform.position.1 = bounce.abs();
-                
+
                 if progress >= 0.7 {
                     self.state = DiceAnimationState::Bouncing;
                 }
@@ -117,13 +117,13 @@ impl Animation for DiceAnimation {
                 let slowdown = 1.0 - (progress - 0.7) * 3.0;
                 let rotation_delta = self.rotation_speed * delta_time.as_secs_f32() * slowdown.max(0.1);
                 self.transform.rotation.0 += rotation_delta;
-                
+
                 // Damped bouncing
                 let bounce_dampening = 1.0 - (progress - 0.7) * 2.0;
-                let bounce = (progress * std::f32::consts::PI * 8.0).sin() 
+                let bounce = (progress * std::f32::consts::PI * 8.0).sin()
                     * self.bounce_height * bounce_dampening.max(0.0);
                 self.transform.position.1 = bounce.abs();
-                
+
                 if progress >= 0.95 {
                     self.state = DiceAnimationState::Settling;
                 }
@@ -131,13 +131,13 @@ impl Animation for DiceAnimation {
             DiceAnimationState::Settling => {
                 // Final settling
                 self.transform.position.1 *= 0.9;
-                
+
                 // Snap to final rotation showing dice values
                 let target_rotation = self.get_target_rotation();
                 self.transform.rotation.0 = lerp(self.transform.rotation.0, target_rotation.0, 0.2);
                 self.transform.rotation.1 = lerp(self.transform.rotation.1, target_rotation.1, 0.2);
                 self.transform.rotation.2 = lerp(self.transform.rotation.2, target_rotation.2, 0.2);
-                
+
                 if progress >= 1.0 {
                     self.state = DiceAnimationState::Complete;
                     self.transform.rotation = target_rotation;
@@ -146,18 +146,18 @@ impl Animation for DiceAnimation {
             }
             DiceAnimationState::Complete => {}
         }
-        
+
         true
     }
-    
+
     fn value(&self) -> AnimationValue {
         AnimationValue::Transform(self.transform.clone())
     }
-    
+
     fn is_complete(&self) -> bool {
         self.state == DiceAnimationState::Complete
     }
-    
+
     fn reset(&mut self) {
         self.current_frame = 0;
         self.state = DiceAnimationState::Rolling;
@@ -181,7 +181,7 @@ impl DiceAnimation {
             6 => (180.0, 0.0, 0.0),
             _ => (0.0, 0.0, 0.0),
         };
-        
+
         let die2_rotation = match self.dice_values.1 {
             1 => (0.0, 0.0, 0.0),
             2 => (90.0, 0.0, 0.0),
@@ -191,7 +191,7 @@ impl DiceAnimation {
             6 => (180.0, 0.0, 0.0),
             _ => (0.0, 0.0, 0.0),
         };
-        
+
         // Average the rotations for display
         (
             (die1_rotation.0 + die2_rotation.0) / 2.0,
@@ -220,7 +220,7 @@ impl FadeAnimation {
             elapsed: Duration::ZERO,
         }
     }
-    
+
     pub fn fade_out(duration: Duration) -> Self {
         Self {
             start_opacity: 1.0,
@@ -237,24 +237,24 @@ impl Animation for FadeAnimation {
         if self.elapsed >= self.duration {
             return false;
         }
-        
+
         self.elapsed += delta_time;
         let progress = self.elapsed.as_secs_f32() / self.duration.as_secs_f32();
         let eased_progress = ease_in_out_cubic(progress.min(1.0));
-        
+
         self.current_opacity = lerp(self.start_opacity, self.end_opacity, eased_progress);
-        
+
         true
     }
-    
+
     fn value(&self) -> AnimationValue {
         AnimationValue::Float(self.current_opacity)
     }
-    
+
     fn is_complete(&self) -> bool {
         self.elapsed >= self.duration
     }
-    
+
     fn reset(&mut self) {
         self.elapsed = Duration::ZERO;
         self.current_opacity = self.start_opacity;
@@ -282,7 +282,7 @@ impl SlideAnimation {
             easing: EasingFunction::EaseInOutCubic,
         }
     }
-    
+
     pub fn with_easing(mut self, easing: EasingFunction) -> Self {
         self.easing = easing;
         self
@@ -294,25 +294,25 @@ impl Animation for SlideAnimation {
         if self.elapsed >= self.duration {
             return false;
         }
-        
+
         self.elapsed += delta_time;
         let progress = self.elapsed.as_secs_f32() / self.duration.as_secs_f32();
         let eased_progress = apply_easing(progress.min(1.0), self.easing);
-        
+
         self.current_position.0 = lerp(self.start_position.0, self.end_position.0, eased_progress);
         self.current_position.1 = lerp(self.start_position.1, self.end_position.1, eased_progress);
-        
+
         true
     }
-    
+
     fn value(&self) -> AnimationValue {
         AnimationValue::Vector2(self.current_position.0, self.current_position.1)
     }
-    
+
     fn is_complete(&self) -> bool {
         self.elapsed >= self.duration
     }
-    
+
     fn reset(&mut self) {
         self.elapsed = Duration::ZERO;
         self.current_position = self.start_position;
@@ -345,29 +345,29 @@ impl SpringAnimation {
 impl Animation for SpringAnimation {
     fn update(&mut self, delta_time: Duration) -> bool {
         let dt = delta_time.as_secs_f32();
-        
+
         // Spring physics simulation
         let spring_force = -self.stiffness * (self.current - self.target);
         let damping_force = -self.damping * self.velocity;
         let acceleration = (spring_force + damping_force) / self.mass;
-        
+
         self.velocity += acceleration * dt;
         self.current += self.velocity * dt;
-        
+
         // Check if animation is effectively complete
         let is_at_rest = self.velocity.abs() < 0.01 && (self.current - self.target).abs() < 0.01;
-        
+
         !is_at_rest
     }
-    
+
     fn value(&self) -> AnimationValue {
         AnimationValue::Float(self.current)
     }
-    
+
     fn is_complete(&self) -> bool {
         self.velocity.abs() < 0.01 && (self.current - self.target).abs() < 0.01
     }
-    
+
     fn reset(&mut self) {
         self.current = 0.0;
         self.velocity = 0.0;
@@ -469,29 +469,29 @@ impl AnimationController {
             last_update: Instant::now(),
         }
     }
-    
+
     /// Add an animation to the controller
     pub fn add_animation(&mut self, animation: Box<dyn Animation>) {
         self.animations.push(animation);
     }
-    
+
     /// Update all animations
     pub fn update(&mut self) {
         let now = Instant::now();
         let delta_time = now - self.last_update;
         self.last_update = now;
-        
+
         // Update all animations and remove completed ones
         self.animations.retain_mut(|animation| {
             animation.update(delta_time)
         });
     }
-    
+
     /// Get the number of active animations
     pub fn active_count(&self) -> usize {
         self.animations.len()
     }
-    
+
     /// Clear all animations
     pub fn clear(&mut self) {
         self.animations.clear();
@@ -501,53 +501,53 @@ impl AnimationController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_dice_animation() {
         let mut animation = DiceAnimation::new((3, 5));
         assert!(!animation.is_complete());
-        
+
         // Simulate animation updates
         for _ in 0..100 {
             animation.update(Duration::from_millis(16)); // ~60fps
         }
-        
+
         assert!(animation.is_complete());
     }
-    
+
     #[test]
     fn test_fade_animation() {
         let mut fade = FadeAnimation::fade_in(Duration::from_secs(1));
-        
+
         // Start at 0 opacity
         if let AnimationValue::Float(opacity) = fade.value() {
             assert_eq!(opacity, 0.0);
         }
-        
+
         // Update for half duration
         fade.update(Duration::from_millis(500));
-        
+
         // Should be partially faded in
         if let AnimationValue::Float(opacity) = fade.value() {
             assert!(opacity > 0.0 && opacity < 1.0);
         }
-        
+
         // Complete the animation
         fade.update(Duration::from_millis(600));
         assert!(fade.is_complete());
     }
-    
+
     #[test]
     fn test_spring_animation() {
         let mut spring = SpringAnimation::new(100.0, 10.0, 0.5);
-        
+
         // Run animation
         for _ in 0..1000 {
             if !spring.update(Duration::from_millis(16)) {
                 break;
             }
         }
-        
+
         // Should settle near target
         if let AnimationValue::Float(value) = spring.value() {
             assert!((value - 100.0).abs() < 1.0);

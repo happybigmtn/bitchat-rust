@@ -1,5 +1,5 @@
 //! Peer discovery visualization screen
-//! 
+//!
 //! Provides visual representation of nearby peers and network topology
 
 use std::sync::Arc;
@@ -101,34 +101,34 @@ impl DiscoveryScreen {
             })),
         }
     }
-    
+
     /// Start peer discovery
     pub async fn start_discovery(&self) -> Result<(), String> {
         *self.discovery_state.write().await = DiscoveryState::Scanning;
-        
+
         // Reset animation
         let mut anim = self.animation_state.write().await;
         anim.sweep_angle = 0.0;
         anim.pulse_radius = 0.0;
         anim.discovered_peers.clear();
-        
+
         // In real implementation, this would start Bluetooth/network discovery
         Ok(())
     }
-    
+
     /// Stop peer discovery
     pub async fn stop_discovery(&self) {
         *self.discovery_state.write().await = DiscoveryState::Idle;
     }
-    
+
     /// Add a discovered peer
     pub async fn add_peer(&self, peer: PeerNode) {
         let mut peers = self.peers.write().await;
-        
+
         // Add to discovered animation
         let mut anim = self.animation_state.write().await;
         anim.discovered_peers.push((peer.id.clone(), 0.0));
-        
+
         // Calculate position based on signal strength and angle
         let angle = (peers.len() as f32) * std::f32::consts::PI / 4.0;
         let distance = 0.2 + (1.0 - peer.signal_strength) * 0.3;
@@ -136,28 +136,28 @@ impl DiscoveryScreen {
             0.5 + distance * angle.cos(),
             0.5 + distance * angle.sin(),
         );
-        
+
         let mut peer = peer;
         peer.position = position;
         peers.insert(peer.id.clone(), peer);
-        
+
         // Update stats
         let mut stats = self.network_stats.write().await;
         stats.total_peers = peers.len();
     }
-    
+
     /// Connect to a peer
     pub async fn connect_to_peer(&self, peer_id: &PeerId) -> Result<(), String> {
         *self.discovery_state.write().await = DiscoveryState::Connecting(peer_id.clone());
-        
+
         // Simulate connection delay
         tokio::time::sleep(Duration::from_millis(500)).await;
-        
+
         // Update peer state
         let mut peers = self.peers.write().await;
         if let Some(peer) = peers.get_mut(peer_id) {
             peer.is_connected = true;
-            
+
             // Add connection line
             let mut connections = self.connections.write().await;
             connections.push(Connection {
@@ -167,32 +167,32 @@ impl DiscoveryScreen {
                 latency_ms: ((1.0 - peer.signal_strength) * 100.0) as u32,
                 packet_loss: (1.0 - peer.signal_strength) * 0.1,
             });
-            
+
             *self.discovery_state.write().await = DiscoveryState::Connected;
-            
+
             // Update stats
             let mut stats = self.network_stats.write().await;
             stats.connected_peers += 1;
             stats.average_latency = connections.iter()
                 .map(|c| c.latency_ms as f32)
                 .sum::<f32>() / connections.len() as f32;
-            
+
             Ok(())
         } else {
             Err("Peer not found".to_string())
         }
     }
-    
+
     /// Update radar animation
     pub async fn update_animation(&self, delta_time: Duration) {
         let mut anim = self.animation_state.write().await;
-        
+
         // Update radar sweep
         anim.sweep_angle += delta_time.as_secs_f32() * 60.0; // 60 degrees per second
         if anim.sweep_angle >= 360.0 {
             anim.sweep_angle -= 360.0;
         }
-        
+
         // Update pulse
         anim.pulse_radius += delta_time.as_secs_f32() * 0.3;
         if anim.pulse_radius > 1.0 {
@@ -201,30 +201,30 @@ impl DiscoveryScreen {
         } else {
             anim.pulse_opacity = 1.0 - anim.pulse_radius;
         }
-        
+
         // Update discovered peer animations
         for (_, progress) in &mut anim.discovered_peers {
             *progress = (*progress + delta_time.as_secs_f32() * 2.0).min(1.0);
         }
-        
+
         // Update peer floating animations
         let mut peers = self.peers.write().await;
         for peer in peers.values_mut() {
             peer.animation_offset += delta_time.as_secs_f32() * 2.0;
         }
     }
-    
+
     /// Get peer at position
     fn get_peer_at(&self, x: f32, y: f32) -> Option<PeerId> {
         // In real implementation, check which peer node was tapped
         None
     }
-    
+
     /// Calculate network topology positions
     async fn calculate_topology(&self) {
         let peers = self.peers.read().await;
         let connections = self.connections.read().await;
-        
+
         // Force-directed graph layout
         // In real implementation, use spring-force algorithm
         // to position nodes based on connections
@@ -235,26 +235,26 @@ impl Screen for DiscoveryScreen {
     fn render(&self, ctx: &mut RenderContext) {
         // Render background
         self.render_background(ctx);
-        
+
         // Render radar effect
         self.render_radar(ctx);
-        
+
         // Render connection lines
         self.render_connections(ctx);
-        
+
         // Render peer nodes
         self.render_peers(ctx);
-        
+
         // Render local node (center)
         self.render_local_node(ctx);
-        
+
         // Render stats overlay
         self.render_stats(ctx);
-        
+
         // Render controls
         self.render_controls(ctx);
     }
-    
+
     fn handle_touch(&mut self, event: TouchEvent) -> Option<ScreenTransition> {
         match event {
             TouchEvent::Tap { x, y } => {
@@ -263,7 +263,7 @@ impl Screen for DiscoveryScreen {
                     // Toggle discovery
                     // In real implementation, handle async properly
                 }
-                
+
                 // Check if a peer was tapped
                 if let Some(peer_id) = self.get_peer_at(x, y) {
                     // Select/connect to peer
@@ -280,10 +280,10 @@ impl Screen for DiscoveryScreen {
             }
             _ => {}
         }
-        
+
         None
     }
-    
+
     fn update(&mut self, delta_time: Duration) {
         // Update is handled by async methods
     }
@@ -298,7 +298,7 @@ impl DiscoveryScreen {
             (10, 10, 30, 255),
             (20, 20, 50, 255),
         );
-        
+
         // Grid pattern
         let grid_spacing = 0.05;
         for i in 0..20 {
@@ -307,48 +307,48 @@ impl DiscoveryScreen {
             ctx.draw_line(0.0, pos, 1.0, pos, (30, 30, 60, 50), 1.0);
         }
     }
-    
+
     fn render_radar(&self, ctx: &mut RenderContext) {
         // Render radar sweep effect
         // In real implementation, use animation state
-        
+
         // Radar circle
         ctx.draw_circle(0.5, 0.5, 0.4, (0, 255, 0, 30), 2.0);
         ctx.draw_circle(0.5, 0.5, 0.3, (0, 255, 0, 20), 1.0);
         ctx.draw_circle(0.5, 0.5, 0.2, (0, 255, 0, 20), 1.0);
         ctx.draw_circle(0.5, 0.5, 0.1, (0, 255, 0, 20), 1.0);
-        
+
         // Sweep line (would be animated)
         ctx.draw_line(0.5, 0.5, 0.9, 0.5, (0, 255, 0, 100), 2.0);
-        
+
         // Pulse effect (would be animated)
         ctx.draw_circle(0.5, 0.5, 0.2, (0, 255, 0, 50), 3.0);
     }
-    
+
     fn render_connections(&self, ctx: &mut RenderContext) {
         // Draw connection lines between peers
         // In real implementation, read from connections state
     }
-    
+
     fn render_peers(&self, ctx: &mut RenderContext) {
         // Render each discovered peer
         // In real implementation, iterate through peers map
-        
+
         // Example peer node
         ctx.fill_circle(0.7, 0.3, 0.04, (100, 150, 255, 255));
         ctx.draw_text("Peer 1", 0.7, 0.35, 10.0, (255, 255, 255, 255));
-        
+
         ctx.fill_circle(0.3, 0.6, 0.04, (255, 150, 100, 255));
         ctx.draw_text("Peer 2", 0.3, 0.65, 10.0, (255, 255, 255, 255));
     }
-    
+
     fn render_local_node(&self, ctx: &mut RenderContext) {
         // Render the local peer (center)
         ctx.fill_circle(0.5, 0.5, 0.05, (0, 255, 0, 255));
         ctx.draw_circle(0.5, 0.5, 0.06, (0, 255, 0, 100), 2.0);
         ctx.draw_text("You", 0.5, 0.56, 12.0, (255, 255, 255, 255));
     }
-    
+
     fn render_stats(&self, ctx: &mut RenderContext) {
         // Network stats overlay
         ctx.fill_rect(0.02, 0.02, 0.3, 0.15, (0, 0, 0, 180));
@@ -357,7 +357,7 @@ impl DiscoveryScreen {
         ctx.draw_text("Connected: 1", 0.05, 0.11, 12.0, (200, 200, 200, 255));
         ctx.draw_text("Latency: 25ms", 0.05, 0.14, 12.0, (200, 200, 200, 255));
     }
-    
+
     fn render_controls(&self, ctx: &mut RenderContext) {
         // Discovery button
         ctx.fill_rect(0.35, 0.85, 0.3, 0.1, (0, 150, 0, 255));
@@ -373,16 +373,16 @@ impl DiscoveryScreen {
         let hash = peer_id.as_bytes().iter().fold(0u32, |acc, &b| {
             acc.wrapping_add(b as u32).wrapping_mul(31)
         });
-        
+
         let hue = (hash % 360) as f32;
         let saturation = 0.7;
         let value = 0.9;
-        
+
         // HSV to RGB conversion
         let c = value * saturation;
         let x = c * (1.0 - ((hue / 60.0) % 2.0 - 1.0).abs());
         let m = value - c;
-        
+
         let (r, g, b) = match (hue / 60.0) as u32 {
             0 => (c, x, 0.0),
             1 => (x, c, 0.0),
@@ -391,14 +391,14 @@ impl DiscoveryScreen {
             4 => (x, 0.0, c),
             _ => (c, 0.0, x),
         };
-        
+
         (
             ((r + m) * 255.0) as u8,
             ((g + m) * 255.0) as u8,
             ((b + m) * 255.0) as u8,
         )
     }
-    
+
     /// Calculate signal strength from distance
     pub fn calculate_signal_strength(distance: f32) -> f32 {
         // Inverse square law with cutoff
@@ -406,7 +406,7 @@ impl DiscoveryScreen {
         if distance > max_range {
             return 0.0;
         }
-        
+
         1.0 - (distance / max_range).powi(2)
     }
 }

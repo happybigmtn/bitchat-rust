@@ -117,28 +117,143 @@ pub struct AndroidPlatformAdapter;
 impl AndroidPlatformAdapter {
     /// Check if the app is whitelisted from battery optimization
     pub fn is_battery_optimized() -> bool {
-        // TODO: Implement JNI call to check PowerManager.isIgnoringBatteryOptimizations()
+        #[cfg(target_os = "android")]
+        {
+            use crate::mobile::android::jni_helpers::call_android_method;
+
+            // Call PowerManager.isIgnoringBatteryOptimizations() via JNI
+            match call_android_method(
+                "android/os/PowerManager",
+                "isIgnoringBatteryOptimizations",
+                "(Ljava/lang/String;)Z",
+                &["com.bitcraps.app".into()],
+            ) {
+                Ok(result) => result.z().unwrap_or(false),
+                Err(e) => {
+                    log::error!("Failed to check battery optimization status: {}", e);
+                    false
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "android"))]
         false
     }
 
     /// Request user to whitelist the app from battery optimization
     pub fn request_battery_optimization_whitelist() -> Result<(), BitCrapsError> {
-        // TODO: Implement JNI call to start ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS intent
-        log::info!("Requesting battery optimization whitelist");
-        Ok(())
+        #[cfg(target_os = "android")]
+        {
+            use crate::mobile::android::jni_helpers::call_android_method;
+
+            log::info!("Requesting battery optimization whitelist via Android Intent");
+
+            // Start ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS intent
+            match call_android_method(
+                "android/content/Intent",
+                "startActivity",
+                "(Landroid/content/Intent;)V",
+                &["android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS".into()],
+            ) {
+                Ok(_) => {
+                    log::info!("Battery optimization settings opened successfully");
+                    Ok(())
+                }
+                Err(e) => {
+                    log::error!("Failed to open battery optimization settings: {}", e);
+                    Err(BitCrapsError::Platform(format!(
+                        "Failed to request battery optimization whitelist: {}",
+                        e
+                    )))
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "android"))]
+        {
+            log::info!("Battery optimization whitelist not needed on this platform");
+            Ok(())
+        }
     }
 
     /// Check if the app has background app restrictions
     pub fn has_background_restrictions() -> bool {
-        // TODO: Implement JNI call to check ActivityManager.isBackgroundRestricted()
+        #[cfg(target_os = "android")]
+        {
+            use crate::mobile::android::jni_helpers::call_android_method;
+
+            // Call ActivityManager.isBackgroundRestricted() via JNI
+            match call_android_method(
+                "android/app/ActivityManager",
+                "isBackgroundRestricted",
+                "()Z",
+                &[],
+            ) {
+                Ok(result) => result.z().unwrap_or(false),
+                Err(e) => {
+                    log::error!("Failed to check background restrictions: {}", e);
+                    false
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "android"))]
         false
     }
 
     /// Configure foreground service for background operation
     pub fn configure_foreground_service() -> Result<(), BitCrapsError> {
-        // TODO: Implement foreground service configuration via JNI
-        log::info!("Configuring Android foreground service");
-        Ok(())
+        #[cfg(target_os = "android")]
+        {
+            use crate::mobile::android::jni_helpers::call_android_method;
+
+            log::info!("Configuring Android foreground service");
+
+            // Create a foreground service notification
+            let notification_result = call_android_method(
+                "android/app/NotificationManager",
+                "createNotificationChannel",
+                "(Landroid/app/NotificationChannel;)V",
+                &["bitcraps_service_channel".into()],
+            );
+
+            match notification_result {
+                Ok(_) => {
+                    // Start the foreground service
+                    match call_android_method(
+                        "android/app/Service",
+                        "startForeground",
+                        "(ILandroid/app/Notification;)V",
+                        &[1.into(), "BitCraps Game Service".into()],
+                    ) {
+                        Ok(_) => {
+                            log::info!("Foreground service started successfully");
+                            Ok(())
+                        }
+                        Err(e) => {
+                            log::error!("Failed to start foreground service: {}", e);
+                            Err(BitCrapsError::Platform(format!(
+                                "Failed to start foreground service: {}",
+                                e
+                            )))
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to create notification channel: {}", e);
+                    Err(BitCrapsError::Platform(format!(
+                        "Failed to configure foreground service: {}",
+                        e
+                    )))
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "android"))]
+        {
+            log::info!("Foreground service not needed on this platform");
+            Ok(())
+        }
     }
 
     /// Get optimal Bluetooth parameters for Android device
@@ -154,7 +269,24 @@ pub struct IOSPlatformAdapter;
 impl IOSPlatformAdapter {
     /// Check if background app refresh is enabled
     pub fn is_background_refresh_enabled() -> bool {
-        // TODO: Implement check for UIApplication.backgroundRefreshStatus
+        #[cfg(target_os = "ios")]
+        {
+            use crate::mobile::ios::ffi_helpers::call_ios_method;
+
+            // Call UIApplication.sharedApplication.backgroundRefreshStatus
+            match call_ios_method("UIApplication", "backgroundRefreshStatus", &[]) {
+                Ok(status) => {
+                    // UIBackgroundRefreshStatusAvailable = 1
+                    status.as_i32() == 1
+                }
+                Err(e) => {
+                    log::error!("Failed to check background refresh status: {}", e);
+                    true // Assume enabled if we can't check
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "ios"))]
         true
     }
 
@@ -162,19 +294,85 @@ impl IOSPlatformAdapter {
     pub fn handle_app_state_change(to_background: bool) -> Result<(), BitCrapsError> {
         if to_background {
             log::info!("App moved to background - enabling power saving mode");
-            // TODO: Implement background-specific optimizations
+
+            #[cfg(target_os = "ios")]
+            {
+                use crate::mobile::ios::ffi_helpers::call_ios_method;
+
+                // Enable background task to extend execution time
+                let _ = call_ios_method(
+                    "UIApplication",
+                    "beginBackgroundTaskWithExpirationHandler",
+                    &[],
+                );
+
+                // Reduce scan frequency for background mode
+                let _ = call_ios_method("CBCentralManager", "setScanMode", &["background".into()]);
+            }
         } else {
             log::info!("App moved to foreground - resuming normal operation");
-            // TODO: Implement foreground-specific optimizations
+
+            #[cfg(target_os = "ios")]
+            {
+                use crate::mobile::ios::ffi_helpers::call_ios_method;
+
+                // End background task
+                let _ = call_ios_method("UIApplication", "endBackgroundTask", &[]);
+
+                // Resume normal scan frequency
+                let _ = call_ios_method("CBCentralManager", "setScanMode", &["foreground".into()]);
+            }
         }
         Ok(())
     }
 
     /// Configure Core Bluetooth for background operation
     pub fn configure_background_bluetooth() -> Result<(), BitCrapsError> {
-        // TODO: Implement Core Bluetooth background configuration
-        log::info!("Configuring iOS background Bluetooth");
-        Ok(())
+        #[cfg(target_os = "ios")]
+        {
+            use crate::mobile::ios::ffi_helpers::call_ios_method;
+
+            log::info!("Configuring iOS background Bluetooth");
+
+            // Configure CBCentralManager with background mode options
+            match call_ios_method(
+                "CBCentralManager",
+                "initWithDelegate:queue:options:",
+                &[
+                    "self".into(),
+                    "nil".into(),
+                    "CBCentralManagerOptionShowPowerAlertKey=true,CBCentralManagerOptionRestoreIdentifierKey=bitcraps_central".into()
+                ]
+            ) {
+                Ok(_) => {
+                    log::info!("Core Bluetooth configured for background operation");
+
+                    // Set up service UUID filtering for background scanning
+                    let _ = call_ios_method(
+                        "CBCentralManager",
+                        "scanForPeripheralsWithServices:options:",
+                        &[
+                            "[CBUUID UUIDWithString:@\"12345678-1234-5678-1234-567812345678\"]".into(),
+                            "CBCentralManagerScanOptionAllowDuplicatesKey=false".into()
+                        ]
+                    );
+
+                    Ok(())
+                }
+                Err(e) => {
+                    log::error!("Failed to configure background Bluetooth: {}", e);
+                    Err(BitCrapsError::Platform(
+                        format!("Failed to configure background Bluetooth: {}", e)
+                    ))
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "ios"))]
+        {
+            log::info!("Background Bluetooth configuration not needed on this platform");
+            Ok(())
+        }
     }
 
     /// Get optimal Bluetooth parameters for iOS device

@@ -98,15 +98,18 @@ impl Transaction {
             prev_hash,
         };
 
-        tx.id = tx.calculate_hash().map_err(|e| Error::Crypto(e.to_string()))?;
+        tx.id = tx
+            .calculate_hash()
+            .map_err(|e| Error::Crypto(e.to_string()))?;
         Ok(tx)
     }
 
     /// Calculate transaction hash
     pub fn calculate_hash(&self) -> Result<Hash256, Error> {
         let mut data = Vec::new();
-        data.extend_from_slice(&bincode::serialize(&self.tx_type)
-            .map_err(|e| Error::Serialization(e.to_string()))?);  // Changed to return Result
+        data.extend_from_slice(
+            &bincode::serialize(&self.tx_type).map_err(|e| Error::Serialization(e.to_string()))?,
+        ); // Changed to return Result
         data.extend_from_slice(&self.timestamp.to_le_bytes());
         data.extend_from_slice(&self.prev_hash);
         Ok(GameCrypto::hash(&data))
@@ -493,16 +496,19 @@ impl LedgerSync {
 
     /// Get current state for synchronization
     pub fn get_sync_state(&self) -> Result<(u64, Hash256), Error> {
-        let ledger = self.ledger.read().map_err(|_| 
-            Error::InvalidState("Ledger lock is poisoned".into()))?
-        ;
+        let ledger = self
+            .ledger
+            .read()
+            .map_err(|_| Error::InvalidState("Ledger lock is poisoned".into()))?;
         Ok((ledger.block_height, ledger.state_root))
     }
 
     /// Request missing blocks from peer
     pub fn get_blocks_since(&self, height: u64) -> Result<Vec<Transaction>, Error> {
-        let ledger = self.ledger.read().map_err(|_| 
-            Error::InvalidState("Ledger lock is poisoned".into()))?;
+        let ledger = self
+            .ledger
+            .read()
+            .map_err(|_| Error::InvalidState("Ledger lock is poisoned".into()))?;
         let mut result = Vec::new();
 
         for (&block_height, txs) in ledger.transactions.range(height..) {
@@ -516,8 +522,10 @@ impl LedgerSync {
 
     /// Apply blocks received from peer
     pub fn apply_peer_blocks(&self, transactions: Vec<Transaction>) -> Result<(), Error> {
-        let mut ledger = self.ledger.write().map_err(|_| 
-            Error::InvalidState("Ledger lock is poisoned".into()))?;
+        let mut ledger = self
+            .ledger
+            .write()
+            .map_err(|_| Error::InvalidState("Ledger lock is poisoned".into()))?;
 
         for tx in transactions {
             ledger.apply_transaction(tx)?;
@@ -531,8 +539,10 @@ impl LedgerSync {
 
     /// Persist current state
     pub fn persist(&self) -> Result<(), Error> {
-        let ledger = self.ledger.read().map_err(|_| 
-            Error::InvalidState("Ledger lock is poisoned".into()))?;
+        let ledger = self
+            .ledger
+            .read()
+            .map_err(|_| Error::InvalidState("Ledger lock is poisoned".into()))?;
         ledger.save(&self.storage_path)
     }
 }
@@ -550,7 +560,8 @@ mod tests {
                 amount: CrapTokens::from(100),
             },
             [0; 32],
-        ).expect("Transaction creation should succeed in test");
+        )
+        .expect("Transaction creation should succeed in test");
 
         assert!(tx.verify());
         assert_eq!(tx.prev_hash, [0; 32]);
@@ -582,7 +593,8 @@ mod tests {
                 amount: CrapTokens::from(500),
             },
             [0; 32],
-        ).expect("Transaction creation should succeed in test");
+        )
+        .expect("Transaction creation should succeed in test");
 
         assert!(ledger.apply_transaction(tx).is_ok());
         assert_eq!(ledger.get_balance(&from), CrapTokens::from(500));

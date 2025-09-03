@@ -123,12 +123,12 @@ impl CallbackManager {
         if let Some(sender) = &self.event_sender {
             // Use try_send for bounded channels to handle backpressure
             match sender.try_send(event) {
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     log::warn!("Android callback channel full, dropping event (backpressure)");
                     // Could add metrics here: CALLBACK_DROPS.inc();
                     return Ok(()); // Drop the event instead of blocking
-                },
+                }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
                     return Err(BitCrapsError::BluetoothError {
                         message: "Callback channel closed".to_string(),
@@ -489,27 +489,27 @@ impl CallbackHandler for LoggingCallbackHandler {
     }
 }
 
-/// Global callback manager instance
-static mut CALLBACK_MANAGER: Option<Arc<CallbackManager>> = None;
-static CALLBACK_MANAGER_INIT: std::sync::Once = std::sync::Once::new();
+/// Global callback manager instance using once_cell for safe lazy initialization
+use once_cell::sync::Lazy;
+
+static CALLBACK_MANAGER: Lazy<Arc<CallbackManager>> = Lazy::new(|| {
+    let manager = Arc::new(CallbackManager::new());
+
+    // Register default logging handler
+    let logging_handler = Arc::new(LoggingCallbackHandler);
+    let _ = manager.register_handler(logging_handler);
+
+    // Start the callback processor
+    if let Err(e) = manager.start() {
+        log::error!("Failed to start callback manager: {}", e);
+    }
+
+    manager
+});
 
 /// Get the global callback manager
 pub fn get_callback_manager() -> Arc<CallbackManager> {
-    unsafe {
-        CALLBACK_MANAGER_INIT.call_once(|| {
-            let manager = Arc::new(CallbackManager::new());
-
-            // Register default logging handler
-            let logging_handler = Arc::new(LoggingCallbackHandler);
-            if let Err(e) = manager.register_handler(logging_handler) {
-                log::error!("Failed to register logging handler: {}", e);
-            }
-
-            CALLBACK_MANAGER = Some(manager);
-        });
-
-        CALLBACK_MANAGER.as_ref().unwrap().clone()
-    }
+    Arc::clone(&CALLBACK_MANAGER)
 }
 
 /// Initialize the callback manager

@@ -25,11 +25,11 @@ pub struct AdaptiveIntervalConfig {
 impl Default for AdaptiveIntervalConfig {
     fn default() -> Self {
         Self {
-            min_interval: Duration::from_millis(100),   // Never faster than 100ms
-            max_interval: Duration::from_secs(5),       // Slowest is 5 seconds
-            backoff_threshold: Duration::from_secs(1),  // Start backing off after 1s
-            backoff_multiplier: 2.0,                    // Double interval each step
-            activity_window: Duration::from_secs(10),   // Consider last 10s for activity
+            min_interval: Duration::from_millis(100), // Never faster than 100ms
+            max_interval: Duration::from_secs(5),     // Slowest is 5 seconds
+            backoff_threshold: Duration::from_secs(1), // Start backing off after 1s
+            backoff_multiplier: 2.0,                  // Double interval each step
+            activity_window: Duration::from_secs(10), // Consider last 10s for activity
         }
     }
 }
@@ -93,13 +93,13 @@ impl AdaptiveInterval {
     pub fn signal_activity(&mut self) {
         let now = Instant::now();
         self.last_activity = Some(now);
-        
+
         // Reset to minimum interval if we're currently slower
         if self.current_interval > self.config.min_interval {
             self.current_interval = self.config.min_interval;
             self.interval = interval(self.current_interval);
             log::debug!(
-                "Activity detected - reset to fast polling: {:?}", 
+                "Activity detected - reset to fast polling: {:?}",
                 self.current_interval
             );
         }
@@ -131,13 +131,14 @@ impl AdaptiveInterval {
         if should_backoff && self.current_interval < self.config.max_interval {
             // Apply exponential backoff
             let new_interval = Duration::from_millis(
-                (self.current_interval.as_millis() as f64 * self.config.backoff_multiplier) as u64
-            ).min(self.config.max_interval);
+                (self.current_interval.as_millis() as f64 * self.config.backoff_multiplier) as u64,
+            )
+            .min(self.config.max_interval);
 
             if new_interval != self.current_interval {
                 log::debug!(
-                    "Backing off polling interval: {:?} -> {:?}", 
-                    self.current_interval, 
+                    "Backing off polling interval: {:?} -> {:?}",
+                    self.current_interval,
                     new_interval
                 );
                 self.current_interval = new_interval;
@@ -153,7 +154,8 @@ impl AdaptiveInterval {
 
     /// Get the time since last activity
     pub fn time_since_activity(&self) -> Option<Duration> {
-        self.last_activity.map(|last| Instant::now().duration_since(last))
+        self.last_activity
+            .map(|last| Instant::now().duration_since(last))
     }
 
     /// Reset the interval to minimum (useful for manual override)
@@ -205,7 +207,7 @@ mod tests {
         // Let it back off by waiting without activity
         sleep(Duration::from_millis(500)).await;
         interval.tick().await;
-        
+
         // Should be slower than minimum
         assert!(interval.current_interval() > Duration::from_millis(100));
 
@@ -225,13 +227,13 @@ mod tests {
         });
 
         let initial = interval.current_interval();
-        
+
         // Wait for backoff to kick in
         sleep(Duration::from_millis(200)).await;
         interval.tick().await;
         sleep(Duration::from_millis(100)).await;
         interval.tick().await;
-        
+
         // Should have backed off
         assert!(interval.current_interval() > initial);
     }

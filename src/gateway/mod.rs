@@ -1,5 +1,5 @@
 //! Gateway Node Implementation for Internet Bridging
-//! 
+//!
 //! This module provides gateway nodes that bridge local BLE mesh networks
 //! to the internet, enabling global BitCraps gameplay while maintaining
 //! the efficiency and privacy of local mesh networks.
@@ -50,7 +50,7 @@ impl GatewayFactory {
             gateways: Arc::new(RwLock::new(Vec::new())),
         }
     }
-    
+
     /// Create a new gateway node with the specified configuration
     pub async fn create_gateway(
         &self,
@@ -59,18 +59,18 @@ impl GatewayFactory {
         mesh_service: Arc<crate::mesh::MeshService>,
     ) -> Result<Arc<GatewayNode>> {
         let gateway = Arc::new(GatewayNode::new(identity, config, mesh_service)?);
-        
+
         let mut gateways = self.gateways.write().await;
         gateways.push(gateway.clone());
-        
+
         Ok(gateway)
     }
-    
+
     /// Get all managed gateway nodes
     pub async fn get_gateways(&self) -> Vec<Arc<GatewayNode>> {
         self.gateways.read().await.clone()
     }
-    
+
     /// Remove a gateway node
     pub async fn remove_gateway(&self, peer_id: PeerId) -> bool {
         let mut gateways = self.gateways.write().await;
@@ -81,22 +81,22 @@ impl GatewayFactory {
         });
         gateways.len() < initial_len
     }
-    
+
     /// Start all gateway nodes
     pub async fn start_all(&self) -> Result<()> {
         let gateways = self.gateways.read().await;
-        
+
         for gateway in gateways.iter() {
             gateway.start().await?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Stop all gateway nodes
     pub async fn stop_all(&self) {
         let gateways = self.gateways.read().await;
-        
+
         for gateway in gateways.iter() {
             gateway.stop().await;
         }
@@ -168,24 +168,24 @@ mod tests {
     use super::*;
     use crate::crypto::{BitchatKeypair, BitchatIdentity};
     use crate::transport::TransportCoordinator;
-    
+
     #[tokio::test]
     async fn test_gateway_factory() {
         let factory = GatewayFactory::new();
-        
+
         // Initially no gateways
         let gateways = factory.get_gateways().await;
         assert_eq!(gateways.len(), 0);
-        
+
         // Create a gateway
         let keypair = BitchatKeypair::generate();
         let identity = Arc::new(BitchatIdentity::from_keypair_with_pow(keypair, 8));
         let transport = Arc::new(TransportCoordinator::new());
         let mesh = Arc::new(crate::mesh::MeshService::new(identity.clone(), transport));
         let config = GatewayConfig::default();
-        
+
         let gateway = factory.create_gateway(config, identity, mesh).await.unwrap();
-        
+
         // Should now have one gateway
         let gateways = factory.get_gateways().await;
         assert_eq!(gateways.len(), 1);

@@ -190,7 +190,7 @@ pub struct CpuTask {
 pub enum TaskType {
     /// Consensus operations
     Consensus,
-    /// Network I/O operations  
+    /// Network I/O operations
     Network,
     /// Cryptographic operations
     Crypto,
@@ -721,13 +721,13 @@ impl CpuOptimizer {
 
     /// Start CPU monitoring task
     async fn start_monitoring(&self) {
-        let config = self.config.clone();
-        let usage_history = self.usage_history.clone();
-        let temperature_history = self.temperature_history.clone();
-        let metrics = self.metrics.clone();
-        let is_running = self.is_running.clone();
-        let total_tasks = self.total_tasks_processed.clone();
-        let total_time = self.total_processing_time.clone();
+        let config = Arc::clone(&self.config);
+        let usage_history = Arc::clone(&self.usage_history);
+        let temperature_history = Arc::clone(&self.temperature_history);
+        let metrics = Arc::clone(&self.metrics);
+        let is_running = Arc::clone(&self.is_running);
+        let total_tasks = Arc::clone(&self.total_tasks_processed);
+        let total_time = Arc::clone(&self.total_processing_time);
 
         let task = tokio::spawn(async move {
             let mut usage_interval = tokio::time::interval(Duration::from_millis(

@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 # Core dependencies
 thiserror = "2.0.16"
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 bytes = "1.5"
 byteorder = "1.5"
 lz4_flex = "0.11"
@@ -153,6 +153,8 @@ criterion = { version = "0.5", features = ["html_reports"] }
 futures = "0.3"
 tempfile = "3.14"
 tokio-test = "0.4"
+proptest = "1.5"
+arbitrary = { version = "1.3", features = ["derive"] }
 
 [[bench]]
 name = "performance"
@@ -187,12 +189,221 @@ strip = true
 opt-level = 3
 
 [features]
-default = []
+# Default build is conservative: BLE on, NAT traversal on; tests controlled via features
+default = ["bluetooth", "nat-traversal"]
+
+# Test-gating features
+mvp = []                # Enable MVP-focused tests
+legacy-tests = []       # Enable legacy, comprehensive integration tests (off by default)
+legacy-examples = []    # Enable legacy examples (off by default)
+
 benchmarks = []
 physical_device_tests = []
+bluetooth = [] # Core Bluetooth LE mesh transport
+nat-traversal = [] # STUN/TURN NAT traversal support
+upnp = [] # UPnP port mapping support
 uniffi = ["dep:uniffi"]
-android = ["dep:jni", "dep:android_logger"]
+android = ["dep:jni", "dep:android_logger", "bluetooth"]
 tls = ["dep:rustls", "dep:tokio-rustls"]
+
+# Explicit test targets with feature gating
+[[test]]
+name = "mvp_tcp_e2e"
+path = "tests/mvp_tcp_e2e.rs"
+required-features = ["mvp"]
+
+[[test]]
+name = "mvp_game_discovery"
+path = "tests/mvp_game_discovery.rs"
+required-features = ["mvp"]
+
+[[test]]
+name = "adversarial_consensus_test"
+path = "tests/adversarial_consensus_test.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "basic_end_to_end_tests"
+path = "tests/basic_end_to_end_tests.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "comprehensive_integration_audit_test"
+path = "tests/comprehensive_integration_audit_test.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "comprehensive_integration_test"
+path = "tests/comprehensive_integration_test.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "comprehensive_p2p_game_flow_test"
+path = "tests/comprehensive_p2p_game_flow_test.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "concurrent_player_joins_test"
+path = "tests/concurrent_player_joins_test.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "consensus_test"
+path = "tests/consensus_test.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "cross_platform_tests"
+path = "tests/cross_platform_tests.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "database_comprehensive_test"
+path = "tests/database_comprehensive_test.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "database_integration_test"
+path = "tests/database_integration_test.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "end_to_end_tests"
+path = "tests/end_to_end_tests.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "integration_comprehensive"
+path = "tests/integration_comprehensive.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "integration_test"
+path = "tests/integration_test.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "mobile_security_integration_test"
+path = "tests/mobile_security_integration_test.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "mobile_security_simple_test"
+path = "tests/mobile_security_simple_test.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "multi_peer_integration"
+path = "tests/multi_peer_integration.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "p2p_consensus_integration_test"
+path = "tests/p2p_consensus_integration_test.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "peer_id_exchange_test"
+path = "tests/peer_id_exchange_test.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "performance_audit"
+path = "tests/performance_audit.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "smoke_test"
+path = "tests/smoke_test.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "token_economics_comprehensive_test"
+path = "tests/token_economics_comprehensive_test.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "transport_security_comprehensive_test"
+path = "tests/transport_security_comprehensive_test.rs"
+required-features = ["legacy-tests"]
+
+[[test]]
+name = "transport_security_tests"
+path = "tests/transport_security_tests.rs"
+required-features = ["legacy-tests"]
+
+# Examples gated behind legacy-examples
+[[example]]
+name = "anti_cheat_demo"
+required-features = ["legacy-examples"]
+
+[[example]]
+name = "basic_consensus"
+required-features = ["legacy-examples"]
+
+[[example]]
+name = "battery_optimization_demo"
+required-features = ["legacy-examples"]
+
+[[example]]
+name = "ble_peripheral_demo"
+required-features = ["legacy-examples"]
+
+[[example]]
+name = "cross_layer_integration"
+required-features = ["legacy-examples"]
+
+[[example]]
+name = "cross_layer_simple"
+required-features = ["legacy-examples"]
+
+[[example]]
+name = "efficient_demo"
+required-features = ["legacy-examples"]
+
+[[example]]
+name = "full_integration_demo"
+required-features = ["legacy-examples"]
+
+[[example]]
+name = "full_integration_simple"
+required-features = ["legacy-examples"]
+
+[[example]]
+name = "loop_budget_demo"
+required-features = ["legacy-examples"]
+
+[[example]]
+name = "memory_comparison"
+required-features = ["legacy-examples"]
+
+[[example]]
+name = "mesh_network"
+required-features = ["legacy-examples"]
+
+[[example]]
+name = "mesh_network_simple"
+required-features = ["legacy-examples"]
+
+[[example]]
+name = "mobile_sdk_example"
+required-features = ["legacy-examples"]
+
+[[example]]
+name = "peer_discovery_demo"
+required-features = ["legacy-examples"]
+
+[[example]]
+name = "sdk_quickstart"
+required-features = ["legacy-examples"]
+
+[[example]]
+name = "system_monitoring_demo"
+required-features = ["legacy-examples"]
+
+[[example]]
+name = "tui_demo"
+required-features = ["legacy-examples"]
 
 [profile.dev]
 opt-level = 0

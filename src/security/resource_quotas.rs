@@ -3,11 +3,11 @@
 //! This module implements comprehensive resource quotas to prevent any single peer
 //! from exhausting system resources through malicious or buggy behavior.
 
+use crate::protocol::PeerId;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use crate::protocol::PeerId;
 
 /// Resource types that can be limited
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -58,14 +58,14 @@ pub struct QuotaConfig {
 impl Default for QuotaConfig {
     fn default() -> Self {
         Self {
-            max_bandwidth: 10 * 1024 * 1024,      // 10 MB/s
-            max_connections: 10,                   // 10 concurrent
-            max_message_rate: 100,                  // 100 msg/s
-            max_memory: 50 * 1024 * 1024,         // 50 MB
-            max_cpu_ms: 100,                       // 100ms CPU/s (10%)
-            max_storage: 100 * 1024 * 1024,       // 100 MB
-            max_pending_ops: 50,                   // 50 pending
-            max_tx_rate: 10,                       // 10 tx/s
+            max_bandwidth: 10 * 1024 * 1024, // 10 MB/s
+            max_connections: 10,             // 10 concurrent
+            max_message_rate: 100,           // 100 msg/s
+            max_memory: 50 * 1024 * 1024,    // 50 MB
+            max_cpu_ms: 100,                 // 100ms CPU/s (10%)
+            max_storage: 100 * 1024 * 1024,  // 100 MB
+            max_pending_ops: 50,             // 50 pending
+            max_tx_rate: 10,                 // 10 tx/s
             window_duration: Duration::from_secs(1),
             penalty_duration: Duration::from_secs(60),
         }
@@ -108,7 +108,7 @@ impl PeerQuota {
                 self.history.remove(0);
             }
         }
-        
+
         self.usage.clear();
         self.window_start = Instant::now();
     }
@@ -168,23 +168,23 @@ impl ResourceQuotaManager {
     ) -> Result<(), QuotaViolation> {
         let mut quotas = self.peer_quotas.write().await;
         let quota = quotas.entry(*peer_id).or_insert_with(PeerQuota::new);
-        
+
         // Check if penalized
         if quota.is_penalized() {
             return Err(QuotaViolation::Penalized {
                 until: quota.penalty_until.unwrap(),
             });
         }
-        
+
         // Reset window if needed
         let config = self.config.read().await;
         if quota.window_start.elapsed() > config.window_duration {
             quota.reset_window();
         }
-        
+
         // Get limit for this resource
         let limit = self.get_limit(&resource, &config).await;
-        
+
         // Check current usage
         let current = quota.usage.get(&resource).copied().unwrap_or(0);
         if current + amount > limit {
@@ -196,29 +196,24 @@ impl ResourceQuotaManager {
                 limit,
             });
         }
-        
+
         // Update usage
         *quota.usage.entry(resource).or_insert(0) += amount;
-        
+
         Ok(())
     }
 
     /// Record resource consumption (after the fact)
-    pub async fn record_usage(
-        &self,
-        peer_id: &PeerId,
-        resource: ResourceType,
-        amount: u64,
-    ) {
+    pub async fn record_usage(&self, peer_id: &PeerId, resource: ResourceType, amount: u64) {
         let mut quotas = self.peer_quotas.write().await;
         let quota = quotas.entry(*peer_id).or_insert_with(PeerQuota::new);
-        
+
         // Reset window if needed
         let config = self.config.read().await;
         if quota.window_start.elapsed() > config.window_duration {
             quota.reset_window();
         }
-        
+
         *quota.usage.entry(resource).or_insert(0) += amount;
     }
 
@@ -269,17 +264,17 @@ impl ResourceQuotaManager {
     /// Get statistics for monitoring
     pub async fn get_statistics(&self) -> QuotaStatistics {
         let quotas = self.peer_quotas.read().await;
-        
+
         let total_peers = quotas.len();
         let penalized_peers = quotas.values().filter(|q| q.is_penalized()).count();
-        
+
         let mut resource_usage = HashMap::with_capacity(8);
         for quota in quotas.values() {
             for (resource, amount) in &quota.usage {
                 *resource_usage.entry(resource.clone()).or_insert(0) += amount;
             }
         }
-        
+
         QuotaStatistics {
             total_peers,
             penalized_peers,
@@ -291,15 +286,15 @@ impl ResourceQuotaManager {
     pub async fn cleanup(&self) {
         let mut quotas = self.peer_quotas.write().await;
         let now = Instant::now();
-        
+
         // Remove peers with no recent activity
         quotas.retain(|_, quota| {
             // Keep if penalized, has recent usage, or recent window
-            quota.is_penalized() 
-                || !quota.usage.is_empty() 
+            quota.is_penalized()
+                || !quota.usage.is_empty()
                 || quota.window_start.elapsed() < Duration::from_secs(300)
         });
-        
+
         // Clear expired penalties
         for quota in quotas.values_mut() {
             if let Some(until) = quota.penalty_until {
@@ -322,9 +317,7 @@ pub enum QuotaViolation {
         limit: u64,
     },
     /// Peer is penalized until specified time
-    Penalized {
-        until: Instant,
-    },
+    Penalized { until: Instant },
 }
 
 /// Statistics for monitoring quota system
@@ -341,18 +334,19 @@ pub struct QuotaStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::PeerIdExt;
 
     #[tokio::test]
     async fn test_quota_enforcement() {
         let manager = ResourceQuotaManager::new();
         let peer_id = PeerId::random();
-        
+
         // Should allow within quota
         assert!(manager
             .check_quota(&peer_id, ResourceType::MessageRate, 50)
             .await
             .is_ok());
-        
+
         // Should reject over quota
         assert!(manager
             .check_quota(&peer_id, ResourceType::MessageRate, 100)
@@ -364,15 +358,17 @@ mod tests {
     async fn test_penalty_system() {
         let manager = ResourceQuotaManager::new();
         let peer_id = PeerId::random();
-        
+
         // Exceed quota to trigger penalty
         let _ = manager
             .check_quota(&peer_id, ResourceType::MessageRate, 200)
             .await;
-        
+
         // Should be penalized
         assert!(matches!(
-            manager.check_quota(&peer_id, ResourceType::MessageRate, 1).await,
+            manager
+                .check_quota(&peer_id, ResourceType::MessageRate, 1)
+                .await,
             Err(QuotaViolation::Penalized { .. })
         ));
     }

@@ -12,13 +12,15 @@ use tokio::sync::{Mutex, RwLock};
 use crate::error::{Error, Result};
 use crate::protocol::PeerId;
 use crate::transport::{
-    ble_peripheral::ConnectionState,
+    ble_peripheral::{
+        AdvertisingConfig, BlePeripheral, BlePeripheralFactory, ConnectionState, PeripheralEvent,
+        PeripheralStats,
+    },
     bounded_queue::{
         BoundedTransportEventQueue, BoundedTransportEventReceiver, BoundedTransportEventSender,
     },
     crypto::{ConnectionPriority, TransportCrypto},
-    AdvertisingConfig, BlePeripheral, BlePeripheralFactory, BluetoothTransport, PeripheralEvent,
-    PeripheralStats, Transport, TransportAddress, TransportEvent,
+    BluetoothTransport, Transport, TransportAddress, TransportEvent,
 };
 
 /// Enhanced Bluetooth transport combining central and peripheral roles

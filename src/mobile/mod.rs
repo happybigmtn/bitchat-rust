@@ -3,8 +3,10 @@
 //! This module provides the cross-platform interface for mobile applications
 //! using UniFFI to generate bindings for Android (Kotlin) and iOS (Swift).
 
+use parking_lot::{Mutex as ParkingMutex, RwLock as ParkingRwLock};
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicU32;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
@@ -69,26 +71,35 @@ uniffi::include_scaffolding!("bitcraps");
 /// Main BitCraps node for mobile platforms
 pub struct BitCrapsNode {
     inner: Arc<crate::mesh::MeshService>,
-    event_queue: Arc<Mutex<VecDeque<GameEvent>>>,
+    event_queue: Arc<ParkingMutex<VecDeque<GameEvent>>>,
     event_sender: mpsc::Sender<GameEvent>,
     power_manager: Arc<PowerManager>,
+    battery_manager: Option<Arc<battery_optimization::BatteryManager>>,
     config: BitCrapsConfig,
-    status: Arc<Mutex<NodeStatus>>,
-    current_game: Arc<Mutex<Option<Arc<GameHandle>>>>,
+    status: Arc<ParkingRwLock<NodeStatus>>, // Read-heavy, use RwLock
+    current_game: Arc<ParkingMutex<Option<Arc<GameHandle>>>>,
+    active_connections: Arc<AtomicU32>, // Frequently read counter
 }
 
 /// Game handle for managing individual games
 pub struct GameHandle {
     game_id: String,
     node: Arc<BitCrapsNode>,
-    state: Arc<Mutex<GameState>>,
-    history: Arc<Mutex<Vec<GameEvent>>>,
-    last_roll: Arc<Mutex<Option<DiceRoll>>>,
+    state: Arc<ParkingRwLock<GameState>>, // Read-heavy access pattern
+    history: Arc<ParkingMutex<Vec<GameEvent>>>,
+    last_roll: Arc<ParkingMutex<Option<DiceRoll>>>,
 }
 
 /// Configuration for BitCraps node initialization
 #[derive(Clone)]
 pub struct BitCrapsConfig {
+    // UniFFI compatible fields for mobile interface
+    pub bluetooth_name: String,
+    pub enable_battery_optimization: bool,
+    pub max_peers: u32,
+    pub discovery_timeout_seconds: u32,
+
+    // Additional fields for full functionality
     pub data_dir: String,
     pub pow_difficulty: u32,
     pub protocol_version: u16,
@@ -303,6 +314,13 @@ pub enum BitCrapsError {
 impl Default for BitCrapsConfig {
     fn default() -> Self {
         Self {
+            // UniFFI required fields
+            bluetooth_name: "BitCraps-Node".to_string(),
+            enable_battery_optimization: true,
+            max_peers: 10,
+            discovery_timeout_seconds: 30,
+
+            // Full configuration fields
             data_dir: String::from("./data"),
             pow_difficulty: 4,
             protocol_version: 1,
@@ -364,13 +382,14 @@ pub fn create_node(config: BitCrapsConfig) -> Result<Arc<BitCrapsNode>, BitCraps
 
     // Create event channel with bounded size to prevent memory exhaustion
     let (event_sender, mut event_receiver) = mpsc::channel(1000); // Moderate traffic for mobile events
-    let event_queue = Arc::new(Mutex::new(VecDeque::new()));
+    let event_queue = Arc::new(ParkingMutex::new(VecDeque::new()));
 
     // Clone for the receiver task
     let event_queue_clone = Arc::clone(&event_queue);
     tokio::spawn(async move {
         while let Some(event) = event_receiver.recv().await {
-            if let Ok(mut queue) = event_queue_clone.lock() {
+            {
+                let mut queue = event_queue_clone.lock();
                 queue.push_back(event);
                 // Limit queue size to prevent memory issues
                 if queue.len() > 1000 {
@@ -384,7 +403,7 @@ pub fn create_node(config: BitCrapsConfig) -> Result<Arc<BitCrapsNode>, BitCraps
     let power_manager = Arc::new(PowerManager::new(config.power_mode));
 
     // Create initial node status
-    let status = Arc::new(Mutex::new(NodeStatus {
+    let status = Arc::new(ParkingRwLock::new(NodeStatus {
         state: NodeState::Initializing,
         bluetooth_enabled: false,
         discovery_active: false,
@@ -393,27 +412,53 @@ pub fn create_node(config: BitCrapsConfig) -> Result<Arc<BitCrapsNode>, BitCraps
         current_power_mode: config.power_mode,
     }));
 
+    let active_connections = Arc::new(AtomicU32::new(0));
+
     // Initialize mesh service with proper configuration
     let identity = Arc::new(crate::crypto::BitchatIdentity::generate_with_pow(
-        config.pow_difficulty.max(8) // Use pow_difficulty instead of proof_of_work_bits
+        config.pow_difficulty.max(8), // Use pow_difficulty instead of proof_of_work_bits
     ));
-    
+
     let transport = Arc::new(crate::transport::TransportCoordinator::new());
-    
+
     let mesh_service = Arc::new(crate::mesh::MeshService::new(identity, transport));
+
+    // Create battery manager if power mode is battery saver or ultra low power
+    let battery_manager = match config.power_mode {
+        PowerMode::BatterySaver | PowerMode::UltraLowPower => {
+            let platform_type = config
+                .platform_config
+                .as_ref()
+                .map(|c| c.platform)
+                .unwrap_or(PlatformType::Unknown);
+
+            // Create unbounded channel for battery manager events
+            let (battery_event_sender, _) = mpsc::unbounded_channel();
+
+            Some(Arc::new(battery_optimization::BatteryManager::new(
+                platform_type,
+                power_manager.clone(),
+                Some(battery_event_sender),
+            )))
+        }
+        _ => None,
+    };
 
     let node = Arc::new(BitCrapsNode {
         inner: mesh_service,
         event_queue,
         event_sender,
         power_manager,
+        battery_manager,
         config,
         status,
-        current_game: Arc::new(Mutex::new(None)),
+        active_connections,
+        current_game: Arc::new(ParkingMutex::new(None)),
     });
 
     // Update status to ready
-    if let Ok(mut status) = node.status.lock() {
+    {
+        let mut status = node.status.write();
         status.state = NodeState::Ready;
     }
 
@@ -426,62 +471,67 @@ pub fn get_available_bluetooth_adapters() -> Result<Vec<String>, BitCrapsError> 
     {
         // On Android, use the single system Bluetooth adapter
         use std::process::Command;
-        
+
         // Check if Bluetooth is available via system properties
-        let output = Command::new("getprop")
-            .arg("ro.bluetooth.adapter")
-            .output();
-            
+        let output = Command::new("getprop").arg("ro.bluetooth.adapter").output();
+
         match output {
             Ok(result) if result.status.success() => {
                 let adapter_info = String::from_utf8_lossy(&result.stdout);
                 if !adapter_info.trim().is_empty() {
                     Ok(vec!["android_bluetooth_adapter".to_string()])
                 } else {
-                    Err(BitCrapsError::Platform("Bluetooth adapter not found".to_string()))
+                    Err(BitCrapsError::Platform(
+                        "Bluetooth adapter not found".to_string(),
+                    ))
                 }
-            },
+            }
             _ => {
                 // Fallback: assume adapter exists (common on Android)
                 Ok(vec!["android_bluetooth_adapter".to_string()])
             }
         }
     }
-    
+
     #[cfg(target_os = "ios")]
     {
         // On iOS, Core Bluetooth handles adapter management internally
         Ok(vec!["ios_core_bluetooth".to_string()])
     }
-    
+
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         // Desktop/other platforms: use btleplug for adapter discovery
-        use btleplug::api::{Manager as _, Central, Peripheral};
+        use btleplug::api::Manager as _;
         use btleplug::platform::Manager;
-        
-        let rt = tokio::runtime::Handle::try_current()
-            .or_else(|_| {
-                // Create a new runtime if we're not in an async context
-                tokio::runtime::Runtime::new()
-                    .map(|rt| rt.handle().clone())
-                    .map_err(|_| BitCrapsError::Platform("Failed to create async runtime".to_string()))
-            })?;
-            
+
+        let rt = tokio::runtime::Handle::try_current().or_else(|_| {
+            // Create a new runtime if we're not in an async context
+            tokio::runtime::Runtime::new()
+                .map(|rt| rt.handle().clone())
+                .map_err(|_| BitCrapsError::Platform("Failed to create async runtime".to_string()))
+        })?;
+
         rt.block_on(async {
-            let manager = Manager::new().await
-                .map_err(|e| BitCrapsError::Platform(format!("Failed to create BLE manager: {}", e)))?;
-                
-            let adapters = manager.adapters().await
+            let manager = Manager::new().await.map_err(|e| {
+                BitCrapsError::Platform(format!("Failed to create BLE manager: {}", e))
+            })?;
+
+            let adapters = manager
+                .adapters()
+                .await
                 .map_err(|e| BitCrapsError::Platform(format!("Failed to get adapters: {}", e)))?;
-                
-            let adapter_names: Vec<String> = adapters.into_iter()
+
+            let adapter_names: Vec<String> = adapters
+                .into_iter()
                 .enumerate()
                 .map(|(i, _)| format!("adapter_{}", i))
                 .collect();
-                
+
             if adapter_names.is_empty() {
-                Err(BitCrapsError::Platform("No Bluetooth adapters found".to_string()))
+                Err(BitCrapsError::Platform(
+                    "No Bluetooth adapters found".to_string(),
+                ))
             } else {
                 Ok(adapter_names)
             }

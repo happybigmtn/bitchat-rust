@@ -53,7 +53,7 @@ pub struct ThermalThresholds {
     pub normal_max_celsius: f64,
     /// Warm threshold - start minor throttling (°C)
     pub warm_threshold_celsius: f64,
-    /// Hot threshold - aggressive throttling (°C)  
+    /// Hot threshold - aggressive throttling (°C)
     pub hot_threshold_celsius: f64,
     /// Critical threshold - emergency throttling (°C)
     pub critical_threshold_celsius: f64,
@@ -448,7 +448,7 @@ impl PowerManager {
         self.battery_info.read().await.clone()
     }
 
-    /// Get current thermal information  
+    /// Get current thermal information
     pub async fn get_thermal_info(&self) -> Option<ThermalInfo> {
         self.thermal_info.read().await.clone()
     }
@@ -623,14 +623,14 @@ impl PowerManager {
 
     /// Start main monitoring loop
     async fn start_monitoring_loop(&self) {
-        let config = self.config.clone();
-        let power_state = self.power_state.clone();
-        let battery_info = self.battery_info.clone();
-        let thermal_info = self.thermal_info.clone();
-        let is_running = self.is_running.clone();
-        let event_sender = self.event_sender.clone();
-        let state_history = self.state_history.clone();
-        let stats = self.stats.clone();
+        let config = Arc::clone(&self.config);
+        let power_state = Arc::clone(&self.power_state);
+        let battery_info = Arc::clone(&self.battery_info);
+        let thermal_info = Arc::clone(&self.thermal_info);
+        let is_running = Arc::clone(&self.is_running);
+        let event_sender = self.event_sender.clone(); // mpsc::Sender needs clone
+        let state_history = Arc::clone(&self.state_history);
+        let stats = Arc::clone(&self.stats);
 
         let task = tokio::spawn(async move {
             let mut battery_interval = tokio::time::interval(Duration::from_secs(

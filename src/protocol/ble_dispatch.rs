@@ -14,6 +14,7 @@ use tokio::time::interval;
 use crate::error::{Error, Result};
 use crate::protocol::p2p_messages::{ConsensusMessage, MessagePriority};
 use crate::protocol::PeerId;
+use crate::transport::TransportCoordinator;
 
 /// BLE constraints and configuration
 #[derive(Debug, Clone)]
@@ -96,9 +97,24 @@ struct PeerBandwidth {
     packet_loss_rate: f64,
 }
 
+/// Message awaiting retry with exponential backoff
+#[derive(Debug, Clone)]
+struct RetryableMessage {
+    message_data: Vec<u8>,
+    target_peers: Vec<PeerId>,
+    retry_count: u32,
+    next_retry: Instant,
+    backoff_duration: Duration,
+    is_fragment: bool,
+    original_priority: MessagePriority,
+}
+
 /// BLE-optimized message dispatcher
 pub struct BleMessageDispatcher {
     config: BleConfig,
+
+    // Transport layer for actual message sending
+    transport: Arc<TransportCoordinator>,
 
     // Message queues by priority
     critical_queue: Arc<RwLock<VecDeque<PendingMessage>>>,
@@ -114,6 +130,9 @@ pub struct BleMessageDispatcher {
     total_bandwidth_used: Arc<RwLock<u64>>,
     bandwidth_window_start: Arc<RwLock<Instant>>,
 
+    // Retry management
+    retry_queue: Arc<RwLock<VecDeque<RetryableMessage>>>,
+
     // Statistics
     messages_queued: Arc<RwLock<u64>>,
     messages_sent: Arc<RwLock<u64>>,
@@ -123,10 +142,11 @@ pub struct BleMessageDispatcher {
 }
 
 impl BleMessageDispatcher {
-    /// Create new BLE message dispatcher
-    pub fn new(config: BleConfig) -> Self {
+    /// Create new BLE message dispatcher with transport coordinator
+    pub fn new(config: BleConfig, transport: Arc<TransportCoordinator>) -> Self {
         Self {
             config,
+            transport,
             critical_queue: Arc::new(RwLock::new(VecDeque::new())),
             high_queue: Arc::new(RwLock::new(VecDeque::new())),
             normal_queue: Arc::new(RwLock::new(VecDeque::new())),
@@ -135,6 +155,7 @@ impl BleMessageDispatcher {
             peer_bandwidth: Arc::new(RwLock::new(HashMap::new())),
             total_bandwidth_used: Arc::new(RwLock::new(0)),
             bandwidth_window_start: Arc::new(RwLock::new(Instant::now())),
+            retry_queue: Arc::new(RwLock::new(VecDeque::new())),
             messages_queued: Arc::new(RwLock::new(0)),
             messages_sent: Arc::new(RwLock::new(0)),
             messages_dropped: Arc::new(RwLock::new(0)),
@@ -271,6 +292,8 @@ impl BleMessageDispatcher {
         let config = self.config.clone();
         let messages_sent = self.messages_sent.clone();
         let messages_dropped = self.messages_dropped.clone();
+        let transport = self.transport.clone();
+        let retry_queue = self.retry_queue.clone();
 
         tokio::spawn(async move {
             let mut dispatch_interval =
@@ -292,6 +315,8 @@ impl BleMessageDispatcher {
                     &config,
                     &messages_sent,
                     &messages_dropped,
+                    &transport,
+                    &retry_queue,
                 )
                 .await;
                 bytes_remaining = Self::process_queue_static(
@@ -301,6 +326,8 @@ impl BleMessageDispatcher {
                     &config,
                     &messages_sent,
                     &messages_dropped,
+                    &transport,
+                    &retry_queue,
                 )
                 .await;
                 bytes_remaining = Self::process_queue_static(
@@ -310,6 +337,8 @@ impl BleMessageDispatcher {
                     &config,
                     &messages_sent,
                     &messages_dropped,
+                    &transport,
+                    &retry_queue,
                 )
                 .await;
                 let _ = Self::process_queue_static(
@@ -319,6 +348,8 @@ impl BleMessageDispatcher {
                     &config,
                     &messages_sent,
                     &messages_dropped,
+                    &transport,
+                    &retry_queue,
                 )
                 .await;
             }
@@ -333,6 +364,8 @@ impl BleMessageDispatcher {
         config: &BleConfig,
         messages_sent: &Arc<RwLock<u64>>,
         messages_dropped: &Arc<RwLock<u64>>,
+        transport: &Arc<TransportCoordinator>,
+        retry_queue: &Arc<RwLock<VecDeque<RetryableMessage>>>,
     ) -> u64 {
         let mut queue_guard = queue.write().await;
         let mut messages_to_requeue = Vec::new();
@@ -390,10 +423,32 @@ impl BleMessageDispatcher {
                     };
 
                     if fragment_bytes.len() as u64 <= bytes_available {
-                        // TODO: Actually send the fragment via transport
-                        // transport.send_fragment(fragment_bytes).await;
+                        // Send fragment via transport to all target peers
+                        let mut send_success = true;
+                        for &peer_id in &pending.target_peers {
+                            if let Err(e) = transport
+                                .send_to_peer(peer_id, fragment_bytes.clone())
+                                .await
+                            {
+                                log::error!("Failed to send fragment to peer {:?}: {}", peer_id, e);
+                                send_success = false;
 
-                        pending.bytes_sent += config.mtu_size;
+                                // Add to retry queue with exponential backoff
+                                Self::schedule_retry(
+                                    retry_queue,
+                                    fragment_bytes.clone(),
+                                    vec![peer_id],
+                                    pending.retry_count,
+                                    true, // is_fragment
+                                    pending.priority,
+                                )
+                                .await;
+                            }
+                        }
+
+                        if send_success {
+                            pending.bytes_sent += config.mtu_size;
+                        }
                         fragment_bytes.len() as u64
                     } else {
                         // Not enough bandwidth - requeue
@@ -408,10 +463,30 @@ impl BleMessageDispatcher {
             } else {
                 // Send complete message
                 if message_bytes.len() as u64 <= bytes_available {
-                    // TODO: Actually send the message via transport
-                    // transport.send_message(message_bytes).await;
+                    // Send message via transport to all target peers
+                    let mut send_success = true;
+                    for &peer_id in &pending.target_peers {
+                        if let Err(e) = transport.send_to_peer(peer_id, message_bytes.clone()).await
+                        {
+                            log::error!("Failed to send message to peer {:?}: {}", peer_id, e);
+                            send_success = false;
 
-                    *messages_sent.write().await += 1;
+                            // Add to retry queue with exponential backoff
+                            Self::schedule_retry(
+                                retry_queue,
+                                message_bytes.clone(),
+                                vec![peer_id],
+                                pending.retry_count,
+                                false, // is_fragment
+                                pending.priority,
+                            )
+                            .await;
+                        }
+                    }
+
+                    if send_success {
+                        *messages_sent.write().await += 1;
+                    }
                     message_bytes.len() as u64
                 } else {
                     // Not enough bandwidth - requeue
@@ -483,7 +558,13 @@ impl BleMessageDispatcher {
 
     /// Reassemble message from fragments
     fn reassemble_message(&self, assembly: &FragmentAssembly) -> Result<ConsensusMessage> {
-        let mut message_bytes = Vec::new();
+        // Pre-allocate message_bytes with expected size to reduce allocations
+        let total_size: usize = assembly
+            .received_fragments
+            .values()
+            .map(|f| f.data.len())
+            .sum();
+        let mut message_bytes = Vec::with_capacity(total_size);
 
         // Sort fragments by ID and concatenate
         let mut sorted_fragments: Vec<_> = assembly.received_fragments.values().collect();
@@ -491,6 +572,35 @@ impl BleMessageDispatcher {
 
         for fragment in sorted_fragments {
             message_bytes.extend_from_slice(&fragment.data);
+        }
+
+        // Validate checksum if present (last 4 bytes)
+        if message_bytes.len() > 4 {
+            let data_len = message_bytes.len() - 4;
+            let data = &message_bytes[..data_len];
+            let stored_checksum = u32::from_le_bytes([
+                message_bytes[data_len],
+                message_bytes[data_len + 1],
+                message_bytes[data_len + 2],
+                message_bytes[data_len + 3],
+            ]);
+
+            // Calculate CRC32 checksum
+            let calculated_checksum = crc32fast::hash(data);
+
+            if stored_checksum != calculated_checksum {
+                log::error!(
+                    "Message checksum validation failed: expected {}, got {}",
+                    stored_checksum,
+                    calculated_checksum
+                );
+                return Err(Error::Crypto(
+                    "Message corrupted during transmission".to_string(),
+                ));
+            }
+
+            // Remove checksum from message
+            message_bytes.truncate(data_len);
         }
 
         // Deserialize the complete message
@@ -534,7 +644,133 @@ impl BleMessageDispatcher {
 
     /// Start retry task for failed messages
     async fn start_retry_task(&self) {
-        // TODO: Implement retry logic for failed transmissions
+        let retry_queue = self.retry_queue.clone();
+        let transport = self.transport.clone();
+        let config = self.config.clone();
+        let messages_sent = self.messages_sent.clone();
+        let messages_dropped = self.messages_dropped.clone();
+
+        tokio::spawn(async move {
+            let mut retry_interval = interval(Duration::from_millis(100)); // Check for retries every 100ms
+
+            loop {
+                retry_interval.tick().await;
+
+                let mut retry_guard = retry_queue.write().await;
+                let mut messages_to_requeue = Vec::new();
+                let now = Instant::now();
+
+                while let Some(mut retry_msg) = retry_guard.pop_front() {
+                    if now >= retry_msg.next_retry {
+                        // Time to retry this message
+                        log::debug!(
+                            "Retrying message (attempt {}) to {} peers",
+                            retry_msg.retry_count + 1,
+                            retry_msg.target_peers.len()
+                        );
+
+                        let mut retry_success = true;
+                        let mut remaining_peers = Vec::new();
+
+                        for &peer_id in &retry_msg.target_peers {
+                            match transport
+                                .send_to_peer(peer_id, retry_msg.message_data.clone())
+                                .await
+                            {
+                                Ok(_) => {
+                                    log::debug!("Retry successful for peer {:?}", peer_id);
+                                }
+                                Err(e) => {
+                                    log::debug!("Retry failed for peer {:?}: {}", peer_id, e);
+                                    remaining_peers.push(peer_id);
+                                    retry_success = false;
+                                }
+                            }
+                        }
+
+                        if retry_success {
+                            // All retries successful
+                            if !retry_msg.is_fragment {
+                                *messages_sent.write().await += 1;
+                            }
+                            log::debug!("All retries successful for message");
+                        } else if retry_msg.retry_count < config.max_retries {
+                            // Some peers still failed, schedule another retry
+                            retry_msg.target_peers = remaining_peers.clone();
+                            retry_msg.retry_count += 1;
+                            retry_msg.backoff_duration = std::cmp::min(
+                                retry_msg.backoff_duration * 2, // Exponential backoff
+                                Duration::from_secs(30),        // Max 30 second backoff
+                            );
+                            retry_msg.next_retry = now + retry_msg.backoff_duration;
+
+                            // Capture values before move
+                            let next_retry_count = retry_msg.retry_count + 1;
+                            let backoff_duration = retry_msg.backoff_duration;
+                            let remaining_peer_count = remaining_peers.len();
+
+                            messages_to_requeue.push(retry_msg);
+
+                            log::debug!(
+                                "Scheduled retry #{} in {:?} for {} remaining peers",
+                                next_retry_count,
+                                backoff_duration,
+                                remaining_peer_count
+                            );
+                        } else {
+                            // Max retries exceeded, drop message
+                            *messages_dropped.write().await += 1;
+                            let peer_count = retry_msg.target_peers.len();
+                            log::warn!(
+                                "Dropping message after {} retries to {} peers",
+                                config.max_retries,
+                                peer_count
+                            );
+                        }
+                    } else {
+                        // Not time to retry yet, keep in queue
+                        messages_to_requeue.push(retry_msg);
+                    }
+                }
+
+                // Requeue messages that need more retries or aren't ready yet
+                for msg in messages_to_requeue {
+                    retry_guard.push_back(msg);
+                }
+            }
+        });
+    }
+
+    /// Schedule a message for retry with exponential backoff
+    async fn schedule_retry(
+        retry_queue: &Arc<RwLock<VecDeque<RetryableMessage>>>,
+        message_data: Vec<u8>,
+        target_peers: Vec<PeerId>,
+        retry_count: u32,
+        is_fragment: bool,
+        priority: MessagePriority,
+    ) {
+        let base_backoff = Duration::from_millis(100); // Start with 100ms
+        let backoff_duration = base_backoff * 2_u32.pow(retry_count.min(6)); // Cap exponential growth
+        let next_retry = Instant::now() + backoff_duration;
+
+        let retry_msg = RetryableMessage {
+            message_data,
+            target_peers,
+            retry_count,
+            next_retry,
+            backoff_duration,
+            is_fragment,
+            original_priority: priority,
+        };
+
+        retry_queue.write().await.push_back(retry_msg);
+
+        log::debug!(
+            "Scheduled retry in {:?} (attempt {})",
+            backoff_duration,
+            retry_count + 1
+        );
     }
 
     /// Update peer connection quality based on transmission success
@@ -647,8 +883,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_bandwidth_management() {
+        use crate::transport::TransportCoordinator;
+        use std::sync::Arc;
+
         let config = BleConfig::default();
-        let dispatcher = BleMessageDispatcher::new(config);
+        let transport = Arc::new(TransportCoordinator::new());
+        let dispatcher = BleMessageDispatcher::new(config, transport);
         dispatcher.start().await;
 
         // Test initial stats

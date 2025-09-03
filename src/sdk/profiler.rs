@@ -43,7 +43,7 @@ impl PerformanceProfiler {
     /// Run performance benchmark
     pub fn run_benchmark(&mut self, benchmark: Benchmark) -> BenchmarkResult {
         let start_time = Instant::now();
-        
+
         // Run benchmark iterations
         let mut durations = Vec::new();
         for _ in 0..benchmark.iterations {

@@ -184,7 +184,7 @@ impl PermissionManager {
         ]
     }
 
-    /// Get BitCraps-specific optional permissions  
+    /// Get BitCraps-specific optional permissions
     pub fn get_bitcraps_optional_permissions() -> Vec<Permission> {
         vec![
             Permission::AccessFineLocation, // Better location for BLE

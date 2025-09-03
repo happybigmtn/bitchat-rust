@@ -1,8 +1,8 @@
 //! BitCraps Developer SDK
-//! 
+//!
 //! This module provides a comprehensive SDK for developers to build applications
 //! and integrations with the BitCraps platform:
-//! 
+//!
 //! ## Core Features
 //! - High-level API client
 //! - Game development tools

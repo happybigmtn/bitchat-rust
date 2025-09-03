@@ -178,6 +178,9 @@ pub struct IosBlePeripheral {
     // State management
     manager_state: Arc<RwLock<core_bluetooth_ffi::CBManagerState>>,
     initialization_complete: Arc<RwLock<bool>>,
+
+    // Recovery configuration
+    recovery_config: Arc<RwLock<Option<RecoveryConfig>>>,
 }
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
@@ -202,6 +205,7 @@ impl IosBlePeripheral {
 
             manager_state: Arc::new(RwLock::new(core_bluetooth_ffi::CBManagerState::Unknown)),
             initialization_complete: Arc::new(RwLock::new(false)),
+            recovery_config: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -832,8 +836,11 @@ impl BlePeripheral for IosBlePeripheral {
         Ok(())
     }
 
-    async fn set_recovery_config(&mut self, _config: RecoveryConfig) -> Result<()> {
-        // TODO: Store recovery configuration
+    async fn set_recovery_config(&mut self, config: RecoveryConfig) -> Result<()> {
+        // Store recovery configuration
+        let mut recovery_config = self.recovery_config.write().await;
+        *recovery_config = Some(config);
+        log::debug!("Recovery configuration updated for iOS BLE");
         Ok(())
     }
 

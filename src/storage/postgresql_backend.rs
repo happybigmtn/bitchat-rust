@@ -60,10 +60,10 @@ impl PostgresBackend {
         pg_config.user = Some(config.user.clone());
         pg_config.password = Some(config.password.clone());
         pg_config.dbname = Some(config.database.clone());
-        
+
         // Connection pool settings
         pg_config.pool = Some(deadpool_postgres::PoolConfig::new(config.max_connections));
-        
+
         let pool = pg_config.create_pool(Some(Runtime::Tokio1), NoTls)
             .map_err(|e| Error::Database(format!("Failed to create PostgreSQL pool: {}", e)))?;
 
@@ -83,7 +83,7 @@ impl PostgresBackend {
         let schema_sql = r#"
             -- Enable UUID extension
             CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-            
+
             -- Storage records table
             CREATE TABLE IF NOT EXISTS storage_records (
                 id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -161,7 +161,7 @@ impl PostgresBackend {
             .map_err(|e| Error::Database(format!("Failed to get connection: {}", e)))?;
 
         let stmt = client.prepare(
-            "INSERT INTO storage_records 
+            "INSERT INTO storage_records
              (collection, key, data, content_hash, is_compressed, created_at, size_bytes, access_count, last_accessed)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              ON CONFLICT (collection, key) DO UPDATE SET
@@ -262,7 +262,7 @@ impl PostgresBackend {
 
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
         let stmt = client.prepare(
-            "UPDATE storage_records SET access_count = access_count + 1, last_accessed = $1 
+            "UPDATE storage_records SET access_count = access_count + 1, last_accessed = $1
              WHERE collection = $2 AND key = $3"
         ).await
         .map_err(|e| Error::Database(format!("Failed to prepare statement: {}", e)))?;
@@ -298,7 +298,7 @@ impl PostgresBackend {
 
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
         let stmt = client.prepare(
-            "INSERT INTO content_references (collection, key, target_key, created_at) 
+            "INSERT INTO content_references (collection, key, target_key, created_at)
              VALUES ($1, $2, $3, $4)
              ON CONFLICT (collection, key) DO UPDATE SET target_key = EXCLUDED.target_key"
         ).await
@@ -322,7 +322,7 @@ impl PostgresBackend {
             ANALYZE content_references;
             ANALYZE performance_metrics;
             ANALYZE system_health;
-            
+
             -- Reindex if needed (commented out as it can be expensive)
             -- REINDEX TABLE storage_records;
         "#;
@@ -348,7 +348,7 @@ impl PostgresBackend {
             SELECT pg_size_pretty(pg_total_relation_size('storage_records')) as table_size,
                    pg_size_pretty(pg_indexes_size('storage_records')) as index_size
         "#;
-        
+
         let size_row = client.query_one(size_query, &[]).await.unwrap_or_else(|_| {
             // Fallback if pg_size_pretty is not available
             client.query_one("SELECT '0 bytes' as table_size, '0 bytes' as index_size", &[])
@@ -442,7 +442,7 @@ impl PostgresBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     #[cfg(feature = "postgres")]
     async fn test_postgres_config() {
@@ -458,11 +458,11 @@ mod tests {
         // Test that the stub implementation correctly reports unavailability
         let config = PostgresConfig::default();
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        
+
         let result = runtime.block_on(async {
             PostgresBackend::new(config).await
         });
-        
+
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not compiled in"));
     }

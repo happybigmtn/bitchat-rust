@@ -26,7 +26,7 @@ pub enum ScanStrategy {
     Continuous,
     /// Standard duty cycling (20% on, 80% off)
     Standard,
-    /// Aggressive power saving (10% on, 90% off)  
+    /// Aggressive power saving (10% on, 90% off)
     PowerSaver,
     /// Minimal scanning for critical battery (5% on, 95% off)
     Critical,

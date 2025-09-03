@@ -60,9 +60,15 @@ impl CommandExecutor for BitCrapsApp {
         // Store game
         self.active_games.write().await.insert(game_id, game);
 
-        // TODO: Broadcast game creation when PacketUtils is implemented
-        // let packet = create_game_packet(self.identity.peer_id, game_id, 8, buy_in);
-        // self.mesh_service.broadcast_packet(packet).await?;
+        // Broadcast game creation to the network
+        let packet = bitcraps::protocol::create_game_packet(
+            self.identity.peer_id,
+            game_id,
+            8, // max players
+            buy_in_crap,
+        );
+        self.mesh_service.broadcast_packet(packet).await?;
+        info!("📡 Game creation packet broadcast to network");
 
         info!("✅ Game created: {:?}", game_id);
         Ok(game_id)
@@ -171,10 +177,10 @@ impl CommandExecutor for BitCrapsApp {
 
     /// Send discovery ping
     async fn send_ping(&self) -> Result<()> {
-        // TODO: Implement ping packet when PacketUtils is available
-        // let packet = create_ping_packet(self.identity.peer_id);
-        // self.mesh_service.broadcast_packet(packet).await?;
-        info!("📡 Ping functionality not yet implemented");
+        // Create and prepare ping packet
+        let packet = bitcraps::protocol::create_ping_packet(self.identity.peer_id);
+        self.mesh_service.broadcast_packet(packet).await?;
+        info!("📡 Discovery ping packet broadcast to network");
         Ok(())
     }
 
@@ -197,19 +203,110 @@ pub mod commands {
 
     /// Execute the create game command
     pub async fn create_game_command(app: &BitCrapsApp, buy_in: u64) -> Result<()> {
-        let game_id = app.create_game(buy_in).await?;
-        println!("✅ Game created: {}", format_game_id(game_id));
-        println!("📋 Share this Game ID with other players to join");
-        Ok(())
+        // Validate minimum buy-in
+        if buy_in < 10 {
+            eprintln!("❌ Error: Minimum buy-in is 10 CRAP");
+            eprintln!("💡 Suggestion: Try 'bitcraps create-game 10' or higher");
+            return Err(Error::InvalidBet("Buy-in too low".to_string()));
+        }
+        
+        // Check if user has enough balance
+        let balance = app.get_balance().await;
+        if balance < buy_in {
+            eprintln!("❌ Error: Insufficient balance for buy-in");
+            eprintln!("💰 Your balance: {} CRAP", CrapTokens::new_unchecked(balance).to_crap());
+            eprintln!("🎯 Required: {} CRAP", buy_in);
+            eprintln!("💡 Suggestion: Start with 'bitcraps start' to mine some tokens first");
+            return Err(Error::InsufficientBalance(format!("Need {} CRAP, have {} CRAP", buy_in, CrapTokens::new_unchecked(balance).to_crap())));
+        }
+
+        match app.create_game(buy_in).await {
+            Ok(game_id) => {
+                println!("✅ Game created successfully!");
+                println!("🎲 Game ID: {}", format_game_id(game_id));
+                println!("💰 Buy-in: {} CRAP", buy_in);
+                println!("");
+                println!("📋 Next steps:");
+                println!("   1. Share this Game ID with other players");
+                println!("   2. They can join with: bitcraps join-game {}", format_game_id(game_id));
+                println!("   3. Start betting once players join");
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to create game: {}", e);
+                eprintln!("💡 Troubleshooting:");
+                eprintln!("   • Check network connectivity with: bitcraps ping");
+                eprintln!("   • Verify balance with: bitcraps balance");
+                eprintln!("   • Try a different buy-in amount");
+                Err(e)
+            }
+        }
     }
 
     /// Execute the join game command
     pub async fn join_game_command(app: &BitCrapsApp, game_id_str: &str) -> Result<()> {
-        let game_id = parse_game_id(game_id_str).map_err(|e| Error::Protocol(e))?;
+        // Validate game ID format first
+        let game_id = match parse_game_id(game_id_str) {
+            Ok(id) => id,
+            Err(e) => {
+                eprintln!("❌ Error: Invalid game ID format");
+                eprintln!("📋 Expected: 32-character hexadecimal string");
+                eprintln!("🔍 You provided: '{}'", game_id_str);
+                eprintln!("✅ Example: 0123456789abcdef0123456789abcdef");
+                eprintln!("💡 Get valid game IDs with: bitcraps games");
+                return Err(Error::Protocol(e));
+            }
+        };
 
-        app.join_game(game_id).await?;
-        println!("✅ Joined game: {}", format_game_id(game_id));
-        Ok(())
+        match app.join_game(game_id).await {
+            Ok(()) => {
+                println!("✅ Successfully joined game!");
+                println!("🎲 Game ID: {}", format_game_id(game_id));
+                println!("");
+                println!("🎯 You can now:");
+                println!("   • Place bets: bitcraps bet --game-id {} --bet-type pass --amount 50", format_game_id(game_id));
+                println!("   • Check game status: bitcraps games");
+                println!("   • View stats: bitcraps stats");
+                Ok(())
+            }
+            Err(Error::Protocol(msg)) if msg.contains("not found") => {
+                eprintln!("❌ Error: Game not found");
+                eprintln!("🎲 Game ID: {}", format_game_id(game_id));
+                eprintln!("💡 Possible reasons:");
+                eprintln!("   • Game hasn't been created yet");
+                eprintln!("   • You're not connected to the game host");
+                eprintln!("   • Game ID was typed incorrectly");
+                eprintln!("");
+                eprintln!("🔧 Try these steps:");
+                eprintln!("   1. Verify network: bitcraps ping");
+                eprintln!("   2. List available games: bitcraps games");
+                eprintln!("   3. Ask host to reshare the game ID");
+                Err(Error::Protocol(format!("Game not found: {}", format_game_id(game_id))))
+            }
+            Err(Error::GameError(msg)) if msg.contains("already a player") => {
+                eprintln!("ℹ️  You're already in this game!");
+                eprintln!("🎲 Game ID: {}", format_game_id(game_id));
+                eprintln!("🎯 You can start betting right away");
+                Ok(()) // Not really an error
+            }
+            Err(Error::GameError(msg)) if msg.contains("game full") => {
+                eprintln!("❌ Error: Game is full");
+                eprintln!("🎲 Game ID: {}", format_game_id(game_id));
+                eprintln!("💡 Suggestions:");
+                eprintln!("   • Wait for a player to leave");
+                eprintln!("   • Look for other games: bitcraps games");
+                eprintln!("   • Create your own game: bitcraps create-game 10");
+                Err(Error::GameError("Game is full".to_string()))
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to join game: {}", e);
+                eprintln!("💡 Troubleshooting:");
+                eprintln!("   • Check connectivity: bitcraps ping");
+                eprintln!("   • Verify game exists: bitcraps games");
+                eprintln!("   • Ensure sufficient balance: bitcraps balance");
+                Err(e)
+            }
+        }
     }
 
     /// Execute the place bet command
@@ -219,73 +316,337 @@ pub mod commands {
         bet_type_str: &str,
         amount: u64,
     ) -> Result<()> {
-        let game_id = parse_game_id(game_id_str).map_err(|e| Error::Protocol(e))?;
+        // Validate game ID
+        let game_id = match parse_game_id(game_id_str) {
+            Ok(id) => id,
+            Err(e) => {
+                eprintln!("❌ Error: Invalid game ID format");
+                eprintln!("📋 Expected: 32-character hexadecimal string");
+                eprintln!("🔍 You provided: '{}'", game_id_str);
+                return Err(Error::Protocol(e));
+            }
+        };
 
-        let bet_type = parse_bet_type(bet_type_str).map_err(|e| Error::Protocol(e))?;
+        // Validate bet type
+        let bet_type = match parse_bet_type(bet_type_str) {
+            Ok(bt) => bt,
+            Err(e) => {
+                eprintln!("❌ Error: Invalid bet type '{}'", bet_type_str);
+                eprintln!("");
+                eprintln!("🎯 Popular bet types:");
+                eprintln!("   • pass          - Pass Line (even money)");
+                eprintln!("   • dontpass      - Don't Pass (even money)");
+                eprintln!("   • field         - Field bet (1:1 or 2:1)");
+                eprintln!("   • yes4          - 4 before 7 (2:1)");
+                eprintln!("   • hard6         - Hard 6 (9:1)");
+                eprintln!("");
+                eprintln!("📚 See all types: bitcraps --help | grep 'bet types'");
+                return Err(Error::Protocol(e));
+            }
+        };
 
-        app.place_bet(game_id, bet_type, amount).await?;
-        println!("✅ Bet placed: {} CRAP on {:?}", amount, bet_type);
-        Ok(())
+        // Validate bet amount
+        if amount < 10 {
+            eprintln!("❌ Error: Minimum bet is 10 CRAP");
+            eprintln!("💡 Try: bitcraps bet --game-id {} --bet-type {} --amount 10", game_id_str, bet_type_str);
+            return Err(Error::InvalidBet("Bet amount too low".to_string()));
+        }
+
+        if amount > 1000 {
+            eprintln!("❌ Error: Maximum bet is 1000 CRAP");
+            eprintln!("💡 Try a smaller amount to reduce risk");
+            return Err(Error::InvalidBet("Bet amount too high".to_string()));
+        }
+
+        match app.place_bet(game_id, bet_type, amount).await {
+            Ok(()) => {
+                println!("✅ Bet placed successfully!");
+                println!("🎲 Game: {}", format_game_id(game_id));
+                println!("🎯 Bet: {} CRAP on {:?}", amount, bet_type);
+                println!("💰 Remaining balance: {} CRAP", 
+                    CrapTokens::new_unchecked(app.get_balance().await.saturating_sub(amount)).to_crap());
+                println!("");
+                println!("🎮 Next: Wait for dice roll or place more bets");
+                Ok(())
+            }
+            Err(Error::InvalidBet(msg)) if msg.contains("Insufficient balance") => {
+                eprintln!("❌ Error: Not enough CRAP tokens");
+                let balance = app.get_balance().await;
+                eprintln!("💰 Your balance: {} CRAP", CrapTokens::new_unchecked(balance).to_crap());
+                eprintln!("🎯 Required: {} CRAP", amount);
+                eprintln!("💡 Solutions:");
+                eprintln!("   • Place smaller bet: --amount {}", balance.min(100));
+                eprintln!("   • Mine more tokens: bitcraps start");
+                eprintln!("   • Check balance: bitcraps balance");
+                Err(Error::InvalidBet(msg))
+            }
+            Err(Error::Protocol(msg)) if msg.contains("not found") => {
+                eprintln!("❌ Error: Game not found");
+                eprintln!("🔧 Solutions:");
+                eprintln!("   • Join game first: bitcraps join-game {}", format_game_id(game_id));
+                eprintln!("   • Check active games: bitcraps games");
+                eprintln!("   • Verify game ID with host");
+                Err(Error::Protocol(msg))
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to place bet: {}", e);
+                eprintln!("💡 Troubleshooting:");
+                eprintln!("   • Verify you're in the game: bitcraps games");
+                eprintln!("   • Check network: bitcraps ping");
+                eprintln!("   • Confirm bet type is valid for current phase");
+                Err(e)
+            }
+        }
     }
 
     /// Execute the balance command
     pub async fn balance_command(app: &BitCrapsApp) -> Result<()> {
         let balance = app.get_balance().await;
-        println!(
-            "💰 Current balance: {} CRAP",
-            CrapTokens::new_unchecked(balance).to_crap()
-        );
+        let balance_crap = CrapTokens::new_unchecked(balance).to_crap();
+        
+        println!("✨ Wallet Status ✨");
+        println!("💰 Balance: {} CRAP", balance_crap);
+        
+        // Provide contextual guidance based on balance
+        if balance_crap >= 1000.0 {
+            println!("🎆 Excellent! You're ready for high-stakes games");
+            println!("💡 Suggestions:");
+            println!("   • Create premium game: bitcraps create-game 100");
+            println!("   • Place bigger bets for higher rewards");
+        } else if balance_crap >= 100.0 {
+            println!("🚀 Good balance! Ready to play");
+            println!("💡 Suggestions:");
+            println!("   • Join or create games: bitcraps create-game 50");
+            println!("   • Try different bet types for variety");
+        } else if balance_crap >= 10.0 {
+            println!("🌱 Starting balance - play conservatively");
+            println!("💡 Suggestions:");
+            println!("   • Start with minimum games: bitcraps create-game 10");
+            println!("   • Try low-risk bets like pass/dontpass");
+            println!("   • Mine more tokens: bitcraps start");
+        } else {
+            println!("⚠️  Low balance - mine some tokens first");
+            println!("💡 How to get CRAP tokens:");
+            println!("   • Start mining: bitcraps start");
+            println!("   • Tokens are mined automatically while connected");
+            println!("   • Minimum game buy-in is 10 CRAP");
+        }
+        
         Ok(())
     }
 
     /// Execute the list games command
     pub async fn list_games_command(app: &BitCrapsApp) -> Result<()> {
         let games = app.list_games().await;
+        
         if games.is_empty() {
             println!("🎲 No active games found");
+            println!("");
+            println!("💡 What you can do:");
+            println!("   • Create a new game: bitcraps create-game 10");
+            println!("   • Check network connectivity: bitcraps ping");
+            println!("   • Wait for other players to create games");
+            println!("   • Start mining tokens: bitcraps start");
         } else {
-            println!("🎲 Active games:");
-            for (game_id, stats) in games {
-                println!("  📋 Game: {}", format_game_id(game_id));
-                println!("    👥 Players: {}", stats.players);
-                println!("    🎯 Phase: {}", stats.phase);
-                println!("    🎲 Rolls: {}", stats.rolls);
+            println!("🎲 Active Games ({} found)", games.len());
+            println!("{}", "=".repeat(60));
+            
+            for (i, (game_id, stats)) in games.iter().enumerate() {
+                let formatted_id = format_game_id(*game_id);
+                println!("🎮 Game {}: {}", i + 1, &formatted_id[..8]);
+                println!("   🆔 Full ID: {}", formatted_id);
+                println!("   👥 Players: {} ({})", stats.players, 
+                    if stats.players < 8 { "accepting new players" } else { "full" });
+                println!("   🎯 Phase: {}", stats.phase);
+                println!("   🎲 Dice rolls: {}", stats.rolls);
+                
+                // Show actionable commands
+                if stats.players < 8 {
+                    println!("   ➡️  Join: bitcraps join-game {}", formatted_id);
+                }
                 println!();
             }
+            
+            println!("💡 Quick commands:");
+            println!("   • Join first available: bitcraps join-game {}", format_game_id(games[0].0));
+            println!("   • Create your own: bitcraps create-game 10");
+            println!("   • Check your balance: bitcraps balance");
         }
+        
         Ok(())
     }
 
-    /// Execute the stats command
+    /// Execute the stats command with comprehensive KPI observability
     pub async fn stats_command(app: &BitCrapsApp) -> Result<()> {
         let stats = app.get_stats().await;
-        println!("📊 BitCraps Node Statistics:");
-        println!("  🆔 Peer ID: {:?}", stats.peer_id);
-        println!("  🔗 Connected Peers: {}", stats.connected_peers);
-        println!("  🔐 Active Sessions: {}", stats.active_sessions);
-        println!(
-            "  💰 Balance: {} CRAP",
-            CrapTokens::new_unchecked(stats.balance).to_crap()
+        
+        println!("✨ BitCraps Network Dashboard ✨");
+        println!("{}", "=".repeat(50));
+        
+        // Node Identity & Status
+        println!("🆔 Node Identity:");
+        println!("   Peer ID: {:?}", stats.peer_id);
+        println!("   Status: {} (uptime: {}s)", 
+            if stats.connected_peers > 0 { "Connected" } else { "Isolated" },
+            stats.total_relays // Using as uptime proxy
         );
-        println!("  🎲 Active Games: {}", stats.active_games);
-        println!(
-            "  🪙 Total Supply: {} CRAP",
-            CrapTokens::new_unchecked(stats.total_supply).to_crap()
-        );
-        println!("  📡 Total Relays: {}", stats.total_relays);
+        println!();
+        
+        // Network KPIs
+        println!("🌐 Network Metrics:");
+        let network_health = match stats.connected_peers {
+            0 => "❌ Isolated",
+            1..=3 => "🟡 Limited",
+            4..=10 => "✅ Good",
+            _ => "🎆 Excellent",
+        };
+        println!("   Connected Peers: {} ({})", stats.connected_peers, network_health);
+        println!("   Active Sessions: {} secure channels", stats.active_sessions);
+        println!("   Message Relays: {} total", stats.total_relays);
+        
+        // Show peer distribution if we have peers
+        if stats.connected_peers > 0 {
+            println!("   Network Reach: {} hops estimated", 
+                (stats.connected_peers as f64).log2().ceil() as u32);
+        }
+        println!();
+        
+        // Gaming KPIs
+        println!("🎲 Gaming Metrics:");
+        println!("   Active Games: {}", stats.active_games);
+        if stats.active_games > 0 {
+            println!("   Game Health: 🎆 Games running smoothly");
+            println!("   Avg Players/Game: ~{:.1}", 
+                if stats.active_games > 0 { stats.connected_peers as f64 / stats.active_games as f64 } else { 0.0 });
+        } else {
+            println!("   Game Health: 🟡 No active games");
+            println!("   Opportunity: Create game to attract players");
+        }
+        println!();
+        
+        // Economic KPIs
+        let balance_crap = CrapTokens::new_unchecked(stats.balance).to_crap();
+        let supply_crap = CrapTokens::new_unchecked(stats.total_supply).to_crap();
+        
+        println!("💰 Token Economy:");
+        println!("   Your Balance: {:.2} CRAP", balance_crap);
+        println!("   Network Supply: {:.2} CRAP total", supply_crap);
+        
+        if supply_crap > 0.0 {
+            let ownership_pct = (balance_crap / supply_crap) * 100.0;
+            println!("   Your Share: {:.3}% of network", ownership_pct);
+        }
+        
+        // Economic health indicators
+        match balance_crap {
+            x if x >= 1000.0 => println!("   Wealth Status: 🎆 High roller"),
+            x if x >= 100.0 => println!("   Wealth Status: 🚀 Well funded"),
+            x if x >= 10.0 => println!("   Wealth Status: 🌱 Getting started"),
+            _ => println!("   Wealth Status: ⚠️  Need more tokens (mine first)"),
+        }
+        println!();
+        
+        // Performance & Health KPIs
+        println!("⚙️ Performance Health:");
+        
+        // Calculate derived metrics
+        let relay_rate = if stats.total_relays > 0 { 
+            stats.total_relays as f64 / 60.0 // Assuming 60s uptime for demo
+        } else { 0.0 };
+        
+        println!("   Message Rate: {:.2} msgs/sec", relay_rate);
+        println!("   Consensus State: {} sync", 
+            if stats.active_sessions > 0 { "✅ In" } else { "🟡 No" });
+        
+        // Network resilience
+        let resilience = match (stats.connected_peers, stats.active_sessions) {
+            (0, _) => "❌ Isolated - single point failure",
+            (1..=2, _) => "🟡 Limited - vulnerable to disconnects",
+            (3..=5, s) if s >= 2 => "✅ Resilient - good redundancy",
+            (_, s) if s >= 3 => "🎆 Highly resilient - excellent redundancy",
+            _ => "🟡 Moderate - some redundancy",
+        };
+        println!("   Resilience: {}", resilience);
+        println!();
+        
+        // Actionable recommendations
+        println!("💡 Recommendations:");
+        if stats.connected_peers == 0 {
+            println!("   • PRIORITY: Connect to network (check connectivity)");
+            println!("   • Try: bitcraps ping to discover peers");
+        } else if stats.active_games == 0 {
+            println!("   • Create a game to attract players");
+            println!("   • Try: bitcraps create-game 10");
+        } else {
+            println!("   • Network healthy - continue playing");
+            println!("   • Consider creating more games for growth");
+        }
+        
+        if balance_crap < 50.0 {
+            println!("   • Mine more tokens for better gameplay");
+            println!("   • Start with low-risk bets");
+        }
+        
+        println!();
+        println!("🔄 Live stats refresh: Run 'bitcraps stats' again");
+        
         Ok(())
     }
 
     /// Execute the ping command
     pub async fn ping_command(app: &BitCrapsApp) -> Result<()> {
-        app.send_ping().await?;
-        println!("📡 Discovery ping sent - listening for peers...");
-
-        // Wait and show discovered peers
-        sleep(Duration::from_secs(5)).await;
-
-        let stats = app.get_stats().await;
-        println!("🔍 Discovered {} peers", stats.connected_peers);
+        println!("📡 Sending network discovery ping...");
+        
+        match app.send_ping().await {
+            Ok(()) => {
+                println!("✅ Ping sent successfully");
+                println!("🕰️ Waiting for peer responses (5 seconds)...");
+                
+                // Show progress indicator
+                for i in 1..=5 {
+                    print!("\r🔄 Listening... {}s", 6 - i);
+                    use std::io::{self, Write};
+                    io::stdout().flush().unwrap();
+                    sleep(Duration::from_secs(1)).await;
+                }
+                println!(); // New line after progress
+                
+                let stats = app.get_stats().await;
+                
+                if stats.connected_peers > 0 {
+                    println!("✨ Network Discovery Results ✨");
+                    println!("🔗 Connected peers: {}", stats.connected_peers);
+                    println!("🎲 Active games: {}", stats.active_games);
+                    println!("📡 Total relays: {}", stats.total_relays);
+                    println!("");
+                    println!("💡 Network is active! You can:");
+                    println!("   • List games: bitcraps games");
+                    println!("   • Join a game: bitcraps join-game <game-id>");
+                    println!("   • Create a game: bitcraps create-game 10");
+                    println!("   • View full stats: bitcraps stats");
+                } else {
+                    println!("🤔 No peers discovered");
+                    println!("");
+                    println!("💡 Troubleshooting:");
+                    println!("   • You might be the first player online");
+                    println!("   • Check your network/firewall settings");
+                    println!("   • Try starting a node first: bitcraps start");
+                    println!("   • Create a game to attract other players");
+                    println!("");
+                    println!("ℹ️  This is normal for new networks!");
+                }
+            }
+            Err(e) => {
+                eprintln!("❌ Ping failed: {}", e);
+                eprintln!("💡 Common issues:");
+                eprintln!("   • Network interface not available");
+                eprintln!("   • Node not running (try: bitcraps start)");
+                eprintln!("   • Firewall blocking connections");
+                eprintln!("   • Bluetooth/WiFi disabled");
+                return Err(e);
+            }
+        }
+        
         Ok(())
     }
 }

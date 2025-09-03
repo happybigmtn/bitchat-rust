@@ -18,7 +18,7 @@ pub trait BinarySerializable: Sized {
     /// Feynman: "How do I fit into a telegram?"
     fn serialize(&self, buf: &mut BytesMut) -> Result<(), Error>;
 
-    /// Unpack this type from bytes  
+    /// Unpack this type from bytes
     /// Feynman: "How do I reconstruct myself from a telegram?"
     fn deserialize(buf: &mut &[u8]) -> Result<Self, Error>;
 

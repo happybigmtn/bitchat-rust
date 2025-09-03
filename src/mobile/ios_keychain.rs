@@ -14,7 +14,6 @@ use crate::utils::GrowableBuffer;
 use serde::{Deserialize, Serialize};
 use std::ffi::CString;
 use std::os::raw::c_int;
-use std::ptr;
 
 /// iOS Keychain interface (alias for compatibility)
 pub type IOSKeychain = IOSKeychainManager;
@@ -124,7 +123,9 @@ impl IOSKeychainManager {
         #[cfg(target_os = "ios")]
         {
             // Start with a small buffer, will grow if needed
-            let buffer_slice = self.buffer.get_mut(1024)
+            let buffer_slice = self
+                .buffer
+                .get_mut(1024)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::OutOfMemory, e))?;
             let mut actual_size: usize = 0;
 
@@ -149,7 +150,9 @@ impl IOSKeychainManager {
                 0 => {
                     // If the data was larger than our initial buffer, try again with correct size
                     if actual_size > buffer_slice.len() {
-                        let larger_buffer = self.buffer.get_mut(actual_size)
+                        let larger_buffer = self
+                            .buffer
+                            .get_mut(actual_size)
                             .map_err(|e| std::io::Error::new(std::io::ErrorKind::OutOfMemory, e))?;
                         // SAFETY: Second retrieval with correct buffer size
                         // Buffer has been resized to accommodate actual_size bytes
@@ -165,7 +168,7 @@ impl IOSKeychainManager {
                                 &mut actual_size,
                             )
                         };
-                        
+
                         if result == 0 {
                             self.buffer.mark_used(actual_size);
                             Ok(Some(self.buffer.as_slice(actual_size).to_vec()))

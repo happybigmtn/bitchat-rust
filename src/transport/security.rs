@@ -12,32 +12,25 @@
 
 use aes_gcm::{aead::Aead as AesAead, Aes256Gcm, KeyInit, Nonce as AesNonce};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
+use dashmap::DashMap;
 use hkdf::Hkdf;
+use parking_lot::{Mutex as ParkingMutex, RwLock as ParkingRwLock};
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::{Mutex, RwLock};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 use zeroize::Zeroize;
 
+use crate::config::scalability::ScalabilityConfig;
 use crate::crypto::{BitchatIdentity, GameCrypto};
 use crate::error::{Error, Result};
 use crate::protocol::PeerId;
 
-/// BLE message size limit (244 bytes for single packet)
-const BLE_MAX_PAYLOAD_SIZE: usize = 244;
-
 /// Message fragmentation header size
 const FRAGMENT_HEADER_SIZE: usize = 6; // message_id (2) + fragment_num (1) + total_fragments (1) + sequence (2)
-
-/// Key rotation interval (24 hours)
-const KEY_ROTATION_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
-
-/// Maximum message age for replay protection (5 minutes)
-const MAX_MESSAGE_AGE: Duration = Duration::from_secs(5 * 60);
 
 /// Session nonce size
 const SESSION_NONCE_SIZE: usize = 12;
@@ -50,18 +43,39 @@ const HMAC_SIZE: usize = 32;
 pub struct BleSecurityConfig {
     /// Use AES-GCM for BLE (true) or ChaCha20Poly1305 (false)
     pub use_aes_gcm: bool,
-    /// Fragment messages > BLE_MAX_PAYLOAD_SIZE
+    /// Fragment messages > max_payload_size
     pub fragment_large_messages: bool,
     /// Enable compression before encryption
     pub enable_compression: bool,
-    /// Maximum message size before fragmentation
+    /// Maximum message size before fragmentation (configurable)
     pub max_message_size: usize,
+    /// BLE maximum payload size (configurable, adaptive)
+    pub ble_max_payload_size: usize,
     /// Enable HMAC for message authentication
     pub enable_hmac: bool,
     /// Enable timestamp validation
     pub enable_timestamp_validation: bool,
-    /// Session key rotation interval in seconds
-    pub key_rotation_interval_secs: u64,
+    /// Session key rotation interval (configurable)
+    pub key_rotation_interval: Duration,
+    /// Maximum message age for replay protection (configurable)
+    pub max_message_age: Duration,
+}
+
+impl BleSecurityConfig {
+    /// Create from scalability configuration
+    pub fn from_scalability_config(config: &ScalabilityConfig) -> Self {
+        Self {
+            use_aes_gcm: true, // AES-GCM is preferred for BLE
+            fragment_large_messages: true,
+            enable_compression: config.network.compression_threshold > 0,
+            max_message_size: config.network.ble_max_payload_size.saturating_sub(80), // Leave room for headers and auth
+            ble_max_payload_size: config.network.ble_max_payload_size,
+            enable_hmac: true,
+            enable_timestamp_validation: true,
+            key_rotation_interval: config.security.key_rotation_interval,
+            max_message_age: config.security.max_message_age,
+        }
+    }
 }
 
 impl Default for BleSecurityConfig {
@@ -70,10 +84,12 @@ impl Default for BleSecurityConfig {
             use_aes_gcm: true, // AES-GCM is preferred for BLE
             fragment_large_messages: true,
             enable_compression: false, // Disabled by default for low latency
-            max_message_size: BLE_MAX_PAYLOAD_SIZE - 80, // Leave room for headers and auth
+            max_message_size: 244 - 80, // Default BLE MTU minus headers
+            ble_max_payload_size: 244, // Default BLE MTU
             enable_hmac: true,
             enable_timestamp_validation: true,
-            key_rotation_interval_secs: 24 * 60 * 60, // 24 hours
+            key_rotation_interval: Duration::from_secs(24 * 60 * 60), // 24 hours
+            max_message_age: Duration::from_secs(5 * 60),             // 5 minutes
         }
     }
 }
@@ -288,7 +304,7 @@ impl SessionKeys {
             .map_err(|_| Error::Crypto("Failed to derive HMAC key".to_string()))?;
 
         let now = Instant::now();
-        let rotation_interval = Duration::from_secs(config.key_rotation_interval_secs);
+        let rotation_interval = config.key_rotation_interval;
 
         Ok(Self {
             aes_key,
@@ -322,21 +338,29 @@ pub struct EnhancedTransportSecurity {
     ephemeral_secret: EphemeralSecret,
     /// Our public key
     public_key: PublicKey,
-    /// Per-peer session keys
-    session_keys: Arc<RwLock<HashMap<PeerId, SessionKeys>>>,
-    /// Per-peer security configuration
-    security_configs: Arc<RwLock<HashMap<PeerId, BleSecurityConfig>>>,
-    /// Fragment assembly states
-    fragment_states: Arc<RwLock<HashMap<PeerId, HashMap<u16, FragmentAssemblyState>>>>,
-    /// Message sequence tracking for replay protection
-    send_sequences: Arc<RwLock<HashMap<PeerId, u64>>>,
-    recv_sequences: Arc<RwLock<HashMap<PeerId, HashMap<u64, Instant>>>>,
+    /// Per-peer session keys - lock-free for high performance
+    session_keys: Arc<DashMap<PeerId, SessionKeys>>,
+    /// Per-peer security configuration - lock-free
+    security_configs: Arc<DashMap<PeerId, BleSecurityConfig>>,
+    /// Fragment assembly states - lock-free with nested maps
+    fragment_states: Arc<DashMap<PeerId, DashMap<u16, FragmentAssemblyState>>>,
+    /// Message sequence tracking for replay protection - lock-free
+    send_sequences: Arc<DashMap<PeerId, u64>>,
+    recv_sequences: Arc<DashMap<PeerId, DashMap<u64, Instant>>>,
     /// Default security configuration
     default_config: BleSecurityConfig,
-    /// Our persistent identity
-    identity: Arc<RwLock<Option<BitchatIdentity>>>,
+    /// Our persistent identity - using parking_lot for better performance
+    identity: Arc<ParkingRwLock<Option<BitchatIdentity>>>,
     /// Key rotation task handle
-    rotation_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    rotation_task: Arc<ParkingMutex<Option<tokio::task::JoinHandle<()>>>>,
+
+    // Metrics tracking
+    metrics_keys_rotated: Arc<AtomicU64>,
+    metrics_messages_encrypted: Arc<AtomicU64>,
+    metrics_messages_decrypted: Arc<AtomicU64>,
+    metrics_fragments_assembled: Arc<AtomicU64>,
+    metrics_hmac_verifications_passed: Arc<AtomicU64>,
+    metrics_replay_attacks_prevented: Arc<AtomicU64>,
 }
 
 impl EnhancedTransportSecurity {
@@ -354,14 +378,20 @@ impl EnhancedTransportSecurity {
         let security = Self {
             ephemeral_secret,
             public_key,
-            session_keys: Arc::new(RwLock::new(HashMap::new())),
-            security_configs: Arc::new(RwLock::new(HashMap::new())),
-            fragment_states: Arc::new(RwLock::new(HashMap::new())),
-            send_sequences: Arc::new(RwLock::new(HashMap::new())),
-            recv_sequences: Arc::new(RwLock::new(HashMap::new())),
+            session_keys: Arc::new(DashMap::new()),
+            security_configs: Arc::new(DashMap::new()),
+            fragment_states: Arc::new(DashMap::new()),
+            send_sequences: Arc::new(DashMap::new()),
+            recv_sequences: Arc::new(DashMap::new()),
             default_config,
-            identity: Arc::new(RwLock::new(None)),
-            rotation_task: Arc::new(Mutex::new(None)),
+            identity: Arc::new(ParkingRwLock::new(None)),
+            rotation_task: Arc::new(ParkingMutex::new(None)),
+            metrics_keys_rotated: Arc::new(AtomicU64::new(0)),
+            metrics_messages_encrypted: Arc::new(AtomicU64::new(0)),
+            metrics_messages_decrypted: Arc::new(AtomicU64::new(0)),
+            metrics_fragments_assembled: Arc::new(AtomicU64::new(0)),
+            metrics_hmac_verifications_passed: Arc::new(AtomicU64::new(0)),
+            metrics_replay_attacks_prevented: Arc::new(AtomicU64::new(0)),
         };
 
         security.start_key_rotation_task();
@@ -375,12 +405,12 @@ impl EnhancedTransportSecurity {
 
     /// Set our persistent identity
     pub async fn set_identity(&self, identity: BitchatIdentity) {
-        *self.identity.write().await = Some(identity);
+        *self.identity.write() = Some(identity);
     }
 
     /// Get our identity
     pub async fn get_identity(&self) -> Option<BitchatIdentity> {
-        self.identity.read().await.clone()
+        self.identity.read().as_ref().cloned()
     }
 
     /// Perform authenticated ECDH key exchange with peer identity verification
@@ -420,21 +450,12 @@ impl EnhancedTransportSecurity {
         )?;
 
         // Store keys and config
-        self.session_keys
-            .write()
-            .await
-            .insert(peer_id, session_keys);
-        self.security_configs
-            .write()
-            .await
-            .insert(peer_id, security_config);
+        self.session_keys.insert(peer_id, session_keys);
+        self.security_configs.insert(peer_id, security_config);
 
         // Initialize sequence counters
-        self.send_sequences.write().await.insert(peer_id, 0);
-        self.recv_sequences
-            .write()
-            .await
-            .insert(peer_id, HashMap::new());
+        self.send_sequences.insert(peer_id, 0);
+        self.recv_sequences.insert(peer_id, DashMap::new());
 
         log::info!(
             "Authenticated key exchange completed for peer {:?}",
@@ -450,12 +471,11 @@ impl EnhancedTransportSecurity {
         plaintext: &[u8],
         message_type: u8,
     ) -> Result<Vec<Vec<u8>>> {
-        let configs = self.security_configs.read().await;
-        let config = configs
+        let config = self
+            .security_configs
             .get(&peer_id)
             .ok_or_else(|| Error::Crypto("No security config for peer".to_string()))?
             .clone();
-        drop(configs);
 
         // Compress if enabled and beneficial
         let data_to_encrypt = if config.enable_compression && plaintext.len() > 100 {
@@ -483,25 +503,28 @@ impl EnhancedTransportSecurity {
         plaintext: &[u8],
         message_type: u8,
     ) -> Result<Vec<u8>> {
-        let mut session_keys = self.session_keys.write().await;
-        let keys = session_keys
+        let mut keys_entry = self
+            .session_keys
             .get_mut(&peer_id)
             .ok_or_else(|| Error::Crypto("No session keys for peer".to_string()))?;
+        let keys = keys_entry.value_mut();
 
         // Get next sequence number
-        let mut send_sequences = self.send_sequences.write().await;
-        let sequence = send_sequences.entry(peer_id).or_insert(0);
-        *sequence = sequence.wrapping_add(1);
-        let current_sequence = *sequence;
-        drop(send_sequences);
+        let current_sequence = {
+            let mut sequence_entry = self.send_sequences.entry(peer_id).or_insert(0);
+            *sequence_entry = sequence_entry.wrapping_add(1);
+            *sequence_entry
+        };
 
         // Create authenticated header
         let mut header = AuthenticatedHeader::new(current_sequence, message_type, keys.version);
 
         // Choose encryption method
         let (use_aes_gcm, enable_hmac) = {
-            let configs = self.security_configs.read().await;
-            let config = configs.get(&peer_id).unwrap();
+            let config = self
+                .security_configs
+                .get(&peer_id)
+                .ok_or_else(|| Error::Crypto("No security config for peer".to_string()))?;
             (config.use_aes_gcm, config.enable_hmac)
         };
 
@@ -531,6 +554,10 @@ impl EnhancedTransportSecurity {
         // Final message: header + nonce + encrypted_data
         let mut final_message = header.to_bytes();
         final_message.extend_from_slice(&message_data);
+
+        // Track metrics
+        self.metrics_messages_encrypted
+            .fetch_add(1, Ordering::Relaxed);
 
         Ok(final_message)
     }
@@ -592,10 +619,11 @@ impl EnhancedTransportSecurity {
         plaintext: &[u8],
         message_type: u8,
     ) -> Result<Vec<Vec<u8>>> {
-        let configs = self.security_configs.read().await;
-        let config = configs.get(&peer_id).unwrap();
-        let max_fragment_size = config.max_message_size - FRAGMENT_HEADER_SIZE;
-        drop(configs);
+        let config = self
+            .security_configs
+            .get(&peer_id)
+            .ok_or_else(|| Error::Crypto("No security config for peer".to_string()))?;
+        let max_fragment_size = config.max_message_size.saturating_sub(FRAGMENT_HEADER_SIZE);
 
         // Generate unique message ID
         let message_id = rand::random::<u16>();
@@ -642,7 +670,7 @@ impl EnhancedTransportSecurity {
 
         // Verify timestamp if enabled
         let (enable_timestamp_validation, enable_hmac, use_aes_gcm, enable_compression) = {
-            let configs = self.security_configs.read().await;
+            let configs = &self.security_configs;
             let config = configs
                 .get(&peer_id)
                 .ok_or_else(|| Error::Crypto("No security config for peer".to_string()))?;
@@ -654,29 +682,43 @@ impl EnhancedTransportSecurity {
             )
         };
 
-        if enable_timestamp_validation && !header.is_fresh(MAX_MESSAGE_AGE) {
+        let max_message_age = {
+            let config = self
+                .security_configs
+                .get(&peer_id)
+                .map(|c| c.max_message_age)
+                .unwrap_or_else(|| self.default_config.max_message_age);
+            config
+        };
+
+        if enable_timestamp_validation && !header.is_fresh(max_message_age) {
             return Err(Error::Crypto("Message too old".to_string()));
         }
 
         // Verify sequence number (replay protection)
-        let mut recv_sequences = self.recv_sequences.write().await;
-        let peer_sequences = recv_sequences.entry(peer_id).or_insert_with(HashMap::new);
+        let peer_sequences = self
+            .recv_sequences
+            .entry(peer_id)
+            .or_insert_with(DashMap::new);
 
         if peer_sequences.contains_key(&header.sequence) {
+            self.metrics_replay_attacks_prevented
+                .fetch_add(1, Ordering::Relaxed);
             return Err(Error::Crypto("Replay attack detected".to_string()));
         }
         peer_sequences.insert(header.sequence, Instant::now());
 
         // Clean up old sequences periodically
         if peer_sequences.len() > 10000 {
-            let cutoff = Instant::now() - MAX_MESSAGE_AGE;
+            let cutoff = Instant::now() - max_message_age;
             peer_sequences.retain(|_, timestamp| *timestamp > cutoff);
         }
-        drop(recv_sequences);
+        drop(peer_sequences);
 
         // Verify HMAC if enabled
-        let session_keys = self.session_keys.read().await;
-        let keys = session_keys
+        // Access session keys directly (DashMap)
+        let keys = self
+            .session_keys
             .get(&peer_id)
             .ok_or_else(|| Error::Crypto("No session keys for peer".to_string()))?;
 
@@ -693,15 +735,21 @@ impl EnhancedTransportSecurity {
             if !keys.verify_hmac(&hmac_input, &header.hmac) {
                 return Err(Error::Crypto("HMAC verification failed".to_string()));
             }
+            self.metrics_hmac_verifications_passed
+                .fetch_add(1, Ordering::Relaxed);
         }
 
         // Decrypt
         let plaintext = if use_aes_gcm {
-            self.decrypt_with_aes_gcm(keys, message_data)?
+            self.decrypt_with_aes_gcm(keys.value(), message_data)?
         } else {
-            self.decrypt_with_chacha20(keys, message_data)?
+            self.decrypt_with_chacha20(keys.value(), message_data)?
         };
-        drop(session_keys);
+        // keys guard dropped automatically
+
+        // Track successful decryption
+        self.metrics_messages_decrypted
+            .fetch_add(1, Ordering::Relaxed);
 
         // Handle fragmentation
         if plaintext.len() >= FRAGMENT_HEADER_SIZE {
@@ -791,15 +839,17 @@ impl EnhancedTransportSecurity {
         header: FragmentHeader,
         fragment_data: &[u8],
     ) -> Result<Option<Vec<u8>>> {
-        let mut fragment_states = self.fragment_states.write().await;
-        let peer_fragments = fragment_states.entry(peer_id).or_insert_with(HashMap::new);
+        let peer_fragments = self
+            .fragment_states
+            .entry(peer_id)
+            .or_insert_with(DashMap::new);
 
         // Clean up old fragment states
         let cutoff = Instant::now() - Duration::from_secs(30);
         peer_fragments.retain(|_, state| state.first_fragment_time > cutoff);
 
         // Get or create assembly state
-        let assembly_state =
+        let mut assembly_state =
             peer_fragments
                 .entry(header.message_id)
                 .or_insert_with(|| FragmentAssemblyState {
@@ -838,6 +888,10 @@ impl EnhancedTransportSecurity {
             // Remove assembly state
             peer_fragments.remove(&header.message_id);
 
+            // Track fragments assembled
+            self.metrics_fragments_assembled
+                .fetch_add(1, Ordering::Relaxed);
+
             Ok(Some(complete_message))
         } else {
             Ok(None) // Still assembling
@@ -846,8 +900,8 @@ impl EnhancedTransportSecurity {
 
     /// Rotate session keys for a peer
     pub async fn rotate_peer_keys(&self, peer_id: PeerId) -> Result<()> {
-        let mut session_keys = self.session_keys.write().await;
-        if let Some(keys) = session_keys.get_mut(&peer_id) {
+        if let Some(mut keys_entry) = self.session_keys.get_mut(&peer_id) {
+            let keys = keys_entry.value_mut();
             if !keys.needs_rotation() {
                 return Ok(());
             }
@@ -857,12 +911,11 @@ impl EnhancedTransportSecurity {
             let mut new_shared_secret = [0u8; 32];
             OsRng.fill_bytes(&mut new_shared_secret);
 
-            let configs = self.security_configs.read().await;
-            let config = configs
+            let config = self
+                .security_configs
                 .get(&peer_id)
-                .cloned()
+                .map(|c| c.clone())
                 .unwrap_or_else(|| self.default_config.clone());
-            drop(configs);
 
             let new_version = keys.version.wrapping_add(1);
             let new_keys = SessionKeys::new(&new_shared_secret, new_version, &config)?;
@@ -874,6 +927,7 @@ impl EnhancedTransportSecurity {
                 peer_id,
                 new_version
             );
+            self.metrics_keys_rotated.fetch_add(1, Ordering::Relaxed);
         }
 
         Ok(())
@@ -889,10 +943,10 @@ impl EnhancedTransportSecurity {
             loop {
                 interval.tick().await;
 
-                let keys_guard = session_keys.read().await;
-                let peers_needing_rotation: Vec<PeerId> = keys_guard
+                let peers_needing_rotation: Vec<PeerId> = session_keys
                     .iter()
-                    .filter_map(|(peer_id, keys)| {
+                    .filter_map(|entry| {
+                        let (peer_id, keys) = entry.pair();
                         if keys.needs_rotation() {
                             Some(*peer_id)
                         } else {
@@ -900,7 +954,6 @@ impl EnhancedTransportSecurity {
                         }
                     })
                     .collect();
-                drop(keys_guard);
 
                 for peer_id in peers_needing_rotation {
                     log::info!("Key rotation needed for peer {:?}", peer_id);
@@ -916,31 +969,34 @@ impl EnhancedTransportSecurity {
 
     /// Remove peer from all security tracking
     pub async fn remove_peer(&self, peer_id: PeerId) {
-        self.session_keys.write().await.remove(&peer_id);
-        self.security_configs.write().await.remove(&peer_id);
-        self.fragment_states.write().await.remove(&peer_id);
-        self.send_sequences.write().await.remove(&peer_id);
-        self.recv_sequences.write().await.remove(&peer_id);
+        self.session_keys.remove(&peer_id);
+        self.security_configs.remove(&peer_id);
+        self.fragment_states.remove(&peer_id);
+        self.send_sequences.remove(&peer_id);
+        self.recv_sequences.remove(&peer_id);
     }
 
     /// Get security statistics
     pub async fn get_security_stats(&self) -> EnhancedSecurityStats {
-        let session_keys = self.session_keys.read().await;
-        let configs = self.security_configs.read().await;
-        let fragments = self.fragment_states.read().await;
-        let recv_seqs = self.recv_sequences.read().await;
+        // Access session keys directly (DashMap)
+        // security_configs is a DashMap, not RwLock, so we iterate directly
+        let configs: Vec<_> = self
+            .security_configs
+            .iter()
+            .map(|e| e.value().clone())
+            .collect();
 
-        let active_sessions = session_keys.len();
-        let aes_gcm_sessions = configs.values().filter(|c| c.use_aes_gcm).count();
+        let active_sessions = self.session_keys.len();
+        let aes_gcm_sessions = configs.iter().filter(|c| c.use_aes_gcm).count();
         let chacha20_sessions = active_sessions - aes_gcm_sessions;
-        let hmac_enabled_sessions = configs.values().filter(|c| c.enable_hmac).count();
-        let fragment_enabled_sessions = configs
-            .values()
-            .filter(|c| c.fragment_large_messages)
-            .count();
+        let hmac_enabled_sessions = configs.iter().filter(|c| c.enable_hmac).count();
+        let fragment_enabled_sessions =
+            configs.iter().filter(|c| c.fragment_large_messages).count();
 
-        let total_tracked_sequences = recv_seqs.values().map(|seqs| seqs.len()).sum();
-        let active_fragment_assemblies = fragments.values().map(|f| f.len()).sum();
+        let total_tracked_sequences: usize =
+            self.recv_sequences.iter().map(|e| e.value().len()).sum();
+        let active_fragment_assemblies: usize =
+            self.fragment_states.iter().map(|e| e.value().len()).sum();
 
         EnhancedSecurityStats {
             active_sessions,
@@ -950,12 +1006,16 @@ impl EnhancedTransportSecurity {
             fragment_enabled_sessions,
             total_tracked_sequences,
             active_fragment_assemblies,
-            keys_rotated: 0,              // TODO: track this
-            messages_encrypted: 0,        // TODO: track this
-            messages_decrypted: 0,        // TODO: track this
-            fragments_assembled: 0,       // TODO: track this
-            hmac_verifications_passed: 0, // TODO: track this
-            replay_attacks_prevented: 0,  // TODO: track this
+            keys_rotated: self.metrics_keys_rotated.load(Ordering::Relaxed),
+            messages_encrypted: self.metrics_messages_encrypted.load(Ordering::Relaxed),
+            messages_decrypted: self.metrics_messages_decrypted.load(Ordering::Relaxed),
+            fragments_assembled: self.metrics_fragments_assembled.load(Ordering::Relaxed),
+            hmac_verifications_passed: self
+                .metrics_hmac_verifications_passed
+                .load(Ordering::Relaxed),
+            replay_attacks_prevented: self
+                .metrics_replay_attacks_prevented
+                .load(Ordering::Relaxed),
         }
     }
 }

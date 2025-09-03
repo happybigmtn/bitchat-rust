@@ -22,7 +22,7 @@ impl InfrastructureMonitor {
         default_thresholds.insert("memory_high".to_string(), 90.0);
         default_thresholds.insert("disk_high".to_string(), 85.0);
         default_thresholds.insert("error_rate_high".to_string(), 5.0);
-        
+
         let final_config = MonitoringConfig {
             alert_thresholds: if config.alert_thresholds.is_empty() {
                 default_thresholds
@@ -31,7 +31,7 @@ impl InfrastructureMonitor {
             },
             ..config
         };
-        
+
         Ok(Self {
             config: final_config,
             metrics: Arc::new(RwLock::new(SystemMetrics::default())),
@@ -47,15 +47,15 @@ impl InfrastructureMonitor {
     pub async fn get_active_alerts(&self) -> Vec<Alert> {
         let metrics = self.get_current_metrics().await;
         let mut alerts = Vec::new();
-        
+
         // Check CPU utilization
         if metrics.cpu_usage_percent > self.config.alert_thresholds.get("cpu_high").unwrap_or(&85.0) {
             alerts.push(Alert {
                 id: format!("cpu_high_{}", chrono::Utc::now().timestamp()),
-                severity: if metrics.cpu_usage_percent > 95.0 { 
-                    AlertSeverity::Critical 
-                } else { 
-                    AlertSeverity::Warning 
+                severity: if metrics.cpu_usage_percent > 95.0 {
+                    AlertSeverity::Critical
+                } else {
+                    AlertSeverity::Warning
                 },
                 title: "High CPU Usage".to_string(),
                 description: format!("CPU usage is at {:.1}%", metrics.cpu_usage_percent),
@@ -68,7 +68,7 @@ impl InfrastructureMonitor {
                 ]),
             });
         }
-        
+
         // Check memory utilization
         if metrics.memory_usage_percent > self.config.alert_thresholds.get("memory_high").unwrap_or(&90.0) {
             alerts.push(Alert {
@@ -85,7 +85,7 @@ impl InfrastructureMonitor {
                 ]),
             });
         }
-        
+
         // Check disk usage
         if metrics.disk_usage_percent > self.config.alert_thresholds.get("disk_high").unwrap_or(&85.0) {
             alerts.push(Alert {
@@ -102,7 +102,7 @@ impl InfrastructureMonitor {
                 ]),
             });
         }
-        
+
         // Check error rate
         if metrics.error_rate > self.config.alert_thresholds.get("error_rate_high").unwrap_or(&5.0) {
             alerts.push(Alert {
@@ -119,24 +119,24 @@ impl InfrastructureMonitor {
                 ]),
             });
         }
-        
+
         alerts
     }
-    
+
     /// Start monitoring loop
     pub async fn start_monitoring(&self) -> Result<(), MonitoringError> {
         let metrics = Arc::clone(&self.metrics);
         let config = self.config.clone();
         let history = Arc::clone(&self.metrics_history);
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(
                 std::time::Duration::from_secs(config.collection_interval_seconds)
             );
-            
+
             loop {
                 interval.tick().await;
-                
+
                 match Self::collect_system_metrics().await {
                     Ok(fresh_metrics) => {
                         // Store in history
@@ -144,22 +144,22 @@ impl InfrastructureMonitor {
                             timestamp: chrono::Utc::now(),
                             metrics: fresh_metrics.clone(),
                         };
-                        
+
                         {
                             let mut history_guard = history.write().await;
                             history_guard.push(historical);
-                            
+
                             // Keep only recent history (based on retention_days)
                             let cutoff = chrono::Utc::now() - chrono::Duration::days(config.retention_days as i64);
                             history_guard.retain(|h| h.timestamp > cutoff);
                         }
-                        
+
                         // Update current metrics
                         {
                             let mut metrics_guard = metrics.write().await;
                             *metrics_guard = fresh_metrics;
                         }
-                        
+
                         tracing::debug!("Updated system metrics");
                     },
                     Err(e) => {
@@ -168,22 +168,22 @@ impl InfrastructureMonitor {
                 }
             }
         });
-        
+
         tracing::info!("Started infrastructure monitoring loop");
         Ok(())
     }
-    
+
     /// Get historical metrics
     pub async fn get_metrics_history(&self, hours: u32) -> Vec<HistoricalMetric> {
         let history = self.metrics_history.read().await;
         let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
-        
+
         history.iter()
             .filter(|h| h.timestamp > cutoff)
             .cloned()
             .collect()
     }
-    
+
     /// Add custom alert rule
     pub async fn add_alert_rule(&self, rule: AlertRule) -> Result<(), MonitoringError> {
         let mut rules = self.alert_rules.write().await;
@@ -191,24 +191,24 @@ impl InfrastructureMonitor {
         tracing::info!("Added new alert rule");
         Ok(())
     }
-    
+
     /// Collect fresh system metrics
     async fn collect_system_metrics() -> Result<SystemMetrics, MonitoringError> {
         #[cfg(target_os = "linux")]
         {
             Self::collect_linux_metrics().await
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             Self::collect_simulated_metrics().await
         }
     }
-    
+
     #[cfg(target_os = "linux")]
     async fn collect_linux_metrics() -> Result<SystemMetrics, MonitoringError> {
         use tokio::fs;
-        
+
         // Read CPU info from /proc/stat
         let cpu_usage = match fs::read_to_string("/proc/loadavg").await {
             Ok(content) => {
@@ -220,13 +220,13 @@ impl InfrastructureMonitor {
             },
             Err(_) => 25.0, // Fallback
         };
-        
+
         // Read memory info from /proc/meminfo
         let memory_usage = match fs::read_to_string("/proc/meminfo").await {
             Ok(content) => {
                 let mut total_kb = 0u64;
                 let mut available_kb = 0u64;
-                
+
                 for line in content.lines() {
                     if line.starts_with("MemTotal:") {
                         total_kb = line.split_whitespace()
@@ -240,7 +240,7 @@ impl InfrastructureMonitor {
                             .unwrap_or(0);
                     }
                 }
-                
+
                 if total_kb > 0 {
                     ((total_kb - available_kb) as f64 / total_kb as f64 * 100.0)
                 } else {
@@ -249,10 +249,10 @@ impl InfrastructureMonitor {
             },
             Err(_) => 50.0, // Fallback
         };
-        
+
         // Check disk usage using statvfs
         let disk_usage = Self::get_disk_usage("/").await.unwrap_or(45.0);
-        
+
         Ok(SystemMetrics {
             cpu_usage_percent: cpu_usage,
             memory_usage_percent: memory_usage,
@@ -263,42 +263,42 @@ impl InfrastructureMonitor {
             error_rate: 1.2,    // This would come from application metrics
         })
     }
-    
+
     #[cfg(target_os = "linux")]
     async fn get_disk_usage(path: &str) -> Result<f64, MonitoringError> {
         use std::ffi::CString;
         use std::mem;
-        
+
         // This is a simplified version - in a real implementation,
         // you'd use proper system calls or libraries like sysinfo
         Ok(45.0) // Placeholder
     }
-    
+
     #[cfg(target_os = "linux")]
     async fn get_network_throughput() -> Result<f64, MonitoringError> {
         // Would read from /proc/net/dev or use netlink
         Ok(12.5) // Placeholder
     }
-    
+
     #[cfg(target_os = "linux")]
     async fn get_active_connections() -> Result<usize, MonitoringError> {
         // Would read from /proc/net/tcp and /proc/net/udp
         Ok(42) // Placeholder
     }
-    
+
     #[cfg(not(target_os = "linux"))]
     async fn collect_simulated_metrics() -> Result<SystemMetrics, MonitoringError> {
         // Simulate realistic metrics for non-Linux systems
         use std::time::{SystemTime, UNIX_EPOCH};
-        
+
         let seed = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs() / 30; // Change every 30 seconds
-            
+
         let cpu_base = 20.0 + (seed % 40) as f64; // 20-60% CPU
         let memory_base = 45.0 + (seed % 25) as f64; // 45-70% memory
-        
+
         Ok(SystemMetrics {
             cpu_usage_percent: cpu_base,
             memory_usage_percent: memory_base,
@@ -356,7 +356,7 @@ impl Default for MonitoringConfig {
         thresholds.insert("memory_high".to_string(), 90.0);
         thresholds.insert("disk_high".to_string(), 85.0);
         thresholds.insert("error_rate_high".to_string(), 5.0);
-        
+
         Self {
             collection_interval_seconds: 60,
             retention_days: 30,
@@ -402,7 +402,7 @@ mod tests {
     async fn test_infrastructure_monitor_creation() {
         let config = MonitoringConfig::default();
         let monitor = InfrastructureMonitor::new(config).await.unwrap();
-        
+
         let metrics = monitor.get_current_metrics().await;
         assert_eq!(metrics.cpu_usage_percent, 0.0);
     }
@@ -411,15 +411,15 @@ mod tests {
     async fn test_alert_generation() {
         let mut config = MonitoringConfig::default();
         config.alert_thresholds.insert("cpu_high".to_string(), 50.0);
-        
+
         let monitor = InfrastructureMonitor::new(config).await.unwrap();
-        
+
         // Manually set high CPU usage
         {
             let mut metrics = monitor.metrics.write().await;
             metrics.cpu_usage_percent = 75.0;
         }
-        
+
         let alerts = monitor.get_active_alerts().await;
         assert!(!alerts.is_empty());
         assert_eq!(alerts[0].title, "High CPU Usage");
@@ -429,7 +429,7 @@ mod tests {
     async fn test_metrics_history() {
         let config = MonitoringConfig::default();
         let monitor = InfrastructureMonitor::new(config).await.unwrap();
-        
+
         let history = monitor.get_metrics_history(24).await;
         assert_eq!(history.len(), 0); // Initially empty
     }

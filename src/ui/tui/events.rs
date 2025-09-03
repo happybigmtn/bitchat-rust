@@ -205,7 +205,7 @@ impl MessageStore {
     pub async fn load_messages(&self, limit: usize) -> Result<Vec<ChatMessage>, StorageError> {
         let db = self.db.lock().await;
         let mut stmt = db.prepare(
-            "SELECT id, sender, content, timestamp, channel FROM messages 
+            "SELECT id, sender, content, timestamp, channel FROM messages
              ORDER BY timestamp DESC LIMIT ?1",
         )?;
 

@@ -87,7 +87,8 @@ impl AsyncDatabasePool {
 
             // Enable WAL mode
             if enable_wal {
-                let _: String = conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
+                let _: String = conn
+                    .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
                     .map_err(|e| Error::Database(e.to_string()))?;
             }
 
@@ -106,14 +107,14 @@ impl AsyncDatabasePool {
                     reputation INTEGER DEFAULT 0,
                     data BLOB
                 );
-                
+
                 CREATE TABLE IF NOT EXISTS game_state (
                     game_id BLOB PRIMARY KEY,
                     state BLOB NOT NULL,
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 );
-                
+
                 CREATE TABLE IF NOT EXISTS transactions (
                     tx_id BLOB PRIMARY KEY,
                     from_peer BLOB NOT NULL,
@@ -122,7 +123,7 @@ impl AsyncDatabasePool {
                     timestamp INTEGER NOT NULL,
                     signature BLOB NOT NULL
                 );
-                
+
                 CREATE INDEX IF NOT EXISTS idx_peers_last_seen ON peers(last_seen);
                 CREATE INDEX IF NOT EXISTS idx_transactions_timestamp ON transactions(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_game_state_updated ON game_state(updated_at);
@@ -203,7 +204,8 @@ impl AsyncDatabasePool {
             let conn = Connection::open(&path).map_err(|e| Error::Database(e.to_string()))?;
 
             // Set pragmas
-            let _: String = conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
+            let _: String = conn
+                .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
                 .map_err(|e| Error::Database(e.to_string()))?;
             conn.busy_timeout(Duration::from_secs(5))
                 .map_err(|e| Error::Database(e.to_string()))?;
@@ -270,7 +272,8 @@ impl AsyncDatabasePool {
             let mut conn = Connection::open(&path).map_err(|e| Error::Database(e.to_string()))?;
 
             // Set pragmas
-            let _: String = conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
+            let _: String = conn
+                .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
                 .map_err(|e| Error::Database(e.to_string()))?;
             conn.busy_timeout(Duration::from_secs(5))
                 .map_err(|e| Error::Database(e.to_string()))?;
@@ -372,10 +375,11 @@ impl AsyncDatabasePool {
                     let conn = Connection::open(&checkpoint_path)
                         .map_err(|e| Error::Database(e.to_string()))?;
 
-                    let _: (i64, i64) = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
-                        Ok((row.get(0)?, row.get(1)?))
-                    })
-                    .map_err(|e| Error::Database(e.to_string()))?;
+                    let _: (i64, i64) = conn
+                        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                            Ok((row.get(0)?, row.get(1)?))
+                        })
+                        .map_err(|e| Error::Database(e.to_string()))?;
 
                     Ok(())
                 })
@@ -416,7 +420,7 @@ impl AsyncDatabasePool {
 
         self.execute(move |conn| {
             conn.execute(
-                "INSERT OR REPLACE INTO peers (peer_id, public_key, address, last_seen) 
+                "INSERT OR REPLACE INTO peers (peer_id, public_key, address, last_seen)
                  VALUES (?1, ?2, ?3, ?4)",
                 params![peer_id, public_key, address, timestamp],
             )

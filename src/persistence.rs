@@ -37,6 +37,53 @@ impl PersistenceManager {
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
     }
+
+    /// Save string data to a file
+    pub async fn save_string(&self, filename: &str, data: &str) -> Result<()> {
+        let file_path = self.data_dir.join(filename);
+        fs::write(&file_path, data).await.map_err(|e| {
+            Error::Network(format!(
+                "Failed to write file {}: {}",
+                file_path.display(),
+                e
+            ))
+        })?;
+        Ok(())
+    }
+
+    /// Load string data from a file
+    pub async fn load_string(&self, filename: &str) -> Result<Option<String>> {
+        let file_path = self.data_dir.join(filename);
+
+        if !file_path.exists() {
+            return Ok(None);
+        }
+
+        let data = fs::read_to_string(&file_path).await.map_err(|e| {
+            Error::Network(format!(
+                "Failed to read file {}: {}",
+                file_path.display(),
+                e
+            ))
+        })?;
+        Ok(Some(data))
+    }
+
+    /// Delete a file
+    pub async fn delete_file(&self, filename: &str) -> Result<()> {
+        let file_path = self.data_dir.join(filename);
+
+        if file_path.exists() {
+            fs::remove_file(&file_path).await.map_err(|e| {
+                Error::Network(format!(
+                    "Failed to delete file {}: {}",
+                    file_path.display(),
+                    e
+                ))
+            })?;
+        }
+        Ok(())
+    }
 }
 
 impl Default for PersistenceManager {

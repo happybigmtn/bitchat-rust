@@ -4,11 +4,13 @@ use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 use parking_lot::{Mutex, RwLock};
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
+use std::io::Read;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 use zstd;
 
+use crate::protocol::p2p_messages::ConsensusPayload;
 use crate::protocol::{P2PMessage, PeerId};
 use crate::transport::TransportError;
 
@@ -252,17 +254,53 @@ impl NetworkOptimizer {
         &self,
         optimized: &OptimizedPayload,
     ) -> Result<Bytes, TransportError> {
+        // Maximum decompressed size: 10MB to prevent compression bombs
+        const MAX_DECOMPRESSED_SIZE: usize = 10 * 1024 * 1024;
+
         match optimized.compression_type {
             CompressionType::None => Ok(optimized.data.clone()),
             CompressionType::Lz4 => {
+                // LZ4 with size prepended includes the decompressed size
                 let decompressed = decompress_size_prepended(&optimized.data)
                     .map_err(|e| TransportError::CompressionError(e.to_string()))?;
+
+                if decompressed.len() > MAX_DECOMPRESSED_SIZE {
+                    return Err(TransportError::CompressionError(format!(
+                        "Decompressed size {} exceeds maximum {}",
+                        decompressed.len(),
+                        MAX_DECOMPRESSED_SIZE
+                    )));
+                }
                 Ok(Bytes::from(decompressed))
             }
             CompressionType::Zstd => {
                 let decompressed = tokio::task::spawn_blocking({
                     let data = optimized.data.clone();
-                    move || zstd::decode_all(data.as_ref())
+                    move || {
+                        // Use zstd with size limit
+                        let mut decoder = zstd::Decoder::new(data.as_ref())?;
+                        let mut output = Vec::with_capacity(1024);
+                        let mut buffer = [0u8; 8192];
+                        let mut total_read = 0usize;
+
+                        loop {
+                            match decoder.read(&mut buffer) {
+                                Ok(0) => break,
+                                Ok(n) => {
+                                    total_read += n;
+                                    if total_read > MAX_DECOMPRESSED_SIZE {
+                                        return Err(std::io::Error::new(
+                                            std::io::ErrorKind::InvalidData,
+                                            "Decompressed size exceeds limit",
+                                        ));
+                                    }
+                                    output.extend_from_slice(&buffer[..n]);
+                                }
+                                Err(e) => return Err(e),
+                            }
+                        }
+                        Ok::<Vec<u8>, std::io::Error>(output)
+                    }
                 })
                 .await
                 .map_err(|e| TransportError::CompressionError(e.to_string()))?
@@ -273,9 +311,21 @@ impl NetworkOptimizer {
                 let decompressed = tokio::task::spawn_blocking({
                     let data = optimized.data.clone();
                     move || {
-                        let mut output = Vec::new();
+                        let mut output = Vec::with_capacity(std::cmp::min(
+                            data.len() * 4, // Reasonable expansion ratio
+                            MAX_DECOMPRESSED_SIZE,
+                        ));
                         let mut reader = data.as_ref();
-                        brotli::BrotliDecompress(&mut reader, &mut output).map(|_| output)
+                        brotli::BrotliDecompress(&mut reader, &mut output).map(|_| {
+                            if output.len() > MAX_DECOMPRESSED_SIZE {
+                                Err(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    format!("Decompressed size exceeds maximum"),
+                                ))
+                            } else {
+                                Ok(output)
+                            }
+                        })?
                     }
                 })
                 .await
@@ -286,18 +336,25 @@ impl NetworkOptimizer {
         }
     }
 
-    /// Add message to batch queue for peer
+    /// Add message to batch queue for peer (with priority handling)
     pub async fn add_to_batch(
         &self,
         peer_id: &PeerId,
         message: P2PMessage,
     ) -> Option<Vec<P2PMessage>> {
+        let peer_metrics = self.get_peer_metrics(peer_id);
+
+        // High priority messages bypass batching
+        if !self.should_batch_message(&peer_metrics, &message) {
+            return Some(vec![message]);
+        }
+
         let mut queues = self.batch_queues.write();
         let queue = queues
             .entry(*peer_id)
             .or_insert_with(|| BatchQueue::new(self.config.clone()));
 
-        queue.add_message(message);
+        queue.add_message_with_priority(message);
 
         // Check if batch should be sent
         if queue.should_send() {
@@ -305,6 +362,16 @@ impl NetworkOptimizer {
         } else {
             None
         }
+    }
+
+    /// Add high priority message that bypasses batching entirely
+    pub async fn add_urgent_message(
+        &self,
+        _peer_id: &PeerId,
+        message: P2PMessage,
+    ) -> Vec<P2PMessage> {
+        // Urgent messages are sent immediately, no batching
+        vec![message]
     }
 
     /// Force send all batched messages for peer
@@ -342,10 +409,22 @@ impl NetworkOptimizer {
 
     /// Determine if message should be batched
     fn should_batch_message(&self, peer_metrics: &PeerMetrics, message: &P2PMessage) -> bool {
-        // Don't batch urgent messages - TODO: implement priority checking based on payload
-        // if message.priority > 200 {
-        //     return false;
-        // }
+        // Get message priority from payload
+        let priority = self.extract_message_priority(message);
+
+        // Never batch high-priority messages (>= 200)
+        if priority >= 200 {
+            return false;
+        }
+
+        // Never batch urgent message types
+        match &message.payload {
+            ConsensusPayload::DisputeClaim { .. } | ConsensusPayload::DisputeVote { .. } => {
+                return false
+            }
+            ConsensusPayload::RandomnessReveal { .. } => return false,
+            _ => {}
+        }
 
         // Don't batch if connection is very fast
         if peer_metrics.bandwidth_mbps > 50.0 && peer_metrics.latency < Duration::from_millis(10) {
@@ -354,6 +433,33 @@ impl NetworkOptimizer {
 
         // Batch for slower connections to improve efficiency
         peer_metrics.bandwidth_mbps < 10.0 || peer_metrics.latency > Duration::from_millis(100)
+    }
+
+    /// Extract priority from message payload
+    fn extract_message_priority(&self, message: &P2PMessage) -> u8 {
+        match &message.payload {
+            // High priority messages (200+)
+            ConsensusPayload::DisputeClaim { .. } => 255,
+            ConsensusPayload::DisputeVote { .. } => 250,
+            ConsensusPayload::RandomnessReveal { .. } => 245,
+
+            // Leader election priority from proposal
+            ConsensusPayload::Proposal { priority, .. } => *priority,
+
+            // Medium priority messages (100-199)
+            ConsensusPayload::Vote { .. } => 150,
+            ConsensusPayload::StateSync { .. } => 140,
+            ConsensusPayload::RandomnessCommit { .. } => 130,
+
+            // Low priority messages (<100)
+            ConsensusPayload::JoinRequest { .. } => 80,
+            ConsensusPayload::JoinAccept { .. } => 70,
+            ConsensusPayload::JoinReject { .. } => 60,
+            ConsensusPayload::Heartbeat { .. } => 50,
+
+            // Default priority for unknown messages
+            _ => 100,
+        }
     }
 
     /// Estimate transmission time for optimized payload
@@ -495,7 +601,7 @@ pub enum ConnectionQuality {
     Excellent,
 }
 
-/// Message batching queue for efficient transmission
+/// Message batching queue for efficient transmission with priority support
 struct BatchQueue {
     messages: VecDeque<P2PMessage>,
     first_message_time: Option<Instant>,
@@ -516,6 +622,55 @@ impl BatchQueue {
             self.first_message_time = Some(Instant::now());
         }
         self.messages.push_back(message);
+    }
+
+    /// Add message with priority-based insertion
+    fn add_message_with_priority(&mut self, message: P2PMessage) {
+        if self.messages.is_empty() {
+            self.first_message_time = Some(Instant::now());
+            self.messages.push_back(message);
+            return;
+        }
+
+        let message_priority = self.get_message_priority(&message);
+
+        // Find the right position to maintain priority order (higher priority first)
+        let mut insert_index = self.messages.len();
+        for (i, existing_message) in self.messages.iter().enumerate() {
+            let existing_priority = self.get_message_priority(existing_message);
+            if message_priority > existing_priority {
+                insert_index = i;
+                break;
+            }
+        }
+
+        self.messages.insert(insert_index, message);
+    }
+
+    /// Get priority for a message (simplified version for BatchQueue)
+    fn get_message_priority(&self, message: &P2PMessage) -> u8 {
+        match &message.payload {
+            // High priority (200+)
+            ConsensusPayload::DisputeClaim { .. } => 255,
+            ConsensusPayload::DisputeVote { .. } => 250,
+            ConsensusPayload::RandomnessReveal { .. } => 245,
+
+            // Leader election priority
+            ConsensusPayload::Proposal { priority, .. } => *priority,
+
+            // Medium priority (100-199)
+            ConsensusPayload::Vote { .. } => 150,
+            ConsensusPayload::StateSync { .. } => 140,
+            ConsensusPayload::RandomnessCommit { .. } => 130,
+
+            // Low priority (<100)
+            ConsensusPayload::JoinRequest { .. } => 80,
+            ConsensusPayload::JoinAccept { .. } => 70,
+            ConsensusPayload::JoinReject { .. } => 60,
+            ConsensusPayload::Heartbeat { .. } => 50,
+
+            _ => 100,
+        }
     }
 
     fn should_send(&self) -> bool {

@@ -22,7 +22,7 @@ pub struct CompactGameState {
 
     /// Packed game metadata - 8 bytes total
     /// Bits 0-1: Phase (2 bits: ComeOut=0, Point=1, Ended=2)
-    /// Bits 2-5: Point value (4 bits: 0=none, 4-10 encoded as 4-10)  
+    /// Bits 2-5: Point value (4 bits: 0=none, 4-10 encoded as 4-10)
     /// Bits 6-31: Series ID (26 bits: up to 67M series)
     /// Bits 32-63: Roll count (32 bits: up to 4B rolls)
     pub metadata: u64,
@@ -431,7 +431,7 @@ pub struct StateSnapshot {
     /// Base state at checkpoint
     pub base_state: CompactGameState,
 
-    /// Delta operations since base state  
+    /// Delta operations since base state
     pub deltas: Vec<StateDelta>,
 
     /// Snapshot timestamp

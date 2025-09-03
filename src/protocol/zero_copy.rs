@@ -162,7 +162,7 @@ impl<'a> ZeroCopyWriter<'a> {
         self.write_bytes(peer_id)
     }
 
-    /// Write a game ID (16 bytes)  
+    /// Write a game ID (16 bytes)
     pub fn write_game_id(&mut self, game_id: &GameId) -> Result<()> {
         self.write_bytes(game_id)
     }

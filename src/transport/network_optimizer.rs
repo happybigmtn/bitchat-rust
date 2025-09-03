@@ -1,5 +1,5 @@
 //! Production Network Optimization for BitCraps
-//! 
+//!
 //! This module provides advanced network optimization features for production deployment:
 //! - Adaptive connection pooling
 //! - Intelligent load balancing
@@ -20,6 +20,7 @@ use tracing::{info, warn, error, debug};
 use crate::transport::connection_pool::ConnectionPool;
 use crate::monitoring::metrics::METRICS;
 use crate::utils::LoopBudget;
+use crate::utils::task_tracker::{spawn_tracked, TaskType};
 
 /// Network optimization engine
 pub struct NetworkOptimizer {
@@ -42,7 +43,7 @@ pub struct NetworkOptimizer {
 impl NetworkOptimizer {
     pub fn new(config: NetworkOptimizerConfig) -> Self {
         let connection_pool = Arc::new(ConnectionPool::new(config.max_connections));
-        
+
         Self {
             connection_pool: Arc::clone(&connection_pool),
             load_balancer: Arc::new(LoadBalancer::new(config.load_balancer)),
@@ -65,26 +66,46 @@ impl NetworkOptimizer {
         let latency_optimizer = Arc::clone(&self.latency_optimizer);
         let stats_collector = Arc::clone(&self.stats_collector);
 
-        // Start background tasks
-        tokio::spawn(async move {
-            load_balancer.start_optimization().await;
-        });
+        // Start background tasks with tracking
+        spawn_tracked(
+            "load_balancer_optimization",
+            TaskType::Network,
+            async move {
+                load_balancer.start_optimization().await;
+            },
+        ).await;
 
-        tokio::spawn(async move {
-            protocol_optimizer.start_optimization().await;
-        });
+        spawn_tracked(
+            "protocol_optimization",
+            TaskType::Network,
+            async move {
+                protocol_optimizer.start_optimization().await;
+            },
+        ).await;
 
-        tokio::spawn(async move {
-            bandwidth_manager.start_management().await;
-        });
+        spawn_tracked(
+            "bandwidth_management",
+            TaskType::Network,
+            async move {
+                bandwidth_manager.start_management().await;
+            },
+        ).await;
 
-        tokio::spawn(async move {
-            latency_optimizer.start_optimization().await;
-        });
+        spawn_tracked(
+            "latency_optimization",
+            TaskType::Network,
+            async move {
+                latency_optimizer.start_optimization().await;
+            },
+        ).await;
 
-        tokio::spawn(async move {
-            stats_collector.start_collection().await;
-        });
+        spawn_tracked(
+            "network_stats_collection",
+            TaskType::Maintenance,
+            async move {
+                stats_collector.start_collection().await;
+            },
+        ).await;
 
         // Start adaptive connection pool management
         self.start_adaptive_pooling().await;
@@ -142,22 +163,25 @@ impl NetworkOptimizer {
         let stats_collector = Arc::clone(&self.stats_collector);
         let config = self.config.clone();
 
-        tokio::spawn(async move {
+        spawn_tracked(
+            "adaptive_connection_pooling",
+            TaskType::Network,
+            async move {
             let mut interval = interval(Duration::from_secs(30));
             let mut budget = LoopBudget::for_maintenance();
-            
+
             loop {
                 // Check budget before processing
                 if !budget.can_proceed() {
                     budget.backoff().await;
                     continue;
                 }
-                
+
                 interval.tick().await;
                 budget.consume(1);
-                
+
                 let stats = stats_collector.get_current_stats().await;
-                
+
                 // Adaptive pool sizing based on utilization
                 let utilization = stats.connection_utilization_percent;
                 let target_size = if utilization > 80.0 {
@@ -171,15 +195,15 @@ impl NetworkOptimizer {
                 };
 
                 if target_size != connection_pool.capacity() {
-                    debug!("Adjusting connection pool size from {} to {} (utilization: {:.1}%)", 
+                    debug!("Adjusting connection pool size from {} to {} (utilization: {:.1}%)",
                         connection_pool.capacity(), target_size, utilization);
-                    
+
                     if let Err(e) = connection_pool.resize_pool(target_size).await {
                         warn!("Failed to resize connection pool: {:?}", e);
                     }
                 }
             }
-        });
+        }).await;
     }
 
     /// Reset to balanced optimization settings
@@ -213,20 +237,20 @@ impl LoadBalancer {
     pub async fn start_optimization(&self) {
         let mut interval = interval(Duration::from_secs(10));
         let mut budget = LoopBudget::for_network();
-        
+
         loop {
             // Check budget before processing
             if !budget.can_proceed() {
                 budget.backoff().await;
                 continue;
             }
-            
+
             interval.tick().await;
             budget.consume(1);
-            
+
             // Update server health
             self.health_checker.check_all_servers(&self.servers).await;
-            
+
             // Optimize load balancing strategy
             self.optimize_strategy().await;
         }
@@ -245,7 +269,7 @@ impl LoadBalancer {
         let variance = loads.iter()
             .map(|load| (load - avg_load).powi(2))
             .sum::<f64>() / loads.len() as f64;
-        
+
         // Efficiency is inversely related to variance (lower variance = higher efficiency)
         1.0 / (1.0 + variance)
     }
@@ -262,7 +286,7 @@ impl LoadBalancer {
         }
 
         let strategy = *self.current_strategy.read().await;
-        
+
         match strategy {
             LoadBalanceStrategy::RoundRobin => {
                 // Simple round-robin selection
@@ -307,7 +331,7 @@ impl LoadBalancer {
     async fn optimize_strategy(&self) {
         // Analyze current performance and adjust strategy
         let efficiency = self.get_efficiency().await;
-        
+
         if efficiency < 0.7 {
             // Switch to least connections if efficiency is low
             *self.current_strategy.write().await = LoadBalanceStrategy::LeastConnections;
@@ -329,14 +353,14 @@ impl LoadBalancer {
         // Simplified weighted selection
         let mut cumulative_weight = 0;
         let target = fastrand::u32(0..total_weight);
-        
+
         for server in servers {
             cumulative_weight += server.weight;
             if cumulative_weight > target {
                 return Some(server.address);
             }
         }
-        
+
         servers.first().map(|s| s.address)
     }
 }
@@ -365,17 +389,17 @@ impl ProtocolOptimizer {
     pub async fn start_optimization(&self) {
         let mut interval = interval(Duration::from_secs(15));
         let mut budget = LoopBudget::for_consensus();
-        
+
         loop {
             // Check budget before processing
             if !budget.can_proceed() {
                 budget.backoff().await;
                 continue;
             }
-            
+
             interval.tick().await;
             budget.consume(1);
-            
+
             // Analyze protocol performance and adjust settings
             self.analyze_and_optimize().await;
         }
@@ -407,14 +431,14 @@ impl ProtocolOptimizer {
 
     async fn analyze_and_optimize(&self) {
         let mut stats = self.stats.write().await;
-        
+
         // Update compression ratio based on recent performance
         stats.compression_ratio = self.calculate_compression_ratio().await;
-        
+
         // Adjust compression based on CPU usage and bandwidth
         let cpu_usage = METRICS.resources.cpu_usage_percent.load(Ordering::Relaxed) as f64;
         let bandwidth_usage = self.get_bandwidth_usage().await;
-        
+
         if cpu_usage > 80.0 && bandwidth_usage < 50.0 {
             // High CPU, low bandwidth - reduce compression
             *self.compression_level.write().await = CompressionLevel::Fast;
@@ -457,21 +481,21 @@ impl BandwidthManager {
     /// Start bandwidth management
     pub async fn start_management(&self) {
         let current_throughput = Arc::clone(&self.current_throughput);
-        
+
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(1));
             let mut budget = LoopBudget::for_network();
-            
+
             loop {
                 // Check budget before processing
                 if !budget.can_proceed() {
                     budget.backoff().await;
                     continue;
                 }
-                
+
                 interval.tick().await;
                 budget.consume(1);
-                
+
                 // Update current throughput measurement
                 let bytes_sent = METRICS.network.bytes_sent.load(Ordering::Relaxed);
                 current_throughput.store(bytes_sent, Ordering::Relaxed);
@@ -518,21 +542,21 @@ impl LatencyOptimizer {
     /// Start latency optimization
     pub async fn start_optimization(&self) {
         let latency_samples = Arc::clone(&self.latency_samples);
-        
+
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(5));
             let mut budget = LoopBudget::for_consensus();
-            
+
             loop {
                 // Check budget before processing
                 if !budget.can_proceed() {
                     budget.backoff().await;
                     continue;
                 }
-                
+
                 interval.tick().await;
                 budget.consume(1);
-                
+
                 // Collect latency sample
                 let current_latency = METRICS.consensus.average_latency_ms();
                 let mut samples = latency_samples.write().await;
@@ -584,21 +608,21 @@ impl NetworkStatsCollector {
     /// Start statistics collection
     pub async fn start_collection(&self) {
         let stats = Arc::clone(&self.stats);
-        
+
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(5));
             let mut budget = LoopBudget::for_maintenance();
-            
+
             loop {
                 // Check budget before processing
                 if !budget.can_proceed() {
                     budget.backoff().await;
                     continue;
                 }
-                
+
                 interval.tick().await;
                 budget.consume(1);
-                
+
                 // Collect and update network statistics
                 let mut current_stats = stats.write().await;
                 current_stats.update().await;
@@ -782,7 +806,7 @@ impl NetworkStats {
         let active_conns = METRICS.network.active_connections.load(Ordering::Relaxed);
         let total_conns = 1000; // Example capacity
         self.connection_utilization_percent = (active_conns as f64 / total_conns as f64) * 100.0;
-        
+
         // These would be calculated from actual network monitoring
         self.packet_loss_rate = 0.1; // Example: 0.1% packet loss
         self.connection_success_rate = 99.5; // Example: 99.5% success rate
@@ -850,7 +874,7 @@ mod tests {
     async fn test_network_optimizer_creation() {
         let config = NetworkOptimizerConfig::default();
         let optimizer = NetworkOptimizer::new(config);
-        
+
         let metrics = optimizer.get_performance_metrics().await;
         assert_eq!(metrics.active_connections, 0);
     }
@@ -859,7 +883,7 @@ mod tests {
     async fn test_load_balancer() {
         let config = LoadBalancerConfig::default();
         let lb = LoadBalancer::new(config);
-        
+
         let efficiency = lb.get_efficiency().await;
         assert_eq!(efficiency, 1.0); // Perfect efficiency with no servers
     }
@@ -868,7 +892,7 @@ mod tests {
     async fn test_protocol_optimizer() {
         let config = ProtocolOptimizerConfig::default();
         let optimizer = ProtocolOptimizer::new(config);
-        
+
         let compression_ratio = optimizer.get_compression_ratio().await;
         assert_eq!(compression_ratio, 1.0); // Initial ratio
     }

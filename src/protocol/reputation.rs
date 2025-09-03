@@ -516,6 +516,27 @@ impl ReputationManager {
         }
     }
 
+    /// Check if peer is banned
+    pub fn is_banned(&self, peer: &PeerId) -> bool {
+        self.records
+            .get(peer)
+            .map(|r| r.is_banned())
+            .unwrap_or(false)
+    }
+
+    /// Get peer reputation score
+    pub fn get_reputation_score(&self, peer: &PeerId) -> i64 {
+        self.records
+            .get(peer)
+            .map(|r| r.score)
+            .unwrap_or(INITIAL_REPUTATION)
+    }
+
+    /// Get ban expiry timestamp if banned
+    pub fn get_ban_expiry(&self, peer: &PeerId) -> Option<u64> {
+        self.records.get(peer).and_then(|r| r.ban_expiry)
+    }
+
     /// Get reputation leaderboard
     pub fn get_leaderboard(&self, limit: usize) -> Vec<(PeerId, i64)> {
         let mut scores: Vec<(PeerId, i64)> = self

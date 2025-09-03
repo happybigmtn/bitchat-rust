@@ -1,5 +1,5 @@
 //! Economic Models for Token Economics Analysis
-//! 
+//!
 //! This module implements sophisticated mathematical models for analyzing
 //! and predicting token economics behavior, including:
 //! - Token valuation models using various approaches
@@ -22,22 +22,22 @@ use crate::error::{Error, Result};
 pub struct TokenValuationModel {
     /// Network Value-to-Transaction (NVT) ratio
     pub nvt_ratio: f64,
-    
+
     /// Market cap to total supply ratio
     pub market_cap_ratio: f64,
-    
+
     /// Token velocity metrics
     pub velocity_metrics: VelocityMetrics,
-    
+
     /// Metcalfe's law valuation (value ∝ users²)
     pub metcalfe_valuation: f64,
-    
+
     /// Discounted cash flow model parameters
     pub dcf_model: DiscountedCashFlowModel,
-    
+
     /// Comparable analysis with other tokens
     pub comparable_analysis: ComparableAnalysis,
-    
+
     /// Fundamental value based on utility
     pub fundamental_value: FundamentalValue,
 }
@@ -46,13 +46,13 @@ pub struct TokenValuationModel {
 pub struct VelocityMetrics {
     /// Token velocity (transactions per token per time period)
     pub velocity: f64,
-    
+
     /// Average holding time
     pub average_hold_time: Duration,
-    
+
     /// Turnover ratio (trading volume / market cap)
     pub turnover_ratio: f64,
-    
+
     /// Dormancy flow (old coins vs new coins moved)
     pub dormancy_flow: f64,
 }
@@ -61,16 +61,16 @@ pub struct VelocityMetrics {
 pub struct DiscountedCashFlowModel {
     /// Expected future cash flows
     pub future_cash_flows: Vec<f64>,
-    
+
     /// Discount rate (risk-free rate + risk premium)
     pub discount_rate: f64,
-    
+
     /// Terminal value growth rate
     pub terminal_growth_rate: f64,
-    
+
     /// Present value of cash flows
     pub present_value: f64,
-    
+
     /// Risk premium for token volatility
     pub risk_premium: f64,
 }
@@ -79,13 +79,13 @@ pub struct DiscountedCashFlowModel {
 pub struct ComparableAnalysis {
     /// Price-to-earnings equivalents for similar tokens
     pub pe_multiples: Vec<f64>,
-    
+
     /// Price-to-book equivalents
     pub pb_multiples: Vec<f64>,
-    
+
     /// Enterprise value to revenue ratios
     pub ev_revenue_ratios: Vec<f64>,
-    
+
     /// Market cap to active users ratios
     pub mc_user_ratios: Vec<f64>,
 }
@@ -94,16 +94,16 @@ pub struct ComparableAnalysis {
 pub struct FundamentalValue {
     /// Value derived from gaming utility
     pub gaming_utility_value: f64,
-    
+
     /// Value from staking rewards
     pub staking_value: f64,
-    
+
     /// Value from governance rights
     pub governance_value: f64,
-    
+
     /// Network effect value
     pub network_effect_value: f64,
-    
+
     /// Scarcity premium
     pub scarcity_premium: f64,
 }
@@ -113,13 +113,13 @@ pub struct FundamentalValue {
 pub struct LiquidityModel {
     /// Market depth at various price levels
     pub market_depth: MarketDepth,
-    
+
     /// Order book analysis
     pub order_book_metrics: OrderBookMetrics,
-    
+
     /// Liquidity risk assessment
     pub liquidity_risk: LiquidityRisk,
-    
+
     /// Market impact functions
     pub market_impact: MarketImpactModel,
 }
@@ -128,10 +128,10 @@ pub struct LiquidityModel {
 pub struct MarketDepth {
     /// Bid-ask spread at different percentiles
     pub bid_ask_spreads: HashMap<u32, f64>, // percentile -> spread
-    
+
     /// Order book depth (quantity available at price levels)
     pub depth_levels: Vec<DepthLevel>,
-    
+
     /// Price impact for different trade sizes
     pub price_impacts: HashMap<u64, f64>, // trade_size -> price_impact
 }
@@ -149,13 +149,13 @@ pub struct DepthLevel {
 pub struct OrderBookMetrics {
     /// Order book imbalance ratio
     pub imbalance_ratio: f64,
-    
+
     /// Weighted mid price
     pub weighted_mid_price: f64,
-    
+
     /// Order flow toxicity measure
     pub order_flow_toxicity: f64,
-    
+
     /// Microstructure noise level
     pub microstructure_noise: f64,
 }
@@ -164,13 +164,13 @@ pub struct OrderBookMetrics {
 pub struct LiquidityRisk {
     /// Liquidity-at-Risk (LaR) measure
     pub liquidity_at_risk: f64,
-    
+
     /// Funding liquidity risk
     pub funding_liquidity_risk: f64,
-    
+
     /// Market liquidity risk
     pub market_liquidity_risk: f64,
-    
+
     /// Concentration risk (single large holders)
     pub concentration_risk: f64,
 }
@@ -179,13 +179,13 @@ pub struct LiquidityRisk {
 pub struct MarketImpactModel {
     /// Linear market impact coefficient
     pub linear_impact: f64,
-    
+
     /// Square-root market impact coefficient
     pub sqrt_impact: f64,
-    
+
     /// Temporary vs permanent impact ratio
     pub temp_permanent_ratio: f64,
-    
+
     /// Recovery half-life for temporary impact
     pub recovery_half_life: Duration,
 }
@@ -195,13 +195,13 @@ pub struct MarketImpactModel {
 pub struct RiskModel {
     /// Value-at-Risk (VaR) calculations
     pub var_analysis: VarAnalysis,
-    
+
     /// Stress testing results
     pub stress_tests: StressTestResults,
-    
+
     /// Correlation analysis with other assets
     pub correlation_analysis: CorrelationAnalysis,
-    
+
     /// Volatility models
     pub volatility_models: VolatilityModels,
 }
@@ -210,13 +210,13 @@ pub struct RiskModel {
 pub struct VarAnalysis {
     /// 1-day VaR at different confidence levels
     pub daily_var: HashMap<u32, f64>, // confidence_level -> var
-    
+
     /// 10-day VaR projections
     pub var_10day: HashMap<u32, f64>,
-    
+
     /// Expected shortfall (conditional VaR)
     pub expected_shortfall: HashMap<u32, f64>,
-    
+
     /// Back-testing results for VaR model accuracy
     pub backtesting_results: BacktestingResults,
 }
@@ -225,16 +225,16 @@ pub struct VarAnalysis {
 pub struct BacktestingResults {
     /// Number of VaR violations
     pub violations: u32,
-    
+
     /// Total observations
     pub total_observations: u32,
-    
+
     /// Violation rate (should match confidence level)
     pub violation_rate: f64,
-    
+
     /// Kupiec test p-value
     pub kupiec_test_pvalue: f64,
-    
+
     /// Model accuracy score
     pub accuracy_score: f64,
 }
@@ -243,10 +243,10 @@ pub struct BacktestingResults {
 pub struct StressTestResults {
     /// Scenario-based stress test results
     pub scenario_results: Vec<StressScenarioResult>,
-    
+
     /// Monte Carlo stress test summary
     pub monte_carlo_summary: MonteCarloSummary,
-    
+
     /// Reverse stress test (break-even point)
     pub reverse_stress_test: f64,
 }
@@ -265,13 +265,13 @@ pub struct StressScenarioResult {
 pub struct MonteCarloSummary {
     /// Number of simulation runs
     pub simulation_runs: u32,
-    
+
     /// Percentile outcomes
     pub outcome_percentiles: HashMap<u32, f64>,
-    
+
     /// Probability of loss exceeding thresholds
     pub loss_probabilities: HashMap<f64, f64>, // threshold -> probability
-    
+
     /// Expected loss under adverse conditions
     pub expected_adverse_loss: f64,
 }
@@ -280,13 +280,13 @@ pub struct MonteCarloSummary {
 pub struct CorrelationAnalysis {
     /// Correlation with major cryptocurrencies
     pub crypto_correlations: HashMap<String, f64>, // symbol -> correlation
-    
+
     /// Correlation with traditional assets
     pub traditional_correlations: HashMap<String, f64>,
-    
+
     /// Rolling correlation windows
     pub rolling_correlations: Vec<RollingCorrelation>,
-    
+
     /// Tail dependence measures
     pub tail_dependence: HashMap<String, f64>,
 }
@@ -302,13 +302,13 @@ pub struct RollingCorrelation {
 pub struct VolatilityModels {
     /// Historical volatility
     pub historical_volatility: f64,
-    
+
     /// GARCH model parameters
     pub garch_model: GarchModel,
-    
+
     /// Implied volatility (if options exist)
     pub implied_volatility: Option<f64>,
-    
+
     /// Volatility clustering measures
     pub volatility_clustering: f64,
 }
@@ -327,13 +327,13 @@ pub struct GarchModel {
 pub struct GameTheoryModel {
     /// Nash equilibrium analysis for different player strategies
     pub nash_equilibria: Vec<NashEquilibrium>,
-    
+
     /// Mechanism design properties
     pub mechanism_properties: MechanismProperties,
-    
+
     /// Auction theory models for token distribution
     pub auction_models: AuctionModels,
-    
+
     /// Coalition formation analysis
     pub coalition_analysis: CoalitionAnalysis,
 }
@@ -359,16 +359,16 @@ pub struct Strategy {
 pub struct MechanismProperties {
     /// Incentive compatibility (truthfulness)
     pub incentive_compatible: bool,
-    
+
     /// Individual rationality (participation constraint)
     pub individual_rational: bool,
-    
+
     /// Budget balance
     pub budget_balanced: bool,
-    
+
     /// Efficiency (social welfare maximization)
     pub efficient: bool,
-    
+
     /// Revenue optimization score
     pub revenue_optimization: f64,
 }
@@ -377,13 +377,13 @@ pub struct MechanismProperties {
 pub struct AuctionModels {
     /// First-price sealed-bid auction results
     pub first_price_auction: AuctionResult,
-    
+
     /// Second-price (Vickrey) auction results
     pub second_price_auction: AuctionResult,
-    
+
     /// Dutch auction dynamics
     pub dutch_auction: AuctionResult,
-    
+
     /// English auction with ascending prices
     pub english_auction: AuctionResult,
 }
@@ -402,13 +402,13 @@ pub struct AuctionResult {
 pub struct CoalitionAnalysis {
     /// Shapley values for fair allocation
     pub shapley_values: HashMap<String, f64>,
-    
+
     /// Core stability analysis
     pub core_stable_allocations: Vec<HashMap<String, f64>>,
-    
+
     /// Bargaining power indices
     pub bargaining_power: HashMap<String, f64>,
-    
+
     /// Coalition formation probabilities
     pub coalition_probabilities: HashMap<String, f64>,
 }
@@ -418,13 +418,13 @@ pub struct CoalitionAnalysis {
 pub struct NetworkEffectsModel {
     /// Metcalfe's law analysis (value ∝ n²)
     pub metcalfe_analysis: MetcalfeAnalysis,
-    
+
     /// Reed's law analysis (value ∝ 2ⁿ for groups)
     pub reed_analysis: ReedAnalysis,
-    
+
     /// Adoption curve modeling
     pub adoption_curve: AdoptionCurve,
-    
+
     /// Network density and connectivity metrics
     pub network_metrics: NetworkMetrics,
 }
@@ -451,13 +451,13 @@ pub struct ReedAnalysis {
 pub struct AdoptionCurve {
     /// S-curve adoption parameters
     pub adoption_model: AdoptionModel,
-    
+
     /// Current adoption phase
     pub current_phase: AdoptionPhase,
-    
+
     /// Projected user growth
     pub growth_projections: Vec<GrowthProjection>,
-    
+
     /// Viral coefficient (users brought per user)
     pub viral_coefficient: f64,
 }
@@ -535,16 +535,16 @@ impl EconomicModelsEngine {
             historical_data: Arc::new(std::sync::RwLock::new(Vec::new())),
         }
     }
-    
+
     /// Update token valuation using multiple models
     pub fn calculate_token_valuation(&self, market_data: &MarketDataPoint) -> Result<f64> {
         let mut valuation = self.valuation_model.write().unwrap();
-        
+
         // Update NVT ratio
         if market_data.transaction_count > 0 {
             valuation.nvt_ratio = market_data.market_cap / (market_data.transaction_count as f64);
         }
-        
+
         // Update velocity metrics
         let total_supply = 21_000_000.0; // 21M CRAP total supply
         if market_data.volume > 0.0 && market_data.market_cap > 0.0 {
@@ -554,47 +554,47 @@ impl EconomicModelsEngine {
                 (86400.0 / valuation.velocity_metrics.velocity) as u64
             );
         }
-        
+
         // Update Metcalfe's law valuation
         valuation.metcalfe_valuation = (market_data.active_users as f64).powi(2) * 0.0001;
-        
+
         // Update fundamental value components
-        valuation.fundamental_value.gaming_utility_value = 
+        valuation.fundamental_value.gaming_utility_value =
             market_data.active_users as f64 * 0.50; // $0.50 per active user
-        valuation.fundamental_value.staking_value = 
+        valuation.fundamental_value.staking_value =
             market_data.staked_amount * 0.05; // 5% staking premium
-        valuation.fundamental_value.network_effect_value = 
+        valuation.fundamental_value.network_effect_value =
             valuation.metcalfe_valuation * 0.1;
-        
+
         // Calculate composite valuation
-        let composite_value = 
+        let composite_value =
             valuation.fundamental_value.gaming_utility_value +
             valuation.fundamental_value.staking_value +
             valuation.fundamental_value.network_effect_value +
             valuation.fundamental_value.governance_value +
             valuation.fundamental_value.scarcity_premium;
-        
+
         Ok(composite_value / total_supply) // Per-token value
     }
-    
+
     /// Perform Monte Carlo risk simulation
     pub fn monte_carlo_simulation(&self, scenarios: u32, time_horizon_days: u32) -> Result<MonteCarloSummary> {
         let mut outcomes = Vec::with_capacity(scenarios as usize);
         let historical_data = self.historical_data.read().unwrap();
-        
+
         if historical_data.is_empty() {
             return Err(Error::InvalidData("No historical data available".to_string()));
         }
-        
+
         // Calculate daily returns
         let daily_returns: Vec<f64> = historical_data.windows(2)
             .map(|w| (w[1].price / w[0].price - 1.0))
             .collect();
-        
+
         if daily_returns.is_empty() {
             return Err(Error::InvalidData("Insufficient data for simulation".to_string()));
         }
-        
+
         let mean_return = daily_returns.iter().sum::<f64>() / daily_returns.len() as f64;
         let std_dev = {
             let variance = daily_returns.iter()
@@ -602,42 +602,42 @@ impl EconomicModelsEngine {
                 .sum::<f64>() / (daily_returns.len() - 1) as f64;
             variance.sqrt()
         };
-        
+
         // Run Monte Carlo simulations
         for _ in 0..scenarios {
             let mut current_price = historical_data.last().unwrap().price;
             let mut cumulative_return = 0.0;
-            
+
             for _ in 0..time_horizon_days {
                 // Generate random return using normal distribution (simplified)
                 let random_return = mean_return + std_dev * self.generate_normal_random();
                 current_price *= 1.0 + random_return;
                 cumulative_return += random_return;
             }
-            
+
             outcomes.push(cumulative_return);
         }
-        
+
         outcomes.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        
+
         // Calculate percentiles
         let mut outcome_percentiles = HashMap::new();
         for percentile in [5, 10, 25, 50, 75, 90, 95] {
             let index = (scenarios as f64 * percentile as f64 / 100.0) as usize;
             outcome_percentiles.insert(percentile, outcomes[index.min(outcomes.len() - 1)]);
         }
-        
+
         // Calculate loss probabilities
         let mut loss_probabilities = HashMap::new();
         for threshold in [0.1, 0.2, 0.3, 0.5] {
             let losses = outcomes.iter().filter(|&&r| r < -threshold).count();
             loss_probabilities.insert(threshold, losses as f64 / scenarios as f64);
         }
-        
+
         let expected_adverse_loss = outcomes.iter()
             .filter(|&&r| r < outcome_percentiles[&5])
             .sum::<f64>() / outcomes.iter().filter(|&&r| r < outcome_percentiles[&5]).count() as f64;
-        
+
         Ok(MonteCarloSummary {
             simulation_runs: scenarios,
             outcome_percentiles,
@@ -645,7 +645,7 @@ impl EconomicModelsEngine {
             expected_adverse_loss,
         })
     }
-    
+
     /// Calculate optimal auction parameters
     pub fn optimize_auction_mechanism(&self, bidders: u32, value_distribution: &str) -> Result<AuctionResult> {
         // Simplified auction optimization
@@ -655,16 +655,16 @@ impl EconomicModelsEngine {
             "normal" => 0.6, // Higher reserve for normal distribution
             _ => 0.5,
         };
-        
+
         let efficiency_score = match bidders {
             1..=5 => 0.7,
             6..=20 => 0.85,
             21..=100 => 0.95,
             _ => 0.98,
         };
-        
+
         let expected_revenue = reserve_price * bidders as f64 * 0.8; // Simplified calculation
-        
+
         Ok(AuctionResult {
             mechanism_name: "Second-Price Sealed-Bid".to_string(),
             optimal_reserve_price: reserve_price,
@@ -674,7 +674,7 @@ impl EconomicModelsEngine {
             efficiency_score,
         })
     }
-    
+
     /// Analyze network effects using Metcalfe's law
     pub fn analyze_network_effects(&self, current_users: u64, connections_per_user: f64) -> MetcalfeAnalysis {
         let connections = (current_users as f64 * connections_per_user) as u64;
@@ -684,14 +684,14 @@ impl EconomicModelsEngine {
         } else {
             0.0
         };
-        
+
         let metcalfe_value = (current_users as f64).powi(2) * network_density * 0.0001;
         let value_per_user = if current_users > 0 {
             metcalfe_value / current_users as f64
         } else {
             0.0
         };
-        
+
         MetcalfeAnalysis {
             active_users: current_users,
             connections,
@@ -700,20 +700,20 @@ impl EconomicModelsEngine {
             network_density,
         }
     }
-    
+
     /// Add new market data point
     pub fn add_market_data(&self, data_point: MarketDataPoint) {
         let mut historical_data = self.historical_data.write().unwrap();
         historical_data.push(data_point);
-        
+
         // Keep only last 1000 data points to manage memory
         if historical_data.len() > 1000 {
             historical_data.drain(0..historical_data.len() - 1000);
         }
     }
-    
+
     // Helper functions
-    
+
     fn create_default_valuation_model() -> TokenValuationModel {
         TokenValuationModel {
             nvt_ratio: 0.0,
@@ -747,7 +747,7 @@ impl EconomicModelsEngine {
             },
         }
     }
-    
+
     fn create_default_liquidity_model() -> LiquidityModel {
         LiquidityModel {
             market_depth: MarketDepth {
@@ -775,7 +775,7 @@ impl EconomicModelsEngine {
             },
         }
     }
-    
+
     fn create_default_risk_model() -> RiskModel {
         RiskModel {
             var_analysis: VarAnalysis {
@@ -825,7 +825,7 @@ impl EconomicModelsEngine {
             },
         }
     }
-    
+
     fn create_default_game_theory_model() -> GameTheoryModel {
         GameTheoryModel {
             nash_equilibria: Vec::new(),
@@ -878,7 +878,7 @@ impl EconomicModelsEngine {
             },
         }
     }
-    
+
     fn create_default_network_effects_model() -> NetworkEffectsModel {
         NetworkEffectsModel {
             metcalfe_analysis: MetcalfeAnalysis {
@@ -917,14 +917,14 @@ impl EconomicModelsEngine {
             },
         }
     }
-    
+
     fn generate_normal_random(&self) -> f64 {
         // Box-Muller transform for normal random numbers
         use std::f64::consts::PI;
-        
+
         let u1: f64 = rand::random();
         let u2: f64 = rand::random();
-        
+
         (-2.0 * u1.ln()).sqrt() * (2.0 * PI * u2).cos()
     }
 }
@@ -938,11 +938,11 @@ impl Default for EconomicModelsEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_economic_models_creation() {
         let engine = EconomicModelsEngine::new();
-        
+
         // Test basic functionality
         let market_data = MarketDataPoint {
             timestamp: 1640995200, // 2022-01-01
@@ -953,15 +953,15 @@ mod tests {
             transaction_count: 500,
             staked_amount: 500_000.0,
         };
-        
+
         let valuation = engine.calculate_token_valuation(&market_data).unwrap();
         assert!(valuation > 0.0);
     }
-    
+
     #[test]
     fn test_monte_carlo_simulation() {
         let engine = EconomicModelsEngine::new();
-        
+
         // Add some historical data
         for i in 0..10 {
             let data_point = MarketDataPoint {
@@ -975,16 +975,16 @@ mod tests {
             };
             engine.add_market_data(data_point);
         }
-        
+
         let simulation = engine.monte_carlo_simulation(100, 30).unwrap();
         assert_eq!(simulation.simulation_runs, 100);
         assert!(!simulation.outcome_percentiles.is_empty());
     }
-    
+
     #[test]
     fn test_network_effects_analysis() {
         let engine = EconomicModelsEngine::new();
-        
+
         let analysis = engine.analyze_network_effects(1000, 5.0);
         assert_eq!(analysis.active_users, 1000);
         assert_eq!(analysis.connections, 5000);

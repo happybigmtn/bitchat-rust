@@ -78,19 +78,11 @@ async fn basic_example() -> std::result::Result<(), Box<dyn std::error::Error>> 
     let mut coordinator = initializer.initialize_transport().await?;
 
     // Start just advertising (not scanning)
-    coordinator
-        .start_ble_advertising(config.clone())
-        .await?;
+    coordinator.start_ble_advertising(config.clone()).await?;
 
     println!("✅ BLE advertising started successfully");
-    println!(
-        "📡 Advertising as: {}",
-        config.local_name
-    );
-    println!(
-        "🔧 Service UUID: {}",
-        config.service_uuid
-    );
+    println!("📡 Advertising as: {}", config.local_name);
+    println!("🔧 Service UUID: {}", config.service_uuid);
 
     // Monitor for events
     println!("🔍 Monitoring for connection events (30 seconds)...");

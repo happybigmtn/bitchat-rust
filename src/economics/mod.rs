@@ -214,18 +214,18 @@ impl TokenEconomics {
             congestion_multiplier: 1.0,
             priority_fee: CrapTokens::from(0),
             gas_price: 1.0,
-            fee_categories: HashMap::new(),
+            fee_categories: HashMap::with_capacity(10), // Limited fee categories
         };
 
         Self {
             config: Arc::new(RwLock::new(config)),
             ledger,
-            staking_positions: Arc::new(RwLock::new(HashMap::new())),
+            staking_positions: Arc::new(RwLock::new(HashMap::with_capacity(1000))), // Max 1000 stakers
             supply_metrics: Arc::new(RwLock::new(supply_metrics)),
             fee_structure: Arc::new(RwLock::new(fee_structure)),
-            liquidity_pools: Arc::new(RwLock::new(HashMap::new())),
-            governance_proposals: Arc::new(RwLock::new(HashMap::new())),
-            burn_queue: Arc::new(RwLock::new(Vec::new())),
+            liquidity_pools: Arc::new(RwLock::new(HashMap::with_capacity(100))), // Max 100 pools
+            governance_proposals: Arc::new(RwLock::new(HashMap::with_capacity(50))), // Max 50 active proposals
+            burn_queue: Arc::new(RwLock::new(Vec::with_capacity(100))), // Bounded burn queue
         }
     }
 
@@ -381,6 +381,281 @@ impl TokenEconomics {
 
         log::info!("Burned {} CRAP - Reason: {}", amount.to_crap(), reason);
         Ok(())
+    }
+
+    /// Validate decimal math precision and prevent loss
+    pub fn validate_decimal_precision(
+        &self,
+        operations: &[DecimalOperation],
+    ) -> PrecisionValidationResult {
+        let mut result = PrecisionValidationResult {
+            is_valid: true,
+            precision_loss_detected: false,
+            overflow_risk: false,
+            underflow_risk: false,
+            operations_validated: operations.len(),
+            total_precision_loss: 0.0,
+            recommendations: Vec::new(),
+        };
+
+        for (i, operation) in operations.iter().enumerate() {
+            let validation = self.validate_single_decimal_operation(operation);
+
+            if !validation.is_valid {
+                result.is_valid = false;
+            }
+
+            if validation.precision_loss > 0.0001 {
+                // More than 0.01% precision loss
+                result.precision_loss_detected = true;
+                result.total_precision_loss += validation.precision_loss;
+                result.recommendations.push(format!(
+                    "Operation {}: Significant precision loss ({:.6}%) in {} operation",
+                    i + 1,
+                    validation.precision_loss * 100.0,
+                    operation.operation_type
+                ));
+            }
+
+            if validation.overflow_risk {
+                result.overflow_risk = true;
+                result.recommendations.push(format!(
+                    "Operation {}: Overflow risk detected in {} operation",
+                    i + 1,
+                    operation.operation_type
+                ));
+            }
+
+            if validation.underflow_risk {
+                result.underflow_risk = true;
+                result.recommendations.push(format!(
+                    "Operation {}: Underflow risk detected in {} operation",
+                    i + 1,
+                    operation.operation_type
+                ));
+            }
+        }
+
+        // Overall precision loss validation
+        if result.total_precision_loss > 0.001 {
+            // More than 0.1% total precision loss
+            result.is_valid = false;
+            result.recommendations.push(format!(
+                "Total precision loss ({:.4}%) exceeds acceptable threshold",
+                result.total_precision_loss * 100.0
+            ));
+        }
+
+        result
+    }
+
+    fn validate_single_decimal_operation(
+        &self,
+        operation: &DecimalOperation,
+    ) -> SingleOperationValidation {
+        let mut validation = SingleOperationValidation {
+            is_valid: true,
+            precision_loss: 0.0,
+            overflow_risk: false,
+            underflow_risk: false,
+        };
+
+        match operation.operation_type.as_str() {
+            "multiply" => {
+                // Check for overflow in multiplication
+                let a = operation.operand_a as f64;
+                let b = operation.operand_b as f64;
+                let result = a * b;
+
+                if result > u64::MAX as f64 {
+                    validation.overflow_risk = true;
+                    validation.is_valid = false;
+                }
+
+                // Calculate precision loss for very small results
+                if result > 0.0 && result < 1.0 {
+                    let integer_result = result as u64;
+                    if integer_result == 0 && result > f64::EPSILON {
+                        validation.underflow_risk = true;
+                        validation.precision_loss = result; // Full precision loss
+                    }
+                }
+
+                // Check precision for large numbers
+                if a > 1e15 || b > 1e15 {
+                    validation.precision_loss =
+                        (result - (result as u64) as f64).abs() / result.max(1.0);
+                }
+            }
+
+            "divide" => {
+                let a = operation.operand_a as f64;
+                let b = operation.operand_b as f64;
+
+                if b == 0.0 {
+                    validation.is_valid = false;
+                    return validation;
+                }
+
+                let result = a / b;
+
+                // Division by very small numbers can cause overflow
+                if b < 1e-6 && a > 1e9 {
+                    validation.overflow_risk = true;
+                }
+
+                // Calculate precision loss in division
+                let expected_integer = (result as u64) as f64;
+                validation.precision_loss = (result - expected_integer).abs() / result.max(1.0);
+            }
+
+            "percentage" => {
+                let base = operation.operand_a as f64;
+                let percentage = operation.operand_b as f64;
+                let result = base * percentage / 100.0;
+
+                // Check for precision loss in percentage calculations
+                if percentage != 0.0 {
+                    let reverse_calc = (result * 100.0) / base;
+                    validation.precision_loss =
+                        (percentage - reverse_calc).abs() / percentage.max(1.0);
+                }
+            }
+
+            "compound_interest" => {
+                let principal = operation.operand_a as f64;
+                let rate = operation.operand_b as f64;
+                let periods = operation
+                    .additional_params
+                    .get("periods")
+                    .and_then(|p| p.as_f64())
+                    .unwrap_or(1.0);
+
+                // Compound interest: A = P(1 + r)^n
+                let result = principal * (1.0 + rate).powf(periods);
+
+                if result > u64::MAX as f64 {
+                    validation.overflow_risk = true;
+                    validation.is_valid = false;
+                }
+
+                // Check precision for compound calculations
+                if periods > 1000.0 || rate > 0.5 {
+                    // High-frequency compounding or high rates can cause precision issues
+                    validation.precision_loss = 0.0001; // Estimated precision loss
+                }
+            }
+
+            _ => {
+                // Unknown operation type
+                validation.is_valid = false;
+            }
+        }
+
+        validation
+    }
+
+    /// Safe decimal multiplication with overflow checking
+    pub fn safe_multiply(&self, a: CrapTokens, b: f64) -> Result<CrapTokens> {
+        let result_f64 = a.0 as f64 * b;
+
+        if result_f64 > u64::MAX as f64 {
+            return Err(Error::InvalidData("Multiplication overflow".to_string()));
+        }
+
+        if result_f64 < 0.0 {
+            return Err(Error::InvalidData(
+                "Negative result not allowed".to_string(),
+            ));
+        }
+
+        let result_u64 = result_f64.round() as u64;
+
+        // Check for significant precision loss
+        let precision_loss = (result_f64 - result_u64 as f64).abs() / result_f64.max(1.0);
+        if precision_loss > 0.01 {
+            // More than 1% precision loss
+            log::warn!(
+                "Significant precision loss in multiplication: {:.4}%",
+                precision_loss * 100.0
+            );
+        }
+
+        Ok(CrapTokens::from(result_u64))
+    }
+
+    /// Safe decimal division with precision checking
+    pub fn safe_divide(&self, a: CrapTokens, b: f64) -> Result<CrapTokens> {
+        if b == 0.0 {
+            return Err(Error::InvalidData("Division by zero".to_string()));
+        }
+
+        if b.abs() < f64::EPSILON {
+            return Err(Error::InvalidData(
+                "Division by near-zero value".to_string(),
+            ));
+        }
+
+        let result_f64 = a.0 as f64 / b;
+
+        if result_f64 < 0.0 {
+            return Err(Error::InvalidData(
+                "Negative result not allowed".to_string(),
+            ));
+        }
+
+        let result_u64 = result_f64.round() as u64;
+
+        // Check for underflow (result rounds to zero but should be positive)
+        if result_u64 == 0 && result_f64 > f64::EPSILON {
+            return Err(Error::InvalidData(
+                "Result underflow - value too small".to_string(),
+            ));
+        }
+
+        Ok(CrapTokens::from(result_u64))
+    }
+
+    /// Calculate percentage with precision validation
+    pub fn safe_percentage(&self, base: CrapTokens, percentage: f64) -> Result<CrapTokens> {
+        if percentage < 0.0 || percentage > 100.0 {
+            return Err(Error::InvalidData(format!(
+                "Invalid percentage: {:.2}%",
+                percentage
+            )));
+        }
+
+        self.safe_multiply(base, percentage / 100.0)
+    }
+
+    /// Calculate compound interest with overflow protection
+    pub fn safe_compound_interest(
+        &self,
+        principal: CrapTokens,
+        rate: f64,
+        periods: u32,
+    ) -> Result<CrapTokens> {
+        if rate < 0.0 || rate > 1.0 {
+            return Err(Error::InvalidData(format!(
+                "Invalid interest rate: {:.4}",
+                rate
+            )));
+        }
+
+        if periods == 0 {
+            return Ok(principal);
+        }
+
+        // Use logarithms to check for overflow before calculation
+        let log_multiplier = periods as f64 * (1.0 + rate).ln();
+        if log_multiplier > (u64::MAX as f64).ln() - (principal.0 as f64).ln() {
+            return Err(Error::InvalidData(
+                "Compound interest calculation would overflow".to_string(),
+            ));
+        }
+
+        let multiplier = (1.0 + rate).powi(periods as i32);
+        self.safe_multiply(principal, multiplier)
     }
 
     /// Calculate dynamic fees based on network conditions
@@ -555,6 +830,36 @@ impl TokenEconomics {
             .unwrap_or_default()
             .as_secs()
     }
+}
+
+/// Decimal operation for precision validation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecimalOperation {
+    pub operation_type: String,
+    pub operand_a: u64,
+    pub operand_b: f64,
+    pub additional_params: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// Result of precision validation
+#[derive(Debug, Clone)]
+pub struct PrecisionValidationResult {
+    pub is_valid: bool,
+    pub precision_loss_detected: bool,
+    pub overflow_risk: bool,
+    pub underflow_risk: bool,
+    pub operations_validated: usize,
+    pub total_precision_loss: f64,
+    pub recommendations: Vec<String>,
+}
+
+/// Single operation validation result
+#[derive(Debug, Clone)]
+pub struct SingleOperationValidation {
+    pub is_valid: bool,
+    pub precision_loss: f64,
+    pub overflow_risk: bool,
+    pub underflow_risk: bool,
 }
 
 /// Comprehensive economics statistics

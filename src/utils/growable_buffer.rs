@@ -14,7 +14,11 @@ impl fmt::Display for BufferError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BufferError::SizeExceedsMaximum { requested, maximum } => {
-                write!(f, "Requested size {} exceeds maximum {}", requested, maximum)
+                write!(
+                    f,
+                    "Requested size {} exceeds maximum {}",
+                    requested, maximum
+                )
             }
             BufferError::AllocationFailed { size } => {
                 write!(f, "Failed to allocate {} bytes", size)
@@ -27,26 +31,26 @@ impl std::error::Error for BufferError {}
 
 /// A growable buffer that starts small and expands on demand, with automatic shrinking
 /// to optimize memory usage for network operations.
-/// 
+///
 /// # Safety
-/// 
+///
 /// This buffer provides memory-safe operations with proper bounds checking.
 /// All resize operations are validated against MAX_SIZE to prevent unbounded growth.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```
 /// use bitcraps::utils::growable_buffer::GrowableBuffer;
-/// 
+///
 /// let mut buffer = GrowableBuffer::new();
-/// 
+///
 /// // Get a buffer for packet data
 /// let packet_buffer = buffer.get_mut(1500)?;
 /// packet_buffer[0] = 0x42;
-/// 
+///
 /// // Mark how much was actually used
 /// buffer.mark_used(100);
-/// 
+///
 /// // Buffer will automatically shrink if oversized
 /// assert!(buffer.capacity() <= 3000);
 /// ```
@@ -59,10 +63,10 @@ pub struct GrowableBuffer {
 impl GrowableBuffer {
     /// Standard MTU size - good starting point for most network operations
     pub const MTU_SIZE: usize = 1500;
-    
+
     /// Maximum buffer size - corresponds to the original 65KB fixed allocation
     pub const MAX_SIZE: usize = 65536;
-    
+
     /// Shrink threshold: if buffer is more than 2x the high water mark, shrink it
     const SHRINK_THRESHOLD_MULTIPLIER: usize = 2;
 
@@ -72,14 +76,14 @@ impl GrowableBuffer {
     }
 
     /// Create a GrowableBuffer with a specific initial capacity
-    /// 
+    ///
     /// # Performance
-    /// 
+    ///
     /// Uses Vec::with_capacity to avoid zeroing memory unnecessarily.
     /// The buffer is only zeroed when actually written to.
     pub fn with_initial_capacity(capacity: usize) -> Self {
         let initial_capacity = cmp::min(capacity, Self::MAX_SIZE);
-        
+
         // Optimize: Don't zero memory until actually needed
         let mut buffer = Vec::with_capacity(initial_capacity);
         // SAFETY: Setting length to capacity is safe because:
@@ -90,7 +94,7 @@ impl GrowableBuffer {
         unsafe {
             buffer.set_len(initial_capacity);
         }
-        
+
         Self {
             buffer,
             high_water_mark: 0,
@@ -100,9 +104,9 @@ impl GrowableBuffer {
 
     /// Get a mutable slice of the buffer with the requested minimum size
     /// The buffer will grow if necessary to accommodate the request
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// Returns `BufferError::SizeExceedsMaximum` if the requested size exceeds MAX_SIZE
     /// Returns `BufferError::AllocationFailed` if memory allocation fails
     pub fn get_mut(&mut self, min_size: usize) -> Result<&mut [u8], BufferError> {
@@ -112,18 +116,18 @@ impl GrowableBuffer {
                 maximum: Self::MAX_SIZE,
             });
         }
-        
+
         if self.buffer.len() < min_size {
             self.grow_to(min_size)?;
         }
-        
+
         Ok(&mut self.buffer[..min_size])
     }
 
     /// Get a mutable slice without bounds checking (for performance-critical paths)
-    /// 
+    ///
     /// # Safety
-    /// 
+    ///
     /// This function is unsafe because:
     /// - It may return uninitialized memory if allocation fails
     /// - Caller must ensure min_size <= MAX_SIZE to avoid undefined behavior
@@ -131,12 +135,12 @@ impl GrowableBuffer {
     /// - The returned slice may contain uninitialized data that must be written before reading
     pub unsafe fn get_mut_unchecked(&mut self, min_size: usize) -> &mut [u8] {
         let required_size = cmp::min(min_size, Self::MAX_SIZE);
-        
+
         if self.buffer.len() < required_size {
             // Ignore error in unchecked version
             let _ = self.grow_to(required_size);
         }
-        
+
         &mut self.buffer[..required_size]
     }
 
@@ -153,7 +157,7 @@ impl GrowableBuffer {
     /// Update the high water mark and potentially shrink the buffer
     pub fn mark_used(&mut self, used_bytes: usize) {
         self.high_water_mark = cmp::max(self.high_water_mark, used_bytes);
-        
+
         // Consider shrinking if buffer is significantly oversized
         if self.buffer.len() > self.high_water_mark * Self::SHRINK_THRESHOLD_MULTIPLIER
             && self.buffer.len() > self.initial_capacity
@@ -183,9 +187,9 @@ impl GrowableBuffer {
     }
 
     /// Clear the buffer (zero it) and reset the high water mark
-    /// 
+    ///
     /// # Security
-    /// 
+    ///
     /// This method zeros the buffer for security-sensitive data.
     /// Use `fast_clear()` if zeroing is not required.
     pub fn clear(&mut self) {
@@ -211,10 +215,11 @@ impl GrowableBuffer {
         let target_size = cmp::min(new_size, Self::MAX_SIZE);
         if target_size > self.buffer.capacity() {
             // Try to reserve additional capacity
-            self.buffer.try_reserve(target_size - self.buffer.len())
+            self.buffer
+                .try_reserve(target_size - self.buffer.len())
                 .map_err(|_| BufferError::AllocationFailed { size: target_size })?;
         }
-        
+
         // SAFETY: Setting length to target_size is safe because:
         // 1. We've just successfully reserved capacity for target_size bytes
         // 2. target_size is clamped to MAX_SIZE preventing overflow
@@ -223,18 +228,15 @@ impl GrowableBuffer {
         unsafe {
             self.buffer.set_len(target_size);
         }
-        
+
         Ok(())
     }
 
     /// Shrink the buffer to an optimal size based on usage patterns
     fn shrink(&mut self) {
         // Shrink to 1.5x the high water mark for some headroom
-        let target_size = cmp::max(
-            (self.high_water_mark * 3) / 2,
-            self.initial_capacity
-        );
-        
+        let target_size = cmp::max((self.high_water_mark * 3) / 2, self.initial_capacity);
+
         if target_size < self.buffer.len() {
             self.buffer.truncate(target_size);
             self.buffer.shrink_to_fit();
@@ -280,15 +282,15 @@ mod tests {
     #[test]
     fn test_basic_growth() {
         let mut buffer = GrowableBuffer::new();
-        
+
         // Should start at MTU size
         assert_eq!(buffer.len(), GrowableBuffer::MTU_SIZE);
-        
+
         // Request larger size
         let result = buffer.get_mut(4000);
         assert!(result.is_ok());
         assert_eq!(buffer.len(), 4000);
-        
+
         // Mark usage
         buffer.mark_used(3500);
         assert_eq!(buffer.high_water_mark(), 3500);
@@ -297,11 +299,11 @@ mod tests {
     #[test]
     fn test_shrinking() {
         let mut buffer = GrowableBuffer::with_initial_capacity(1000);
-        
+
         // Grow to 10KB
         let _ = buffer.get_mut(10000);
         buffer.mark_used(1000);
-        
+
         // Should shrink since we only used 1KB of 10KB
         assert!(buffer.len() < 10000);
         assert!(buffer.len() >= 1000);
@@ -310,11 +312,11 @@ mod tests {
     #[test]
     fn test_max_size_limit() {
         let mut buffer = GrowableBuffer::new();
-        
+
         // Request more than maximum
         let result = buffer.get_mut(100_000);
         assert!(result.is_err());
-        
+
         // Request exactly maximum should work
         let result = buffer.get_mut(GrowableBuffer::MAX_SIZE);
         assert!(result.is_ok());
@@ -324,11 +326,11 @@ mod tests {
     #[test]
     fn test_clear_operations() {
         let mut buffer = GrowableBuffer::new();
-        
+
         let slice = buffer.get_mut(100).unwrap();
         slice[0] = 42;
         buffer.mark_used(100);
-        
+
         // Clear should zero memory
         buffer.clear();
         assert_eq!(buffer.as_slice(1)[0], 0);
@@ -338,10 +340,10 @@ mod tests {
     #[test]
     fn test_reset() {
         let mut buffer = GrowableBuffer::with_initial_capacity(2000);
-        
+
         // Grow buffer
         let _ = buffer.get_mut(8000);
-        
+
         // Reset should return to initial capacity
         buffer.reset();
         assert_eq!(buffer.len(), 2000);
@@ -351,10 +353,10 @@ mod tests {
     #[test]
     fn test_efficiency_tracking() {
         let mut buffer = GrowableBuffer::new();
-        
+
         let _ = buffer.get_mut(5000);
         buffer.mark_used(2500);
-        
+
         let stats = buffer.stats();
         assert_eq!(stats.high_water_mark, 2500);
         assert!(stats.efficiency > 40.0 && stats.efficiency < 60.0);

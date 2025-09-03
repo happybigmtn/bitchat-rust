@@ -51,7 +51,7 @@ impl StateManager {
     /// Update state with a mutation
     pub async fn dispatch(&self, action: StateAction) -> Result<(), StateError> {
         let mut state = self.state.write().await;
-        
+
         // Apply the action
         match action {
             StateAction::SetUser(user) => {
@@ -191,11 +191,11 @@ impl StatePersistence for FileStatePersistence {
     async fn save(&self, state: &AppState) -> Result<(), StateError> {
         let json = serde_json::to_string_pretty(state)
             .map_err(|e| StateError::SerializationError(e.to_string()))?;
-        
+
         tokio::fs::write(&self.file_path, json)
             .await
             .map_err(|e| StateError::PersistenceError(e.to_string()))?;
-        
+
         Ok(())
     }
 
@@ -203,10 +203,10 @@ impl StatePersistence for FileStatePersistence {
         let json = tokio::fs::read_to_string(&self.file_path)
             .await
             .map_err(|e| StateError::PersistenceError(e.to_string()))?;
-        
+
         let state = serde_json::from_str(&json)
             .map_err(|e| StateError::DeserializationError(e.to_string()))?;
-        
+
         Ok(state)
     }
 

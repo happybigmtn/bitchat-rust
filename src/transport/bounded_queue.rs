@@ -63,7 +63,7 @@ struct EventWithMetadata<T> {
 pub struct BoundedEventQueue<T> {
     /// Internal sender (bounded)
     sender: mpsc::Sender<EventWithMetadata<T>>,
-    /// Internal receiver  
+    /// Internal receiver
     receiver: Arc<Mutex<mpsc::Receiver<EventWithMetadata<T>>>>,
     /// Queue configuration
     config: QueueConfig,
@@ -95,6 +95,15 @@ impl Default for QueueConfig {
     }
 }
 
+impl<T> Default for BoundedEventQueue<T>
+where
+    T: Send + 'static,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> BoundedEventQueue<T>
 where
     T: Send + 'static,
@@ -109,8 +118,10 @@ where
         let (sender, receiver) = mpsc::channel(config.max_size);
         let semaphore = Arc::new(Semaphore::new(config.max_size));
 
-        let mut stats = QueueStats::default();
-        stats.max_size = config.max_size;
+        let stats = QueueStats {
+            max_size: config.max_size,
+            ..Default::default()
+        };
 
         Self {
             sender,

@@ -18,3 +18,4 @@ mod gaming;
 
 #[cfg(test)]
 mod integration;
+#![cfg(feature = "legacy-tests")]

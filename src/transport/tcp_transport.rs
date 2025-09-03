@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
+use serde::{Serialize, Deserialize};
 
 use crate::error::{Error, Result};
 use crate::protocol::PeerId;
@@ -68,7 +69,7 @@ enum ConnectionHealth {
 struct TcpConnection {
     peer_id: PeerId,
     address: SocketAddr,
-    stream: ConnectionStream,
+    stream: Arc<Mutex<ConnectionStream>>, // shared, mutex-protected stream
     health: ConnectionHealth,
     last_activity: Instant,
     message_count: u64,
@@ -190,11 +191,19 @@ pub struct TcpTransport {
     event_receiver: Arc<Mutex<mpsc::Receiver<TransportEvent>>>,
     connection_semaphore: Arc<Semaphore>,
     circuit_breakers: Arc<RwLock<HashMap<SocketAddr, CircuitBreaker>>>,
+    local_peer_id: PeerId,
 
     #[cfg(feature = "tls")]
     tls_connector: Option<TlsConnector>,
     #[cfg(feature = "tls")]
     tls_acceptor: Option<TlsAcceptor>,
+}
+
+/// TCP handshake message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Hello {
+    version: u16,
+    peer_id: PeerId,
 }
 
 impl TcpTransport {
@@ -212,6 +221,33 @@ impl TcpTransport {
             event_receiver: Arc::new(Mutex::new(event_receiver)),
             connection_semaphore,
             circuit_breakers: Arc::new(RwLock::new(HashMap::new())),
+            local_peer_id: [0u8; 32],
+
+            #[cfg(feature = "tls")]
+            tls_connector: None,
+            #[cfg(feature = "tls")]
+            tls_acceptor: None,
+        }
+    }
+
+    /// Create new TCP transport using an external event sender and local peer id
+    pub fn new_with_sender(
+        config: TcpTransportConfig,
+        local_peer_id: PeerId,
+        event_sender: mpsc::Sender<TransportEvent>,
+    ) -> Self {
+        let connection_semaphore = Arc::new(Semaphore::new(config.max_connections));
+
+        Self {
+            config: config.clone(),
+            connections: Arc::new(RwLock::new(HashMap::new())),
+            listener: None,
+            local_address: None,
+            event_sender,
+            event_receiver: Arc::new(Mutex::new(mpsc::channel(1).1)), // unused in this mode
+            connection_semaphore,
+            circuit_breakers: Arc::new(RwLock::new(HashMap::new())),
+            local_peer_id,
 
             #[cfg(feature = "tls")]
             tls_connector: None,
@@ -246,6 +282,7 @@ impl TcpTransport {
         let config = self.config.clone();
         let event_sender = self.event_sender.clone();
 
+        let local_peer_id_captured = self.local_peer_id;
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
 
@@ -281,8 +318,12 @@ impl TcpTransport {
                         if conn.health == ConnectionHealth::Healthy
                             && now.duration_since(conn.last_activity) > config.keepalive_interval
                         {
-                            // In a real implementation, send keepalive message
-                            println!("Sending keepalive to peer: {:?}", peer_id);
+                            // Best-effort keepalive: length=1, payload [0]
+                            if let Ok(mut stream) = conn.stream.try_lock() {
+                                let _ = stream.write_all(&1u32.to_be_bytes()).await;
+                                let _ = stream.write_all(&[0u8]).await;
+                                let _ = stream.flush().await;
+                            }
                         }
                     }
 
@@ -393,6 +434,86 @@ impl TcpTransport {
         Ok(ConnectionStream::Plain(tcp_stream))
     }
 
+    async fn write_frame(stream: &mut ConnectionStream, payload: &[u8]) -> Result<()> {
+        let len = payload.len() as u32;
+        stream
+            .write_all(&len.to_be_bytes())
+            .await
+            .map_err(|e| Error::Network(format!("write length failed: {}", e)))?;
+        stream
+            .write_all(payload)
+            .await
+            .map_err(|e| Error::Network(format!("write payload failed: {}", e)))?;
+        stream
+            .flush()
+            .await
+            .map_err(|e| Error::Network(format!("flush failed: {}", e)))?;
+        Ok(())
+    }
+
+    async fn read_exact_helper(stream: &mut ConnectionStream, mut buf: &mut [u8]) -> Result<()> {
+        while !buf.is_empty() {
+            let n = stream
+                .read(buf)
+                .await
+                .map_err(|e| Error::Network(format!("read failed: {}", e)))?;
+            if n == 0 {
+                return Err(Error::Network("connection closed".to_string()));
+            }
+            let tmp = buf;
+            buf = &mut tmp[n..];
+        }
+        Ok(())
+    }
+
+    async fn read_frame(stream: &mut ConnectionStream, max_size: usize) -> Result<Vec<u8>> {
+        let mut len_buf = [0u8; 4];
+        Self::read_exact_helper(stream, &mut len_buf).await?;
+        let len = u32::from_be_bytes(len_buf) as usize;
+        if len > max_size {
+            return Err(Error::Network(format!(
+                "frame too large: {} > {}",
+                len, max_size
+            )));
+        }
+        let mut buf = vec![0u8; len];
+        Self::read_exact_helper(stream, &mut buf).await?;
+        Ok(buf)
+    }
+
+    async fn run_reader(
+        peer_id: PeerId,
+        mut stream: Arc<Mutex<ConnectionStream>>,
+        event_sender: mpsc::Sender<TransportEvent>,
+        connections: Arc<RwLock<HashMap<PeerId, TcpConnection>>>,
+    ) {
+        loop {
+            let payload = {
+                let mut guard = stream.lock().await;
+                match Self::read_frame(&mut *guard, 4 + 1024 * 1024).await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let _ = event_sender
+                            .send(TransportEvent::Disconnected {
+                                peer_id,
+                                reason: format!("read error: {}", e),
+                            })
+                            .await;
+                        let mut map = connections.write().await;
+                        map.remove(&peer_id);
+                        break;
+                    }
+                }
+            };
+            if payload.len() == 1 && payload[0] == 0 {
+                continue;
+            }
+            let _ = event_sender
+                .send(TransportEvent::DataReceived { peer_id, data: payload })
+                .await;
+        }
+    }
+
     /// Send message with reliability and connection pooling
     async fn send_reliable(&self, peer_id: PeerId, data: Vec<u8>) -> Result<()> {
         if data.len() > self.config.max_message_size {
@@ -404,43 +525,30 @@ impl TcpTransport {
         }
 
         let connections = self.connections.read().await;
-
-        if let Some(mut connection) = connections.get(&peer_id) {
-            // Use existing connection
-            self.send_via_connection(&mut connection, data).await
-        } else {
+        if let Some(connection) = connections.get(&peer_id) {
+            let stream = connection.stream.clone();
             drop(connections);
-            Err(Error::Network(format!(
-                "No connection to peer {:?}",
-                peer_id
-            )))
+            // Frame: length prefix + bytes
+            let mut guard = stream.lock().await;
+            let len = data.len() as u32;
+            guard
+                .write_all(&len.to_be_bytes())
+                .await
+                .map_err(|e| Error::Network(format!("write length failed: {}", e)))?;
+            guard
+                .write_all(&data)
+                .await
+                .map_err(|e| Error::Network(format!("write data failed: {}", e)))?;
+            guard
+                .flush()
+                .await
+                .map_err(|e| Error::Network(format!("flush failed: {}", e)))?;
+            Ok(())
+        } else {
+            Err(Error::Network(format!("No connection to peer {:?}", peer_id)))
         }
     }
 
-    /// Send data via existing connection
-    async fn send_via_connection(
-        &self,
-        connection: &mut &TcpConnection,
-        data: Vec<u8>,
-    ) -> Result<()> {
-        // Create message with length prefix
-        let mut message = Vec::new();
-        message.extend_from_slice(&(data.len() as u32).to_be_bytes());
-        message.extend_from_slice(&data);
-
-        // This is a simplified version - in reality we'd need mutable access to the stream
-        println!(
-            "Sending {} bytes to peer {:?}",
-            data.len(),
-            connection.peer_id
-        );
-
-        // Update connection stats
-        // connection.message_count += 1;
-        // connection.last_activity = Instant::now();
-
-        Ok(())
-    }
 
     /// Accept incoming connections
     async fn accept_loop(&self, listener: TcpListener) {
@@ -448,10 +556,10 @@ impl TcpTransport {
         let event_sender = self.event_sender.clone();
         let semaphore = self.connection_semaphore.clone();
         let config = self.config.clone();
+        let local_peer_id_captured = self.local_peer_id;
 
         #[cfg(feature = "tls")]
         let tls_acceptor = self.tls_acceptor.clone();
-
         tokio::spawn(async move {
             loop {
                 match listener.accept().await {
@@ -473,10 +581,11 @@ impl TcpTransport {
                         let tls_acceptor = tls_acceptor.clone();
 
                         // Handle connection in separate task
+                        let local_peer_id2 = local_peer_id_captured;
                         tokio::spawn(async move {
                             let _permit = permit; // Keep permit alive
 
-                            let connection_stream = {
+                            let mut connection_stream = {
                                 #[cfg(feature = "tls")]
                                 {
                                     if config.enable_tls {
@@ -503,13 +612,37 @@ impl TcpTransport {
                                 }
                             };
 
-                            // Generate peer ID (in practice, would be negotiated)
-                            let peer_id = PeerId::from([0u8; 32]); // Generate proper peer ID
+                            // Server handshake: expect client Hello then reply with our Hello
+                            let hello_bytes = match Self::read_frame(&mut connection_stream, config.max_message_size).await {
+                                Ok(b) => b,
+                                Err(e) => {
+                                    println!("Handshake read failed: {}", e);
+                                    return;
+                                }
+                            };
+                            let client_hello: Hello = match bincode::deserialize(&hello_bytes) {
+                                Ok(h) => h,
+                                Err(e) => {
+                                    println!("Invalid client hello: {}", e);
+                                    return;
+                                }
+                            };
+                            if client_hello.version != 1 {
+                                println!("Unsupported client version: {}", client_hello.version);
+                                return;
+                            }
+                            let server_hello = Hello { version: 1, peer_id: local_peer_id2 };
+                            let out = bincode::serialize(&server_hello).expect("hello serialize");
+                            if let Err(e) = Self::write_frame(&mut connection_stream, &out).await {
+                                println!("Handshake write failed: {}", e);
+                                return;
+                            }
+                            let peer_id = client_hello.peer_id;
 
                             let tcp_connection = TcpConnection {
                                 peer_id,
                                 address: addr,
-                                stream: connection_stream,
+                                stream: Arc::new(Mutex::new(connection_stream)),
                                 health: ConnectionHealth::Healthy,
                                 last_activity: Instant::now(),
                                 message_count: 0,
@@ -533,6 +666,18 @@ impl TcpTransport {
                                 "Accepted TCP connection from: {} (peer: {:?})",
                                 addr, peer_id
                             );
+
+                            // Spawn reader
+                            let connections_clone = connections.clone();
+                            let event_sender_clone = event_sender.clone();
+                            tokio::spawn(async move {
+                                // Obtain stream arc from map
+                                let stream_arc = {
+                                    let guard = connections_clone.read().await;
+                                    guard.get(&peer_id).unwrap().stream.clone()
+                                };
+                                Self::run_reader(peer_id, stream_arc, event_sender_clone, connections_clone).await;
+                            });
                         });
                     }
                     Err(e) => {
@@ -619,15 +764,24 @@ impl Transport for TcpTransport {
                 .await
                 .map_err(|e| Error::Network(format!("Semaphore acquire failed: {}", e)))?;
 
-            let connection_stream = self.establish_connection(addr, true).await?;
+            let mut connection_stream = self.establish_connection(addr, true).await?;
 
-            // Generate peer ID (in practice, would be negotiated)
-            let peer_id = PeerId::from([0u8; 32]); // Generate proper peer ID
+            // Client handshake: send hello, read server hello
+            let hello = Hello { version: 1, peer_id: self.local_peer_id };
+            let bytes = bincode::serialize(&hello).map_err(|e| Error::Network(format!("hello serialize: {}", e)))?;
+            Self::write_frame(&mut connection_stream, &bytes).await?;
+            let resp = Self::read_frame(&mut connection_stream, self.config.max_message_size).await?;
+            let server_hello: Hello = bincode::deserialize(&resp)
+                .map_err(|e| Error::Network(format!("hello deserialize: {}", e)))?;
+            if server_hello.version != 1 {
+                return Err(Error::Network("server version mismatch".to_string()).into());
+            }
+            let peer_id = server_hello.peer_id;
 
             let tcp_connection = TcpConnection {
                 peer_id,
                 address: addr,
-                stream: connection_stream,
+                stream: Arc::new(Mutex::new(connection_stream)),
                 health: ConnectionHealth::Healthy,
                 last_activity: Instant::now(),
                 message_count: 0,
@@ -648,6 +802,17 @@ impl Transport for TcpTransport {
             });
 
             println!("Connected to TCP peer: {} (peer: {:?})", addr, peer_id);
+
+            // Spawn reader loop
+            let event_sender = self.event_sender.clone();
+            let connections = self.connections.clone();
+            let stream_arc = {
+                let guard = self.connections.read().await;
+                guard.get(&peer_id).unwrap().stream.clone()
+            };
+            tokio::spawn(async move {
+                Self::run_reader(peer_id, stream_arc, event_sender, connections).await;
+            });
 
             Ok(peer_id)
         } else {
@@ -718,6 +883,7 @@ pub struct TcpTransportStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::mpsc;
 
     #[tokio::test]
     async fn test_tcp_transport_creation() {
@@ -771,5 +937,25 @@ mod tests {
         // Release and try again
         drop(permit1);
         let _permit3 = transport.connection_semaphore.try_acquire().unwrap();
+    }
+
+    #[tokio::test]
+    async fn handshake_connects() {
+        let config = TcpTransportConfig::default();
+        let (tx_server, _rx_server) = mpsc::channel(1000);
+        let (tx_client, _rx_client) = mpsc::channel(1000);
+
+        let mut server = TcpTransport::new_with_sender(config.clone(), [1u8; 32], tx_server);
+        // listen on ephemeral port
+        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        server.listen(TransportAddress::Tcp(addr)).await.unwrap();
+        let server_addr = server.local_address.unwrap();
+
+        let mut client = TcpTransport::new_with_sender(config.clone(), [2u8; 32], tx_client);
+        let peer_id = client
+            .connect(TransportAddress::Tcp(server_addr))
+            .await
+            .unwrap();
+        assert_eq!(peer_id, [1u8; 32]);
     }
 }

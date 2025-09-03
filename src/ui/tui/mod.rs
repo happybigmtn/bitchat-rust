@@ -299,6 +299,121 @@ impl TuiApp {
     }
 }
 
+/// Integrated TUI application that connects to real BitCrapsApp
+pub struct IntegratedTuiApp {
+    pub app_ref: Arc<crate::BitCrapsApp>,
+    pub tui_state: TuiApp,
+    pub last_refresh: Instant,
+}
+
+impl IntegratedTuiApp {
+    pub fn new(app_ref: Arc<crate::BitCrapsApp>) -> Self {
+        Self {
+            app_ref,
+            tui_state: TuiApp::new(),
+            last_refresh: Instant::now(),
+        }
+    }
+
+    /// Update TUI state with real application data
+    pub async fn update(&mut self) {
+        // Update base TUI animations
+        self.tui_state.update();
+
+        // Refresh data every second
+        if self.last_refresh.elapsed() > Duration::from_secs(1) {
+            // Update wallet balance with real data
+            if let Ok(balance_tokens) = self.app_ref.get_balance().await {
+                self.tui_state.casino_ui.wallet_balance = balance_tokens.amount();
+            }
+
+            // Get active games count
+            if let Ok(games) = self.app_ref.get_active_games().await {
+                self.tui_state.network_status.total_games = games.len();
+                
+                // Simulate connection quality based on games available
+                self.tui_state.network_status.connection_quality = match games.len() {
+                    0 => ConnectionQuality::Disconnected,
+                    1..=2 => ConnectionQuality::Poor,
+                    3..=5 => ConnectionQuality::Fair,
+                    6..=10 => ConnectionQuality::Good,
+                    _ => ConnectionQuality::Excellent,
+                };
+                
+                // Estimate connected peers based on games (rough approximation)
+                self.tui_state.network_status.connected_peers = games.len() * 2;
+            }
+
+            self.last_refresh = Instant::now();
+        }
+    }
+
+    /// Handle key events with real app integration
+    pub async fn handle_key_event(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Char('q') => return false, // Quit
+            KeyCode::Tab => self.tui_state.cycle_view(),
+            KeyCode::Char('c') => self.tui_state.current_view = ViewMode::Casino,
+            KeyCode::Char('t') => self.tui_state.current_view = ViewMode::Chat,
+            KeyCode::Char('p') => self.tui_state.current_view = ViewMode::PeerList,
+            KeyCode::Char('s') => self.tui_state.current_view = ViewMode::Settings,
+            KeyCode::Char('l') => self.tui_state.current_view = ViewMode::GameLobby,
+            KeyCode::Char('g') => self.tui_state.current_view = ViewMode::ActiveGame,
+            
+            // Real game actions
+            KeyCode::Char('r') => {
+                // Try to roll dice in an active game
+                if let Ok(games) = self.app_ref.get_active_games().await {
+                    if let Some(game_id) = games.first() {
+                        // Simulate dice roll - in real implementation this would trigger game logic
+                        use rand::{rngs::OsRng, Rng};
+                        let mut rng = OsRng;
+                        if let Ok(roll) = DiceRoll::new(rng.gen_range(1..=6), rng.gen_range(1..=6)) {
+                            self.tui_state.start_dice_animation(roll);
+                        }
+                    }
+                }
+            },
+            
+            KeyCode::Char('b') => {
+                // Place a bet if in a game
+                if let Ok(games) = self.app_ref.get_active_games().await {
+                    if let Some(game_id) = games.first() {
+                        let amount = self.tui_state.casino_ui.bet_amount;
+                        // Convert u64 to CrapTokens for the bet
+                        if let Ok(crap_amount) = crate::protocol::CrapTokens::from_crap(amount as f64) {
+                            // Try to place a pass line bet
+                            if let Err(e) = self.app_ref.place_bet(*game_id, crate::BetType::Pass, crap_amount).await {
+                                // Handle error (could show in status)
+                                log::warn!("Failed to place bet: {}", e);
+                            }
+                        }
+                    }
+                }
+            },
+            
+            KeyCode::Char('+') => {
+                self.tui_state.casino_ui.bet_amount = (self.tui_state.casino_ui.bet_amount + 10).min(1000);
+            },
+            KeyCode::Char('-') => {
+                self.tui_state.casino_ui.bet_amount = self.tui_state.casino_ui.bet_amount.saturating_sub(10).max(10);
+            },
+            
+            _ => {
+                // Delegate other keys to base TUI
+                self.tui_state.handle_key_event(key);
+            }
+        }
+        true
+    }
+}
+
+/// Render function for integrated TUI
+pub fn render_integrated_ui(f: &mut Frame, app: &IntegratedTuiApp) {
+    // Use the existing render logic with real data
+    render_ui(f, &app.tui_state);
+}
+
 /// Main TUI render function
 pub fn render_ui(f: &mut Frame, app: &TuiApp) {
     match app.current_view {
@@ -933,6 +1048,52 @@ impl NetworkManager {
     pub async fn list_peers(&self) -> String {
         "No peers".to_string()
     }
+}
+
+/// Main TUI application runner with integrated BitCrapsApp
+pub async fn run_integrated_tui(bitcraps_app: crate::BitCrapsApp) -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::Arc;
+    
+    // Setup terminal
+    crossterm::terminal::enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    // Wrap app in Arc for sharing
+    let app_ref = Arc::new(bitcraps_app);
+    
+    // Create TUI app with real data integration
+    let mut tui_app = IntegratedTuiApp::new(app_ref.clone());
+
+    // Main loop
+    loop {
+        // Update app state with real data
+        tui_app.update().await;
+
+        // Render
+        terminal.draw(|f| render_integrated_ui(f, &tui_app))?;
+
+        // Handle input
+        if event::poll(Duration::from_millis(50))? {
+            if let Event::Key(key) = event::read()? {
+                if !tui_app.handle_key_event(key).await {
+                    break;
+                }
+            }
+        }
+    }
+
+    // Cleanup
+    crossterm::terminal::disable_raw_mode()?;
+    crossterm::execute!(
+        terminal.backend_mut(),
+        crossterm::terminal::LeaveAlternateScreen
+    )?;
+    terminal.show_cursor()?;
+
+    Ok(())
 }
 
 /// Main TUI application runner

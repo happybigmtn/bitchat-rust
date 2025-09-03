@@ -1,4 +1,5 @@
-use crate::protocol::{GameState, PeerId};
+use crate::protocol::game_logic::GameState;
+use crate::protocol::PeerId;
 use parking_lot::RwLock;
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
@@ -73,8 +74,14 @@ impl CpuOptimizer {
             .thread_name(|i| format!("game-worker-{}", i))
             .build()
             .unwrap_or_else(|e| {
-                eprintln!("WARNING: Failed to create game thread pool, using global pool: {}", e);
-                rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap()
+                eprintln!(
+                    "WARNING: Failed to create game thread pool, using global pool: {}",
+                    e
+                );
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(1)
+                    .build()
+                    .unwrap()
             });
 
         let network_pool = rayon::ThreadPoolBuilder::new()
@@ -82,8 +89,14 @@ impl CpuOptimizer {
             .thread_name(|i| format!("network-worker-{}", i))
             .build()
             .unwrap_or_else(|e| {
-                eprintln!("WARNING: Failed to create network thread pool, using global pool: {}", e);
-                rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap()
+                eprintln!(
+                    "WARNING: Failed to create network thread pool, using global pool: {}",
+                    e
+                );
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(1)
+                    .build()
+                    .unwrap()
             });
 
         Self {
@@ -228,18 +241,51 @@ impl CpuOptimizer {
             .install(|| packets.into_par_iter().map(processor).collect())
     }
 
-    /// Optimized game state diff calculation
-    pub fn calculate_state_diff(
-        &self,
-        _old_state: &GameState,
-        _new_state: &GameState,
-    ) -> StateDiff {
-        // TODO: Implement proper state diff when GameState API is stabilized
+    /// Optimized game state diff calculation with efficient comparisons
+    pub fn calculate_state_diff(&self, old_state: &GameState, new_state: &GameState) -> StateDiff {
+        // Check fundamental state changes
+        let game_phase_changed =
+            old_state.phase != new_state.phase || old_state.point != new_state.point;
+
+        let dice_changed = old_state.last_roll != new_state.last_roll;
+
+        // For now, we don't have player/bet data directly in GameState
+        // This would need to be expanded when player balance tracking is added
         StateDiff {
-            player_changes: Vec::new(),
-            bet_changes: Vec::new(),
-            game_phase_changed: false,
-            dice_changed: false,
+            player_changes: Vec::new(), // Would implement when player tracking is added
+            bet_changes: Vec::new(),    // Would implement when bet tracking is added
+            game_phase_changed,
+            dice_changed,
+        }
+    }
+
+    /// Calculate comprehensive state diff with additional context
+    pub fn calculate_detailed_state_diff(
+        &self,
+        old_state: &GameState,
+        new_state: &GameState,
+        old_players: &FxHashMap<PeerId, u64>,
+        new_players: &FxHashMap<PeerId, u64>,
+        old_bets: &FxHashMap<PeerId, u64>,
+        new_bets: &FxHashMap<PeerId, u64>,
+    ) -> StateDiff {
+        // Basic state changes
+        let game_phase_changed = old_state.phase != new_state.phase
+            || old_state.point != new_state.point
+            || old_state.series_id != new_state.series_id;
+
+        let dice_changed = old_state.last_roll != new_state.last_roll
+            || old_state.roll_count != new_state.roll_count;
+
+        // Calculate player and bet changes in parallel
+        let player_changes = self.parallel_compare_players(old_players, new_players);
+        let bet_changes = self.parallel_compare_bets(old_bets, new_bets);
+
+        StateDiff {
+            player_changes,
+            bet_changes,
+            game_phase_changed,
+            dice_changed,
         }
     }
 
@@ -271,7 +317,7 @@ impl CpuOptimizer {
             .collect()
     }
 
-    /// Parallel bet state comparison  
+    /// Parallel bet state comparison
     fn parallel_compare_bets(
         &self,
         old_bets: &FxHashMap<PeerId, u64>,

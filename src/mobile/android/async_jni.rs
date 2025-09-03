@@ -28,12 +28,12 @@
 //! // Android polls with: AsyncJNIManager::check_completion(handle)
 //! ```
 
+use crate::error::BitCrapsError;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
-use crate::error::BitCrapsError;
 
 /// Handle for tracking async operations
 pub type AsyncHandle = u64;
@@ -74,7 +74,7 @@ impl<T> AsyncJNIManager<T> {
         };
 
         let (tx, rx) = oneshot::channel();
-        
+
         // Store receiver for polling
         {
             let mut ops = self.operations.lock().unwrap();
@@ -103,7 +103,7 @@ impl<T> AsyncJNIManager<T> {
                 poisoned.into_inner()
             }
         };
-        
+
         if let Some(mut rx) = ops.remove(&handle) {
             match rx.try_recv() {
                 Ok(result) => AsyncResult::Complete(result),
@@ -112,9 +112,7 @@ impl<T> AsyncJNIManager<T> {
                     ops.insert(handle, rx);
                     AsyncResult::Pending
                 }
-                Err(oneshot::error::TryRecvError::Closed) => {
-                    AsyncResult::TimedOut
-                }
+                Err(oneshot::error::TryRecvError::Closed) => AsyncResult::TimedOut,
             }
         } else {
             AsyncResult::TimedOut // Handle not found or already consumed
@@ -152,11 +150,9 @@ macro_rules! async_jni_fn {
 /// Global async managers for different operation types
 use once_cell::sync::Lazy;
 
-pub static BLE_ASYNC_MANAGER: Lazy<AsyncJNIManager<()>> = 
-    Lazy::new(|| AsyncJNIManager::new());
+pub static BLE_ASYNC_MANAGER: Lazy<AsyncJNIManager<()>> = Lazy::new(|| AsyncJNIManager::new());
 
-pub static GAME_ASYNC_MANAGER: Lazy<AsyncJNIManager<String>> = 
-    Lazy::new(|| AsyncJNIManager::new());
+pub static GAME_ASYNC_MANAGER: Lazy<AsyncJNIManager<String>> = Lazy::new(|| AsyncJNIManager::new());
 
 /// Helper function to convert AsyncResult to JNI boolean
 pub fn async_result_to_jboolean<T>(result: AsyncResult<T>) -> jni::sys::jboolean {
@@ -176,30 +172,22 @@ where
     T: std::fmt::Debug,
 {
     match result {
-        AsyncResult::Complete(Ok(_)) => {
-            match env.new_string(success_message) {
-                Ok(jstr) => jstr.into_raw(),
-                Err(_) => std::ptr::null_mut(),
-            }
-        }
-        AsyncResult::Complete(Err(e)) => {
-            match env.new_string(format!("Error: {}", e)) {
-                Ok(jstr) => jstr.into_raw(),
-                Err(_) => std::ptr::null_mut(),
-            }
-        }
-        AsyncResult::Pending => {
-            match env.new_string("PENDING") {
-                Ok(jstr) => jstr.into_raw(),
-                Err(_) => std::ptr::null_mut(),
-            }
-        }
-        AsyncResult::TimedOut => {
-            match env.new_string("TIMEOUT") {
-                Ok(jstr) => jstr.into_raw(),
-                Err(_) => std::ptr::null_mut(),
-            }
-        }
+        AsyncResult::Complete(Ok(_)) => match env.new_string(success_message) {
+            Ok(jstr) => jstr.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        AsyncResult::Complete(Err(e)) => match env.new_string(format!("Error: {}", e)) {
+            Ok(jstr) => jstr.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        AsyncResult::Pending => match env.new_string("PENDING") {
+            Ok(jstr) => jstr.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        AsyncResult::TimedOut => match env.new_string("TIMEOUT") {
+            Ok(jstr) => jstr.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
     }
 }
 
@@ -212,34 +200,40 @@ mod tests {
     async fn test_async_manager() {
         let manager = AsyncJNIManager::new();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        
+
         // Start a quick operation
         let handle = manager.start_operation(&rt, || async {
             sleep(Duration::from_millis(10)).await;
             Ok::<(), BitCrapsError>(())
         });
-        
+
         // Should be pending initially
         matches!(manager.check_completion(handle), AsyncResult::Pending);
-        
+
         // Wait a bit and check again
         sleep(Duration::from_millis(20)).await;
-        matches!(manager.check_completion(handle), AsyncResult::Complete(Ok(())));
+        matches!(
+            manager.check_completion(handle),
+            AsyncResult::Complete(Ok(()))
+        );
     }
 
     #[tokio::test]
     async fn test_timeout() {
         let manager = AsyncJNIManager::new();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        
+
         // Start an operation that takes too long
         let handle = manager.start_operation(&rt, || async {
             sleep(Duration::from_secs(10)).await; // Longer than 5s timeout
             Ok::<(), BitCrapsError>(())
         });
-        
+
         // Wait for timeout
         sleep(Duration::from_secs(6)).await;
-        matches!(manager.check_completion(handle), AsyncResult::Complete(Err(BitCrapsError::Timeout)));
+        matches!(
+            manager.check_completion(handle),
+            AsyncResult::Complete(Err(BitCrapsError::Timeout))
+        );
     }
 }

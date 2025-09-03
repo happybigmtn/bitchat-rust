@@ -69,7 +69,7 @@ impl WalletScreen {
             send_address: Arc::new(RwLock::new(String::new())),
         }
     }
-    
+
     /// Generate sample transaction history
     fn generate_sample_transactions() -> Vec<TransactionDisplay> {
         vec![
@@ -107,18 +107,18 @@ impl WalletScreen {
             },
         ]
     }
-    
+
     /// Send tokens to another wallet
     pub async fn send_tokens(&self, to_address: String, amount: u64) -> Result<(), String> {
         let balance = self.balance.read().await;
-        
+
         if amount > balance.0 {
             return Err("Insufficient balance".to_string());
         }
-        
+
         // Deduct from balance
         *self.balance.write().await = CrapTokens(balance.0 - amount);
-        
+
         // Add to transaction history
         let mut txs = self.transactions.write().await;
         txs.insert(0, TransactionDisplay {
@@ -129,25 +129,25 @@ impl WalletScreen {
             status: TransactionStatus::Pending,
             peer_id: Some(to_address),
         });
-        
+
         // In real implementation, broadcast transaction
-        
+
         Ok(())
     }
-    
+
     /// Stake tokens for rewards
     pub async fn stake_tokens(&self, amount: u64) -> Result<(), String> {
         let balance = self.balance.read().await;
-        
+
         if amount > balance.0 {
             return Err("Insufficient balance".to_string());
         }
-        
+
         // Move from balance to staked
         *self.balance.write().await = CrapTokens(balance.0 - amount);
         let mut staked = self.staked_balance.write().await;
         *staked = CrapTokens(staked.0 + amount);
-        
+
         // Add to transaction history
         let mut txs = self.transactions.write().await;
         txs.insert(0, TransactionDisplay {
@@ -158,23 +158,23 @@ impl WalletScreen {
             status: TransactionStatus::Confirmed,
             peer_id: None,
         });
-        
+
         Ok(())
     }
-    
+
     /// Unstake tokens
     pub async fn unstake_tokens(&self, amount: u64) -> Result<(), String> {
         let staked = self.staked_balance.read().await;
-        
+
         if amount > staked.0 {
             return Err("Insufficient staked balance".to_string());
         }
-        
+
         // Move from staked to balance
         *self.staked_balance.write().await = CrapTokens(staked.0 - amount);
         let mut balance = self.balance.write().await;
         *balance = CrapTokens(balance.0 + amount);
-        
+
         // Add to transaction history
         let mut txs = self.transactions.write().await;
         txs.insert(0, TransactionDisplay {
@@ -185,25 +185,25 @@ impl WalletScreen {
             status: TransactionStatus::Confirmed,
             peer_id: None,
         });
-        
+
         Ok(())
     }
-    
+
     /// Claim pending rewards
     pub async fn claim_rewards(&self) -> Result<(), String> {
         let rewards = self.pending_rewards.read().await;
-        
+
         if rewards.0 == 0 {
             return Err("No rewards to claim".to_string());
         }
-        
+
         // Add rewards to balance
         let mut balance = self.balance.write().await;
         *balance = CrapTokens(balance.0 + rewards.0);
-        
+
         // Clear pending rewards
         *self.pending_rewards.write().await = CrapTokens(0);
-        
+
         // Add to transaction history
         let mut txs = self.transactions.write().await;
         txs.insert(0, TransactionDisplay {
@@ -214,23 +214,23 @@ impl WalletScreen {
             status: TransactionStatus::Confirmed,
             peer_id: None,
         });
-        
+
         Ok(())
     }
-    
+
     /// Generate QR code for receiving
     pub async fn generate_receive_qr(&self) {
         let address = self.receive_address.read().await;
         // In real implementation, generate actual QR code
         *self.qr_code_data.write().await = Some(format!("bitcraps:{}", address));
     }
-    
+
     /// Calculate total portfolio value
     pub async fn get_total_value(&self) -> CrapTokens {
         let balance = self.balance.read().await;
         let staked = self.staked_balance.read().await;
         let rewards = self.pending_rewards.read().await;
-        
+
         CrapTokens(balance.0 + staked.0 + rewards.0)
     }
 }
@@ -239,15 +239,15 @@ impl Screen for WalletScreen {
     fn render(&self, ctx: &mut RenderContext) {
         // Render header with balance
         self.render_header(ctx);
-        
+
         // Render tab bar
         self.render_tabs(ctx);
-        
+
         // Render current tab content
         let tab = self.selected_tab.try_read().ok()
             .and_then(|t| Some(t.clone()))
             .unwrap_or(WalletTab::Overview);
-            
+
         match tab {
             WalletTab::Overview => self.render_overview(ctx),
             WalletTab::Send => self.render_send(ctx),
@@ -256,7 +256,7 @@ impl Screen for WalletScreen {
             WalletTab::Staking => self.render_staking(ctx),
         }
     }
-    
+
     fn handle_touch(&mut self, event: TouchEvent) -> Option<ScreenTransition> {
         match event {
             TouchEvent::Tap { x, y } => {
@@ -271,12 +271,12 @@ impl Screen for WalletScreen {
                         4 => WalletTab::Staking,
                         _ => return None,
                     };
-                    
+
                     if let Ok(mut tab) = self.selected_tab.try_write() {
                         *tab = new_tab;
                     }
                 }
-                
+
                 // Handle back button
                 if x >= 0.0 && x <= 0.1 && y >= 0.0 && y <= 0.1 {
                     return Some(ScreenTransition::Pop);
@@ -298,10 +298,10 @@ impl Screen for WalletScreen {
             }
             _ => {}
         }
-        
+
         None
     }
-    
+
     fn update(&mut self, _delta_time: Duration) {
         // Update pending rewards simulation
         if let Ok(mut rewards) = self.pending_rewards.try_write() {
@@ -320,13 +320,13 @@ impl WalletScreen {
     fn render_header(&self, ctx: &mut RenderContext) {
         // Background
         ctx.fill_rect(0.0, 0.0, 1.0, 0.15, (40, 40, 40, 255));
-        
+
         // Back button
         ctx.draw_text("←", 0.02, 0.075, 24.0, (255, 255, 255, 255));
-        
+
         // Title
         ctx.draw_text("Wallet", 0.5, 0.05, 20.0, (255, 255, 255, 255));
-        
+
         // Balance
         if let Ok(balance) = self.balance.try_read() {
             ctx.draw_text(
@@ -335,13 +335,13 @@ impl WalletScreen {
             );
         }
     }
-    
+
     fn render_tabs(&self, ctx: &mut RenderContext) {
         let tabs = ["Overview", "Send", "Receive", "History", "Staking"];
         let selected = self.selected_tab.try_read().ok()
             .and_then(|t| Some(t.clone()))
             .unwrap_or(WalletTab::Overview);
-        
+
         for (i, tab_name) in tabs.iter().enumerate() {
             let x = i as f32 * 0.2;
             let is_selected = match (i, &selected) {
@@ -352,113 +352,113 @@ impl WalletScreen {
                 (4, WalletTab::Staking) => true,
                 _ => false,
             };
-            
+
             let color = if is_selected {
                 (100, 150, 255, 255)
             } else {
                 (150, 150, 150, 255)
             };
-            
+
             ctx.fill_rect(x, 0.15, 0.2, 0.1, color);
             ctx.draw_text(tab_name, x + 0.1, 0.2, 12.0, (255, 255, 255, 255));
         }
     }
-    
+
     fn render_overview(&self, ctx: &mut RenderContext) {
         // Portfolio breakdown
         ctx.draw_text("Portfolio", 0.1, 0.35, 18.0, (255, 255, 255, 255));
-        
+
         if let Ok(balance) = self.balance.try_read() {
             ctx.draw_text(
                 &format!("Available: {} CRAP", balance.0),
                 0.1, 0.4, 14.0, (200, 200, 200, 255)
             );
         }
-        
+
         if let Ok(staked) = self.staked_balance.try_read() {
             ctx.draw_text(
                 &format!("Staked: {} CRAP", staked.0),
                 0.1, 0.45, 14.0, (200, 200, 200, 255)
             );
         }
-        
+
         if let Ok(rewards) = self.pending_rewards.try_read() {
             ctx.draw_text(
                 &format!("Rewards: {} CRAP", rewards.0),
                 0.1, 0.5, 14.0, (100, 255, 100, 255)
             );
         }
-        
+
         // Quick actions
         ctx.draw_text("Quick Actions", 0.1, 0.6, 18.0, (255, 255, 255, 255));
-        
+
         // Send button
         ctx.fill_rect(0.1, 0.65, 0.35, 0.1, (50, 100, 200, 255));
         ctx.draw_text("Send", 0.275, 0.7, 16.0, (255, 255, 255, 255));
-        
+
         // Receive button
         ctx.fill_rect(0.55, 0.65, 0.35, 0.1, (50, 200, 100, 255));
         ctx.draw_text("Receive", 0.725, 0.7, 16.0, (255, 255, 255, 255));
     }
-    
+
     fn render_send(&self, ctx: &mut RenderContext) {
         ctx.draw_text("Send CRAP Tokens", 0.1, 0.35, 18.0, (255, 255, 255, 255));
-        
+
         // Amount input
         ctx.draw_text("Amount:", 0.1, 0.45, 14.0, (200, 200, 200, 255));
         ctx.fill_rect(0.1, 0.48, 0.8, 0.08, (60, 60, 60, 255));
         if let Ok(amount) = self.send_amount.try_read() {
             ctx.draw_text(&amount, 0.15, 0.52, 16.0, (255, 255, 255, 255));
         }
-        
+
         // Address input
         ctx.draw_text("To Address:", 0.1, 0.6, 14.0, (200, 200, 200, 255));
         ctx.fill_rect(0.1, 0.63, 0.8, 0.08, (60, 60, 60, 255));
         if let Ok(address) = self.send_address.try_read() {
             ctx.draw_text(&address, 0.15, 0.67, 16.0, (255, 255, 255, 255));
         }
-        
+
         // Send button
         ctx.fill_rect(0.25, 0.8, 0.5, 0.1, (50, 200, 50, 255));
         ctx.draw_text("Send Tokens", 0.5, 0.85, 18.0, (255, 255, 255, 255));
     }
-    
+
     fn render_receive(&self, ctx: &mut RenderContext) {
         ctx.draw_text("Receive CRAP Tokens", 0.1, 0.35, 18.0, (255, 255, 255, 255));
-        
+
         // QR code area
         ctx.fill_rect(0.25, 0.4, 0.5, 0.3, (255, 255, 255, 255));
         ctx.draw_text("QR CODE", 0.5, 0.55, 16.0, (0, 0, 0, 255));
-        
+
         // Address display
         if let Ok(address) = self.receive_address.try_read() {
             ctx.draw_text("Your Address:", 0.1, 0.75, 14.0, (200, 200, 200, 255));
             ctx.draw_text(&address, 0.5, 0.8, 12.0, (150, 150, 150, 255));
         }
-        
+
         // Copy button
         ctx.fill_rect(0.35, 0.85, 0.3, 0.08, (100, 100, 100, 255));
         ctx.draw_text("Copy", 0.5, 0.89, 14.0, (255, 255, 255, 255));
     }
-    
+
     fn render_history(&self, ctx: &mut RenderContext) {
         ctx.draw_text("Transaction History", 0.1, 0.35, 18.0, (255, 255, 255, 255));
-        
+
         if let Ok(txs) = self.transactions.try_read() {
             let offset = self.scroll_offset.try_read().ok()
                 .and_then(|o| Some(*o))
                 .unwrap_or(0.0);
-            
+
             for (i, tx) in txs.iter().enumerate() {
                 let y = 0.4 + (i as f32 * 0.12) - offset;
-                
+
                 if y < 0.3 || y > 0.9 {
                     continue;
                 }
-                
+
                 // Transaction box
                 ctx.fill_rect(0.05, y, 0.9, 0.1, (50, 50, 50, 255));
-                
+
                 // Type icon and amount
                 let (icon, color) = match tx.tx_type {
                     TransactionType::GameWin => ("↑", (100, 255, 100, 255)),
@@ -466,17 +466,17 @@ impl WalletScreen {
                     TransactionType::Transfer => ("→", (100, 150, 255, 255)),
                     _ => ("•", (200, 200, 200, 255)),
                 };
-                
+
                 ctx.draw_text(icon, 0.1, y + 0.05, 20.0, color);
                 ctx.draw_text(&format!("{} CRAP", tx.amount.0), 0.2, y + 0.04, 14.0, color);
                 ctx.draw_text(&tx.description, 0.2, y + 0.07, 12.0, (180, 180, 180, 255));
             }
         }
     }
-    
+
     fn render_staking(&self, ctx: &mut RenderContext) {
         ctx.draw_text("Staking", 0.1, 0.35, 18.0, (255, 255, 255, 255));
-        
+
         // Current staking info
         if let Ok(staked) = self.staked_balance.try_read() {
             ctx.draw_text(
@@ -484,25 +484,25 @@ impl WalletScreen {
                 0.1, 0.45, 16.0, (200, 200, 200, 255)
             );
         }
-        
+
         if let Ok(rewards) = self.pending_rewards.try_read() {
             ctx.draw_text(
                 &format!("Pending Rewards: {} CRAP", rewards.0),
                 0.1, 0.5, 16.0, (100, 255, 100, 255)
             );
         }
-        
+
         // APY display
         ctx.draw_text("Current APY: 5%", 0.1, 0.55, 14.0, (150, 150, 150, 255));
-        
+
         // Stake button
         ctx.fill_rect(0.1, 0.65, 0.35, 0.1, (50, 100, 200, 255));
         ctx.draw_text("Stake", 0.275, 0.7, 16.0, (255, 255, 255, 255));
-        
+
         // Unstake button
         ctx.fill_rect(0.55, 0.65, 0.35, 0.1, (200, 100, 50, 255));
         ctx.draw_text("Unstake", 0.725, 0.7, 16.0, (255, 255, 255, 255));
-        
+
         // Claim rewards button
         ctx.fill_rect(0.25, 0.8, 0.5, 0.1, (50, 200, 50, 255));
         ctx.draw_text("Claim Rewards", 0.5, 0.85, 16.0, (255, 255, 255, 255));

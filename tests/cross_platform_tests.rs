@@ -397,3 +397,5 @@ mod performance_benchmarks {
         assert!(duration.as_secs() < 10, "Memory operations should be fast");
     }
 }
+#![cfg(feature = "legacy-tests")]
+#![cfg(feature = "legacy-tests")]

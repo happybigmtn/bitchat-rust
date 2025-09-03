@@ -31,13 +31,13 @@ impl PlatformBridge {
     pub async fn initialize(&self) -> Result<(), UIError> {
         // Initialize UI
         self.ui.initialize().await?;
-        
+
         // Setup platform-specific rendering
         self.renderer.setup()?;
-        
+
         // Navigate to initial screen
         self.ui.navigate_to(Screen::Splash).await?;
-        
+
         Ok(())
     }
 
@@ -45,11 +45,11 @@ impl PlatformBridge {
     pub async fn render(&self) -> Result<(), UIError> {
         let state = self.ui.get_state().await;
         let navigation = self.ui.navigation.read().await;
-        
+
         if let Some(screen) = navigation.current() {
             self.renderer.render_screen(screen, &state, &self.ui.theme);
         }
-        
+
         Ok(())
     }
 
@@ -69,10 +69,10 @@ impl PlatformBridge {
                 self.handle_lifecycle(state).await?;
             }
         }
-        
+
         // Re-render after event
         self.render().await?;
-        
+
         Ok(())
     }
 
@@ -121,16 +121,16 @@ impl PlatformBridge {
 pub trait PlatformRenderer: Send + Sync {
     /// Setup the renderer
     fn setup(&self) -> Result<(), UIError>;
-    
+
     /// Render a screen
     fn render_screen(&self, screen: &Screen, state: &AppState, theme: &Theme);
-    
+
     /// Show dialog
     fn show_dialog(&self, title: &str, message: &str, buttons: Vec<DialogButton>);
-    
+
     /// Show toast
     fn show_toast(&self, message: &str, duration: ToastDuration);
-    
+
     /// Update status bar
     fn update_status_bar(&self, style: StatusBarStyle);
 }
@@ -146,7 +146,7 @@ impl AndroidRenderer {
             jni_env: None,
         }
     }
-    
+
     #[cfg(target_os = "android")]
     pub fn set_jni_env(&mut self, env: *mut std::ffi::c_void) {
         self.jni_env = Some(env);
@@ -162,7 +162,7 @@ impl PlatformRenderer for AndroidRenderer {
         }
         Ok(())
     }
-    
+
     fn render_screen(&self, screen: &Screen, state: &AppState, theme: &Theme) {
         #[cfg(target_os = "android")]
         {
@@ -186,7 +186,7 @@ impl PlatformRenderer for AndroidRenderer {
             }
         }
     }
-    
+
     fn show_dialog(&self, title: &str, message: &str, buttons: Vec<DialogButton>) {
         #[cfg(target_os = "android")]
         {
@@ -194,7 +194,7 @@ impl PlatformRenderer for AndroidRenderer {
             tracing::info!("Showing Android dialog: {}", title);
         }
     }
-    
+
     fn show_toast(&self, message: &str, duration: ToastDuration) {
         #[cfg(target_os = "android")]
         {
@@ -202,7 +202,7 @@ impl PlatformRenderer for AndroidRenderer {
             tracing::info!("Showing Android toast: {}", message);
         }
     }
-    
+
     fn update_status_bar(&self, style: StatusBarStyle) {
         #[cfg(target_os = "android")]
         {
@@ -217,7 +217,7 @@ impl AndroidRenderer {
     fn render_android_login(&self, state: &AppState, theme: &Theme) {
         use jni::objects::{JObject, JValue};
         use jni::JNIEnv;
-        
+
         if let Some(env_ptr) = self.jni_env {
             if let Some(activity) = self.activity {
                 unsafe {
@@ -228,7 +228,7 @@ impl AndroidRenderer {
                             return;
                         }
                     };
-                    
+
                     // Convert theme to Android values
                     let theme_name = match env.new_string(theme.name()) {
                         Ok(s) => s,
@@ -245,7 +245,7 @@ impl AndroidRenderer {
                             return;
                         }
                     };
-                    
+
                     // Call renderLoginScreen method on the activity
                     let _ = env.call_method(
                         JObject::from_raw(activity),
@@ -260,11 +260,11 @@ impl AndroidRenderer {
             }
         }
     }
-    
+
     fn render_android_home(&self, state: &AppState, theme: &Theme) {
         use jni::objects::{JObject, JValue};
         use jni::JNIEnv;
-        
+
         if let Some(env_ptr) = self.jni_env {
             if let Some(activity) = self.activity {
                 unsafe {
@@ -275,7 +275,7 @@ impl AndroidRenderer {
                             return;
                         }
                     };
-                    
+
                     // Get user data from state
                     let username = state.user_profile.as_ref()
                         .map(|p| p.username.as_str())
@@ -287,10 +287,10 @@ impl AndroidRenderer {
                             return;
                         }
                     };
-                    
+
                     // Get balance
                     let balance = state.wallet_balance;
-                    
+
                     // Call renderHomeScreen method
                     let _ = env.call_method(
                         JObject::from_raw(activity),
@@ -305,11 +305,11 @@ impl AndroidRenderer {
             }
         }
     }
-    
+
     fn render_android_game(&self, state: &AppState, theme: &Theme) {
         use jni::objects::{JObject, JValue};
         use jni::JNIEnv;
-        
+
         if let Some(env_ptr) = self.jni_env {
             if let Some(activity) = self.activity {
                 unsafe {
@@ -320,7 +320,7 @@ impl AndroidRenderer {
                             return;
                         }
                     };
-                    
+
                     // Get game state
                     let game_id = state.active_game.as_ref()
                         .map(|g| format!("{:?}", g.id))
@@ -332,12 +332,12 @@ impl AndroidRenderer {
                             return;
                         }
                     };
-                    
+
                     // Get current round
                     let round = state.active_game.as_ref()
                         .map(|g| g.current_round)
                         .unwrap_or(0);
-                    
+
                     // Call renderGameScreen method
                     let _ = env.call_method(
                         JObject::from_raw(activity),
@@ -367,7 +367,7 @@ impl IosRenderer {
             view_controller: None,
         }
     }
-    
+
     #[cfg(target_os = "ios")]
     pub fn set_view_controller(&mut self, vc: *mut std::ffi::c_void) {
         self.view_controller = Some(vc);
@@ -383,7 +383,7 @@ impl PlatformRenderer for IosRenderer {
         }
         Ok(())
     }
-    
+
     fn render_screen(&self, screen: &Screen, state: &AppState, theme: &Theme) {
         #[cfg(target_os = "ios")]
         {
@@ -404,7 +404,7 @@ impl PlatformRenderer for IosRenderer {
             }
         }
     }
-    
+
     fn show_dialog(&self, title: &str, message: &str, buttons: Vec<DialogButton>) {
         #[cfg(target_os = "ios")]
         {
@@ -412,7 +412,7 @@ impl PlatformRenderer for IosRenderer {
             tracing::info!("Showing iOS alert: {}", title);
         }
     }
-    
+
     fn show_toast(&self, message: &str, duration: ToastDuration) {
         #[cfg(target_os = "ios")]
         {
@@ -420,7 +420,7 @@ impl PlatformRenderer for IosRenderer {
             tracing::info!("Showing iOS notification: {}", message);
         }
     }
-    
+
     fn update_status_bar(&self, style: StatusBarStyle) {
         #[cfg(target_os = "ios")]
         {
@@ -450,7 +450,7 @@ impl IosRenderer {
                         return;
                     }
                 };
-                
+
                 extern "C" {
                     fn ios_render_login_screen(
                         view_controller: *mut std::ffi::c_void,
@@ -458,7 +458,7 @@ impl IosRenderer {
                         primary_color: *const std::ffi::c_char,
                     );
                 }
-                
+
                 ios_render_login_screen(
                     vc,
                     theme_name.as_ptr(),
@@ -467,7 +467,7 @@ impl IosRenderer {
             }
         }
     }
-    
+
     fn render_ios_home(&self, state: &AppState, theme: &Theme) {
         if let Some(vc) = self.view_controller {
             unsafe {
@@ -482,7 +482,7 @@ impl IosRenderer {
                     }
                 };
                 let balance = state.wallet_balance;
-                
+
                 extern "C" {
                     fn ios_render_home_screen(
                         view_controller: *mut std::ffi::c_void,
@@ -490,7 +490,7 @@ impl IosRenderer {
                         balance: u64,
                     );
                 }
-                
+
                 ios_render_home_screen(
                     vc,
                     username_cstr.as_ptr(),
@@ -499,7 +499,7 @@ impl IosRenderer {
             }
         }
     }
-    
+
     fn render_ios_game(&self, state: &AppState, theme: &Theme) {
         if let Some(vc) = self.view_controller {
             unsafe {
@@ -516,7 +516,7 @@ impl IosRenderer {
                 let round = state.active_game.as_ref()
                     .map(|g| g.current_round)
                     .unwrap_or(0);
-                
+
                 extern "C" {
                     fn ios_render_game_screen(
                         view_controller: *mut std::ffi::c_void,
@@ -524,7 +524,7 @@ impl IosRenderer {
                         round: u32,
                     );
                 }
-                
+
                 ios_render_game_screen(
                     vc,
                     game_id_cstr.as_ptr(),
@@ -549,19 +549,19 @@ impl PlatformRenderer for MockRenderer {
         tracing::info!("Mock renderer setup");
         Ok(())
     }
-    
+
     fn render_screen(&self, screen: &Screen, _state: &AppState, _theme: &Theme) {
         tracing::info!("Mock rendering screen: {:?}", screen);
     }
-    
+
     fn show_dialog(&self, title: &str, message: &str, _buttons: Vec<DialogButton>) {
         tracing::info!("Mock dialog: {} - {}", title, message);
     }
-    
+
     fn show_toast(&self, message: &str, _duration: ToastDuration) {
         tracing::info!("Mock toast: {}", message);
     }
-    
+
     fn update_status_bar(&self, style: StatusBarStyle) {
         tracing::info!("Mock status bar: {:?}", style);
     }
@@ -578,14 +578,14 @@ impl EventHandler {
             touch_points: Vec::new(),
         }
     }
-    
+
     pub fn process_touch(&mut self, x: f32, y: f32) {
         self.touch_points.push(TouchPoint {
             x,
             y,
             timestamp: std::time::SystemTime::now(),
         });
-        
+
         // Keep only recent touches
         if self.touch_points.len() > 10 {
             self.touch_points.remove(0);

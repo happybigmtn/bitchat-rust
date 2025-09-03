@@ -78,7 +78,7 @@ struct RingBuffer<T> {
     /// Current head position
     head: usize,
 
-    /// Current tail position  
+    /// Current tail position
     tail: usize,
 
     /// Number of items currently stored
@@ -170,7 +170,7 @@ pub struct TimeRange {
     /// Game start timestamp
     pub start_time: u64,
 
-    /// Game end timestamp  
+    /// Game end timestamp
     pub end_time: u64,
 
     /// Last activity timestamp
@@ -294,7 +294,7 @@ pub struct HistoryMetrics {
     /// Average access time for recent games (microseconds)
     pub recent_access_time_us: f64,
 
-    /// Average access time for archived games (microseconds)  
+    /// Average access time for archived games (microseconds)
     pub archived_access_time_us: f64,
 
     /// Cache hit rate for bloom filters

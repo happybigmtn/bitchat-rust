@@ -408,9 +408,11 @@ impl SparseMerkleTree {
     /// Set a leaf value
     pub fn set_leaf(&mut self, index: usize, value: Hash256) -> Result<(), crate::error::Error> {
         if index >= (1 << self.depth) {
-            return Err(crate::error::Error::IndexOutOfBounds(
-                format!("Index {} exceeds tree depth capacity {}", index, 1 << self.depth)
-            ));
+            return Err(crate::error::Error::IndexOutOfBounds(format!(
+                "Index {} exceeds tree depth capacity {}",
+                index,
+                1 << self.depth
+            )));
         }
 
         if value == self.empty_hash {

@@ -31,7 +31,7 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 mod android_constants {
     /// AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY (0)
     pub const ADVERTISE_MODE_LOW_LATENCY: i32 = 0;
-    /// AdvertiseSettings.ADVERTISE_MODE_BALANCED (1)  
+    /// AdvertiseSettings.ADVERTISE_MODE_BALANCED (1)
     pub const ADVERTISE_MODE_BALANCED: i32 = 1;
     /// AdvertiseSettings.ADVERTISE_MODE_LOW_POWER (2)
     pub const ADVERTISE_MODE_LOW_POWER: i32 = 2;
@@ -82,6 +82,9 @@ pub struct AndroidBlePeripheral {
     bitcraps_service: Option<GlobalRef>,
     tx_characteristic: Option<GlobalRef>,
     rx_characteristic: Option<GlobalRef>,
+
+    // Recovery configuration
+    recovery_config: Arc<RwLock<Option<RecoveryConfig>>>,
 }
 
 #[cfg(target_os = "android")]
@@ -109,6 +112,7 @@ impl AndroidBlePeripheral {
             bitcraps_service: None,
             tx_characteristic: None,
             rx_characteristic: None,
+            recovery_config: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -1150,8 +1154,11 @@ impl BlePeripheral for AndroidBlePeripheral {
         Ok(())
     }
 
-    async fn set_recovery_config(&mut self, _config: RecoveryConfig) -> Result<()> {
-        // TODO: Store recovery configuration
+    async fn set_recovery_config(&mut self, config: RecoveryConfig) -> Result<()> {
+        // Store recovery configuration
+        let mut recovery_config = self.recovery_config.write().await;
+        *recovery_config = Some(config);
+        log::debug!("Recovery configuration updated for Android BLE");
         Ok(())
     }
 
@@ -1210,7 +1217,7 @@ impl BlePeripheral for AndroidBlePeripheral {
 impl Drop for AndroidBlePeripheral {
     fn drop(&mut self) {
         log::info!("Cleaning up Android BLE peripheral resources");
-        
+
         // Stop advertising if running
         if let Ok(is_advertising) = self.is_advertising.try_read() {
             if *is_advertising {
@@ -1246,7 +1253,7 @@ impl Drop for AndroidBlePeripheral {
                 if let Some(adapter) = &self.bluetooth_adapter {
                     let _ = env.delete_global_ref(adapter.clone());
                 }
-                
+
                 log::debug!("Android BLE JNI global references cleaned up");
             } else {
                 log::error!("Failed to attach to Java thread for cleanup");

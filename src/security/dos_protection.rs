@@ -204,7 +204,13 @@ impl DosProtection {
         }
 
         let result = {
-            let mut trackers = self.ip_trackers.write().unwrap();
+            let mut trackers = match self.ip_trackers.write() {
+                Ok(lock) => lock,
+                Err(poisoned) => {
+                    log::error!("DoS protection lock poisoned, recovering: {}", poisoned);
+                    poisoned.into_inner()
+                }
+            };
             let tracker = trackers.entry(ip).or_insert_with(IpTracker::new);
 
             tracker.last_request = Instant::now();
@@ -275,7 +281,15 @@ impl DosProtection {
 
     /// Register a new connection from IP
     pub fn register_connection(&self, ip: IpAddr) -> ProtectionResult {
-        let mut trackers = self.ip_trackers.write().unwrap();
+        let mut trackers = match self.ip_trackers.write() {
+            Ok(lock) => lock,
+            Err(poisoned) => {
+                log::error!(
+                    "DoS protection lock poisoned during connection registration, recovering"
+                );
+                poisoned.into_inner()
+            }
+        };
         let tracker = trackers.entry(ip).or_insert_with(IpTracker::new);
 
         // Check if IP is blocked
@@ -314,14 +328,29 @@ impl DosProtection {
 
     /// Unregister a connection from IP
     pub fn unregister_connection(&self, ip: IpAddr) {
-        if let Some(tracker) = self.ip_trackers.write().unwrap().get_mut(&ip) {
+        let mut trackers = match self.ip_trackers.write() {
+            Ok(lock) => lock,
+            Err(poisoned) => {
+                log::error!(
+                    "DoS protection lock poisoned during connection unregistration, recovering"
+                );
+                poisoned.into_inner()
+            }
+        };
+        if let Some(tracker) = trackers.get_mut(&ip) {
             tracker.active_connections = tracker.active_connections.saturating_sub(1);
         }
     }
 
     /// Manually block an IP
     pub fn block_ip(&self, ip: IpAddr, duration: Duration, reason: String) {
-        let mut trackers = self.ip_trackers.write().unwrap();
+        let mut trackers = match self.ip_trackers.write() {
+            Ok(lock) => lock,
+            Err(poisoned) => {
+                log::error!("DoS protection lock poisoned during IP blocking, recovering");
+                poisoned.into_inner()
+            }
+        };
         let tracker = trackers.entry(ip).or_insert_with(IpTracker::new);
         tracker.block(duration, reason);
         log::warn!("Manually blocked IP: {} for {:?}", ip, duration);
@@ -329,7 +358,14 @@ impl DosProtection {
 
     /// Unblock an IP
     pub fn unblock_ip(&self, ip: IpAddr) {
-        if let Some(tracker) = self.ip_trackers.write().unwrap().get_mut(&ip) {
+        let mut trackers = match self.ip_trackers.write() {
+            Ok(lock) => lock,
+            Err(poisoned) => {
+                log::error!("DoS protection lock poisoned during IP unblocking, recovering");
+                poisoned.into_inner()
+            }
+        };
+        if let Some(tracker) = trackers.get_mut(&ip) {
             tracker.blocked_until = None;
             tracker.block_reason = None;
             log::info!("Unblocked IP: {}", ip);
@@ -338,7 +374,13 @@ impl DosProtection {
 
     /// Get list of currently blocked IPs
     pub fn get_blocked_ips(&self) -> Vec<(IpAddr, Duration, String)> {
-        let trackers = self.ip_trackers.read().unwrap();
+        let trackers = match self.ip_trackers.read() {
+            Ok(lock) => lock,
+            Err(poisoned) => {
+                log::error!("DoS protection lock poisoned when getting blocked IPs, recovering");
+                poisoned.into_inner()
+            }
+        };
         let now = Instant::now();
 
         trackers
@@ -364,7 +406,13 @@ impl DosProtection {
 
     /// Get DoS protection statistics
     pub fn get_stats(&self) -> DosProtectionStats {
-        let trackers = self.ip_trackers.read().unwrap();
+        let trackers = match self.ip_trackers.read() {
+            Ok(lock) => lock,
+            Err(poisoned) => {
+                log::error!("DoS protection lock poisoned when getting stats, recovering");
+                poisoned.into_inner()
+            }
+        };
         let blocked_ips = trackers
             .values()
             .filter(|tracker| tracker.is_blocked())
@@ -392,7 +440,13 @@ impl DosProtection {
 
     /// Update memory usage estimate
     fn update_memory_usage(&self) {
-        let trackers = self.ip_trackers.read().unwrap();
+        let trackers = match self.ip_trackers.read() {
+            Ok(lock) => lock,
+            Err(poisoned) => {
+                log::error!("DoS protection lock poisoned when updating memory usage, recovering");
+                poisoned.into_inner()
+            }
+        };
         let estimated_usage = trackers.len() * std::mem::size_of::<IpTracker>()
             + trackers.len() * std::mem::size_of::<IpAddr>();
         self.memory_usage.store(estimated_usage, Ordering::Relaxed);
@@ -411,7 +465,13 @@ impl DosProtection {
     pub fn cleanup_expired_entries(&self) {
         let ttl = Duration::from_secs(3600); // 1 hour TTL
 
-        let mut trackers = self.ip_trackers.write().unwrap();
+        let mut trackers = match self.ip_trackers.write() {
+            Ok(lock) => lock,
+            Err(poisoned) => {
+                log::error!("DoS protection lock poisoned during cleanup, recovering");
+                poisoned.into_inner()
+            }
+        };
         let initial_count = trackers.len();
 
         trackers.retain(|_, tracker| !tracker.is_expired(ttl));
@@ -424,14 +484,26 @@ impl DosProtection {
             );
         }
 
-        *self.last_cleanup.write().unwrap() = Instant::now();
+        match self.last_cleanup.write() {
+            Ok(mut lock) => *lock = Instant::now(),
+            Err(poisoned) => {
+                log::error!("Last cleanup lock poisoned, recovering");
+                *poisoned.into_inner() = Instant::now();
+            }
+        }
         self.update_memory_usage();
     }
 
     /// Cleanup if needed
     fn cleanup_if_needed(&self) {
         let should_cleanup = {
-            let last_cleanup = self.last_cleanup.read().unwrap();
+            let last_cleanup = match self.last_cleanup.read() {
+                Ok(lock) => lock,
+                Err(poisoned) => {
+                    log::error!("Last cleanup lock poisoned when checking interval, recovering");
+                    poisoned.into_inner()
+                }
+            };
             last_cleanup.elapsed() > self.config.cleanup_interval
         };
 
@@ -445,13 +517,27 @@ impl DosProtection {
         log::warn!("Performing emergency DoS protection cleanup");
 
         let target_size = {
-            let trackers = self.ip_trackers.read().unwrap();
+            let trackers = match self.ip_trackers.read() {
+                Ok(lock) => lock,
+                Err(poisoned) => {
+                    log::error!(
+                        "DoS protection lock poisoned when calculating target size, recovering"
+                    );
+                    poisoned.into_inner()
+                }
+            };
             trackers.len() / 2 // Remove half the entries
         };
 
         // Keep only the most recently active and blocked entries
         let entries_to_keep: Vec<(IpAddr, IpTracker)> = {
-            let trackers = self.ip_trackers.read().unwrap();
+            let trackers = match self.ip_trackers.read() {
+                Ok(lock) => lock,
+                Err(poisoned) => {
+                    log::error!("DoS protection lock poisoned when evicting entries, recovering");
+                    poisoned.into_inner()
+                }
+            };
             let mut entries: Vec<_> = trackers.iter().collect();
             entries.sort_by_key(|(_, tracker)| {
                 if tracker.is_blocked() {
@@ -485,7 +571,13 @@ impl DosProtection {
 
         // Replace the trackers map
         {
-            let mut trackers = self.ip_trackers.write().unwrap();
+            let mut trackers = match self.ip_trackers.write() {
+                Ok(lock) => lock,
+                Err(poisoned) => {
+                    log::error!("DoS protection lock poisoned when inserting entries, recovering");
+                    poisoned.into_inner()
+                }
+            };
             trackers.clear();
             for (ip, tracker) in entries_to_keep {
                 trackers.insert(ip, tracker);

@@ -24,6 +24,19 @@ pub struct Cli {
 
     #[arg(short, long)]
     pub verbose: bool,
+
+    // MVP networking
+    /// Listen for TCP connections on address (e.g. 0.0.0.0:8989)
+    #[arg(long)]
+    pub listen_tcp: Option<String>,
+
+    /// Connect to one or more TCP peers (e.g. 192.168.1.10:8989)
+    #[arg(long, value_delimiter = ' ')]
+    pub connect_tcp: Vec<String>,
+
+    /// Disable BLE transports (TCP-only MVP)
+    #[arg(long, default_value_t = true)]
+    pub no_ble: bool,
 }
 
 /// Available commands for the BitCraps CLI
@@ -31,6 +44,9 @@ pub struct Cli {
 pub enum Commands {
     /// Start the BitCraps node
     Start,
+
+    /// Launch interactive TUI (Terminal User Interface)
+    Tui,
 
     /// Create a new game
     CreateGame {
@@ -70,6 +86,7 @@ impl Commands {
         matches!(
             self,
             Commands::Start
+                | Commands::Tui
                 | Commands::CreateGame { .. }
                 | Commands::JoinGame { .. }
                 | Commands::Bet { .. }
@@ -86,6 +103,7 @@ impl Commands {
     pub fn name(&self) -> &'static str {
         match self {
             Commands::Start => "start",
+            Commands::Tui => "tui",
             Commands::CreateGame { .. } => "create-game",
             Commands::JoinGame { .. } => "join-game",
             Commands::Bet { .. } => "bet",
@@ -100,6 +118,7 @@ impl Commands {
     pub fn _name(&self) -> &'static str {
         match self {
             Commands::Start => "start",
+            Commands::Tui => "tui",
             Commands::CreateGame { .. } => "create-game",
             Commands::JoinGame { .. } => "join-game",
             Commands::Balance => "balance",
@@ -245,7 +264,7 @@ pub fn get_bet_type_help() -> &'static str {
 
 MAIN LINE BETS:
   pass, passline          - Pass Line bet (1:1 payout)
-  dontpass, dont-pass     - Don't Pass Line bet (1:1 payout)  
+  dontpass, dont-pass     - Don't Pass Line bet (1:1 payout)
   come                    - Come bet (1:1 payout)
   dontcome, dont-come     - Don't Come bet (1:1 payout)
   field                   - Field bet (1:1 or 2:1 payout)
@@ -257,7 +276,7 @@ ODDS BETS:
 YES BETS (number before 7):
   yes2, yes3, yes4, yes5, yes6, yes8, yes9, yes10, yes11, yes12
 
-NO BETS (7 before number):  
+NO BETS (7 before number):
   no2, no3, no4, no5, no6, no8, no9, no10, no11, no12
 
 HARDWAY BETS:
@@ -269,7 +288,7 @@ ONE-ROLL BETS:
 SPECIAL BETS:
   fire                    - Fire bet (multiple points)
   bonussmall, small       - Bonus Small (2-6 before 7)
-  bonustall, tall         - Bonus Tall (8-12 before 7) 
+  bonustall, tall         - Bonus Tall (8-12 before 7)
   bonusall, all           - Bonus All (2-12 except 7)
   hotroller, hot-roller   - Hot Roller progressive
   twicehard, twice-hard   - Same hardway twice
