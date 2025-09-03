@@ -8,19 +8,36 @@
 //! - Connection pooling
 //! - Schema migrations
 
+pub mod abstractions;
 pub mod cache;
 pub mod cli;
+pub mod database_manager;
+pub mod migration_manager;
 pub mod migrations;
 pub mod models;
+pub mod pgbouncer_config;
+pub mod postgres_backend;
 pub mod query_builder;
+pub mod repositories;
 pub mod repository;
+pub mod sharding_examples;
+pub mod sqlite_backend;
+
+pub mod async_pool;
 
 // Re-export commonly used types
+pub use abstractions::*;
 pub use cache::{CacheConfig, DatabaseCache};
-pub use migrations::{Migration, MigrationManager, MigrationReport};
+pub use database_manager::{DatabaseManager, DatabaseManagerConfig};
+pub use migration_manager::{Migration, MigrationManager, MigrationReport};
 pub use models::*;
+pub use pgbouncer_config::{PgBouncerConfig, PoolMode};
+pub use postgres_backend::PostgresBackend;
 pub use query_builder::{GameQueries, QueryBuilder, UserQueries};
+pub use repositories::*;
 pub use repository::{GameRepository, StatsRepository, TransactionRepository, UserRepository};
+pub use sharding_examples::{BitCrapsShardingStrategies, ProductionShardingConfig};
+pub use sqlite_backend::SqliteBackend;
 
 /// Generic repository trait for database access patterns
 pub trait Repository<T> {

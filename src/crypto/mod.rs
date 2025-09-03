@@ -9,6 +9,7 @@
 //! - SIMD-accelerated batch operations
 
 pub mod encryption;
+pub mod hsm;
 pub mod random;
 pub mod safe_arithmetic;
 pub mod secure_keystore;

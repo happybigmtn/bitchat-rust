@@ -48,6 +48,7 @@ pub mod treasury; // Treasury management and automated market making
 pub mod ui; // User interface (CLI and TUI)
 pub mod utils; // Utility functions and helpers
 pub mod validation; // Security hardening and input validation
+pub mod services; // Microservices architecture
 
 // UniFFI type tag (required by generated code)
 #[cfg(feature = "uniffi")]

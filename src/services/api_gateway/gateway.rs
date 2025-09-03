@@ -1,0 +1,563 @@
+//! API Gateway Implementation
+//!
+//! Main gateway service that coordinates routing, authentication, and load balancing.
+
+use super::circuit_breaker::CircuitBreaker;
+use super::load_balancer::{LoadBalancer, LoadBalancingStrategy};
+use super::middleware::{AuthMiddleware, RateLimitMiddleware};
+use super::routing::Router;
+use super::*;
+use crate::error::{Error, Result};
+use axum::{
+    body::Body,
+    extract::{ConnectInfo, Path, Query, State},
+    http::{HeaderMap, Method, Request, StatusCode, Uri},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+    routing::{any, get},
+    Router as AxumRouter,
+};
+use dashmap::DashMap;
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
+use tower::ServiceBuilder;
+use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
+
+/// API Gateway service
+pub struct ApiGateway {
+    config: GatewayConfig,
+    router: Arc<Router>,
+    load_balancer: Arc<LoadBalancer>,
+    circuit_breakers: Arc<DashMap<String, CircuitBreaker>>,
+    rate_limiter: Arc<RateLimitMiddleware>,
+    auth_middleware: Arc<AuthMiddleware>,
+    metrics: Arc<RwLock<GatewayMetrics>>,
+    request_counter: Arc<AtomicU64>,
+    shutdown_tx: Option<tokio::sync::mpsc::UnboundedSender<()>>,
+}
+
+impl ApiGateway {
+    /// Create a new API gateway
+    pub fn new(config: GatewayConfig) -> Self {
+        let router = Arc::new(Router::new());
+        let load_balancer = Arc::new(LoadBalancer::new(
+            LoadBalancingStrategy::WeightedRoundRobin,
+            config.service_discovery.clone(),
+        ));
+        let circuit_breakers = Arc::new(DashMap::new());
+        let rate_limiter = Arc::new(RateLimitMiddleware::new(config.rate_limit.clone()));
+        let auth_middleware = Arc::new(AuthMiddleware::new(config.auth.clone()));
+        let metrics = Arc::new(RwLock::new(GatewayMetrics::default()));
+        let request_counter = Arc::new(AtomicU64::new(0));
+        
+        Self {
+            config,
+            router,
+            load_balancer,
+            circuit_breakers,
+            rate_limiter,
+            auth_middleware,
+            metrics,
+            request_counter,
+            shutdown_tx: None,
+        }
+    }
+    
+    /// Start the API gateway
+    pub async fn start(&mut self) -> Result<()> {
+        // Initialize default routes
+        self.setup_default_routes().await?;
+        
+        // Start background services
+        let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::unbounded_channel();
+        self.shutdown_tx = Some(shutdown_tx);
+        
+        // Start health checker
+        let load_balancer = self.load_balancer.clone();
+        let health_check_interval = self.config.service_discovery.health_check_interval;
+        tokio::spawn(async move {
+            Self::run_health_checker(load_balancer, health_check_interval, shutdown_rx).await;
+        });
+        
+        // Start metrics collector
+        let metrics = self.metrics.clone();
+        let request_counter = self.request_counter.clone();
+        tokio::spawn(async move {
+            Self::update_metrics(metrics, request_counter).await;
+        });
+        
+        // Build Axum router
+        let app_router = self.build_router().await;
+        
+        // Start HTTP server
+        let listener = tokio::net::TcpListener::bind(&self.config.listen_addr).await?;
+        log::info!("API Gateway listening on {}", self.config.listen_addr);
+        
+        axum::serve(
+            listener,
+            app_router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .map_err(|e| Error::NetworkError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    /// Stop the API gateway
+    pub async fn stop(&mut self) -> Result<()> {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+        
+        log::info!("API Gateway stopped");
+        Ok(())
+    }
+    
+    /// Add a service route
+    pub async fn add_route(&self, route: RouteConfig) -> Result<()> {
+        self.router.add_route(route).await;
+        log::info!("Added route: {} -> {}", route.path, route.service);
+        Ok(())
+    }
+    
+    /// Remove a service route
+    pub async fn remove_route(&self, path: &str) -> Result<()> {
+        self.router.remove_route(path).await;
+        log::info!("Removed route: {}", path);
+        Ok(())
+    }
+    
+    /// Get gateway metrics
+    pub async fn get_metrics(&self) -> GatewayMetrics {
+        self.metrics.read().await.clone()
+    }
+    
+    // Private implementation methods
+    
+    async fn setup_default_routes(&self) -> Result<()> {
+        // Game Engine routes
+        self.add_route(RouteConfig {
+            path: "/api/v1/games".to_string(),
+            service: "game-engine".to_string(),
+            methods: vec!["GET".to_string(), "POST".to_string()],
+            auth_required: true,
+            rate_limit_override: None,
+            timeout_override: None,
+        }).await?;
+        
+        self.add_route(RouteConfig {
+            path: "/api/v1/games/{id}".to_string(),
+            service: "game-engine".to_string(),
+            methods: vec!["GET".to_string(), "POST".to_string()],
+            auth_required: true,
+            rate_limit_override: None,
+            timeout_override: None,
+        }).await?;
+        
+        self.add_route(RouteConfig {
+            path: "/api/v1/games/{id}/actions".to_string(),
+            service: "game-engine".to_string(),
+            methods: vec!["POST".to_string()],
+            auth_required: true,
+            rate_limit_override: Some(100), // Lower limit for game actions
+            timeout_override: None,
+        }).await?;
+        
+        // Consensus routes
+        self.add_route(RouteConfig {
+            path: "/api/v1/consensus/propose".to_string(),
+            service: "consensus".to_string(),
+            methods: vec!["POST".to_string()],
+            auth_required: true,
+            rate_limit_override: Some(50), // Lower limit for consensus operations
+            timeout_override: Some(Duration::from_secs(60)),
+        }).await?;
+        
+        self.add_route(RouteConfig {
+            path: "/api/v1/consensus/vote".to_string(),
+            service: "consensus".to_string(),
+            methods: vec!["POST".to_string()],
+            auth_required: true,
+            rate_limit_override: Some(200),
+            timeout_override: None,
+        }).await?;
+        
+        self.add_route(RouteConfig {
+            path: "/api/v1/consensus/status".to_string(),
+            service: "consensus".to_string(),
+            methods: vec!["GET".to_string()],
+            auth_required: false, // Public endpoint
+            rate_limit_override: None,
+            timeout_override: None,
+        }).await?;
+        
+        Ok(())
+    }
+    
+    async fn build_router(&self) -> AxumRouter {
+        let gateway_state = GatewayState {
+            router: self.router.clone(),
+            load_balancer: self.load_balancer.clone(),
+            circuit_breakers: self.circuit_breakers.clone(),
+            rate_limiter: self.rate_limiter.clone(),
+            auth_middleware: self.auth_middleware.clone(),
+            metrics: self.metrics.clone(),
+            request_counter: self.request_counter.clone(),
+            config: self.config.clone(),
+        };
+        
+        AxumRouter::new()
+            .route("/health", get(health_handler))
+            .route("/metrics", get(metrics_handler))
+            .route("/api/*path", any(proxy_handler))
+            .route("/*path", any(proxy_handler))
+            .layer(
+                ServiceBuilder::new()
+                    .layer(TraceLayer::new_for_http())
+                    .layer(CorsLayer::permissive())
+                    .layer(middleware::from_fn_with_state(
+                        gateway_state.clone(),
+                        request_middleware,
+                    ))
+                    .into_inner(),
+            )
+            .with_state(gateway_state)
+    }
+    
+    async fn run_health_checker(
+        load_balancer: Arc<LoadBalancer>,
+        interval: Duration,
+        mut shutdown_rx: tokio::sync::mpsc::UnboundedReceiver<()>,
+    ) {
+        let mut health_interval = tokio::time::interval(interval);
+        
+        loop {
+            tokio::select! {
+                _ = health_interval.tick() => {
+                    load_balancer.check_service_health().await;
+                }
+                _ = shutdown_rx.recv() => {
+                    break;
+                }
+            }
+        }
+    }
+    
+    async fn update_metrics(
+        metrics: Arc<RwLock<GatewayMetrics>>,
+        request_counter: Arc<AtomicU64>,
+    ) {
+        let mut last_request_count = 0u64;
+        let mut metrics_interval = tokio::time::interval(Duration::from_secs(1));
+        
+        loop {
+            metrics_interval.tick().await;
+            
+            let current_requests = request_counter.load(Ordering::Relaxed);
+            let requests_this_second = current_requests - last_request_count;
+            last_request_count = current_requests;
+            
+            let mut metrics = metrics.write().await;
+            metrics.requests_per_second = requests_this_second as f64;
+        }
+    }
+}
+
+/// Shared state for the gateway
+#[derive(Clone)]
+struct GatewayState {
+    router: Arc<Router>,
+    load_balancer: Arc<LoadBalancer>,
+    circuit_breakers: Arc<DashMap<String, CircuitBreaker>>,
+    rate_limiter: Arc<RateLimitMiddleware>,
+    auth_middleware: Arc<AuthMiddleware>,
+    metrics: Arc<RwLock<GatewayMetrics>>,
+    request_counter: Arc<AtomicU64>,
+    config: GatewayConfig,
+}
+
+/// Health check endpoint
+async fn health_handler(State(state): State<GatewayState>) -> impl IntoResponse {
+    let metrics = state.metrics.read().await;
+    let health_response = serde_json::json!({
+        "status": "healthy",
+        "version": env!("CARGO_PKG_VERSION"),
+        "metrics": {
+            "total_requests": metrics.total_requests,
+            "success_rate": metrics.success_rate(),
+            "average_response_time": metrics.average_response_time,
+            "requests_per_second": metrics.requests_per_second
+        }
+    });
+    
+    (StatusCode::OK, axum::Json(health_response))
+}
+
+/// Metrics endpoint
+async fn metrics_handler(State(state): State<GatewayState>) -> impl IntoResponse {
+    let metrics = state.metrics.read().await.clone();
+    (StatusCode::OK, axum::Json(metrics))
+}
+
+/// Main proxy handler
+async fn proxy_handler(
+    State(state): State<GatewayState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    uri: Uri,
+    method: Method,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Response, StatusCode> {
+    let path = uri.path();
+    let start_time = Instant::now();
+    
+    // Increment request counter
+    state.request_counter.fetch_add(1, Ordering::Relaxed);
+    
+    // Create request context
+    let mut context = RequestContext::new(addr.ip());
+    context.request_id = uuid::Uuid::new_v4().to_string();
+    context.user_agent = headers.get("user-agent")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.to_string());
+    
+    // Find matching route
+    let route = match state.router.find_route(path, &method.to_string()).await {
+        Some(route) => route,
+        None => {
+            return Ok((
+                StatusCode::NOT_FOUND,
+                axum::Json(GatewayResponse::<()>::error(
+                    "Route not found".to_string(),
+                    context.request_id,
+                )),
+            ).into_response());
+        }
+    };
+    
+    // Check authentication
+    if route.auth_required {
+        if let Err(e) = state.auth_middleware.authenticate(&headers, &mut context).await {
+            return Ok((
+                StatusCode::UNAUTHORIZED,
+                axum::Json(GatewayResponse::<()>::error(
+                    e.to_string(),
+                    context.request_id,
+                )),
+            ).into_response());
+        }
+    }
+    
+    // Check rate limiting
+    let rate_limit = route.rate_limit_override.unwrap_or(state.config.rate_limit.max_requests);
+    if let Err(e) = state.rate_limiter.check_rate_limit(&context, rate_limit).await {
+        let mut metrics = state.metrics.write().await;
+        metrics.record_rate_limited();
+        drop(metrics);
+        
+        return Ok((
+            StatusCode::TOO_MANY_REQUESTS,
+            axum::Json(GatewayResponse::<()>::error(
+                e.to_string(),
+                context.request_id,
+            )),
+        ).into_response());
+    }
+    
+    // Get circuit breaker for service
+    let circuit_breaker = state.circuit_breakers
+        .entry(route.service.clone())
+        .or_insert_with(|| CircuitBreaker::new(state.config.circuit_breaker.clone()));
+    
+    // Check circuit breaker
+    if !circuit_breaker.can_execute().await {
+        let mut metrics = state.metrics.write().await;
+        metrics.record_circuit_breaker_open();
+        drop(metrics);
+        
+        return Ok((
+            StatusCode::SERVICE_UNAVAILABLE,
+            axum::Json(GatewayResponse::<()>::error(
+                "Service temporarily unavailable".to_string(),
+                context.request_id,
+            )),
+        ).into_response());
+    }
+    
+    // Get service instance
+    let instance = match state.load_balancer.get_instance(&route.service).await {
+        Some(instance) => instance,
+        None => {
+            return Ok((
+                StatusCode::SERVICE_UNAVAILABLE,
+                axum::Json(GatewayResponse::<()>::error(
+                    "No healthy service instances available".to_string(),
+                    context.request_id,
+                )),
+            ).into_response());
+        }
+    };
+    
+    // Forward request to service
+    let timeout = route.timeout_override.unwrap_or(state.config.request_timeout);
+    let response_result = tokio::time::timeout(
+        timeout,
+        forward_request(instance, uri, method, headers, body),
+    ).await;
+    
+    let elapsed = start_time.elapsed();
+    let success = match &response_result {
+        Ok(Ok(_)) => {
+            circuit_breaker.record_success().await;
+            true
+        },
+        _ => {
+            circuit_breaker.record_failure().await;
+            false
+        }
+    };
+    
+    // Update metrics
+    let mut metrics = state.metrics.write().await;
+    metrics.record_request(success, elapsed);
+    drop(metrics);
+    
+    match response_result {
+        Ok(Ok(response)) => Ok(response),
+        Ok(Err(e)) => Ok((
+            StatusCode::BAD_GATEWAY,
+            axum::Json(GatewayResponse::<()>::error(
+                format!("Service error: {}", e),
+                context.request_id,
+            )),
+        ).into_response()),
+        Err(_) => Ok((
+            StatusCode::GATEWAY_TIMEOUT,
+            axum::Json(GatewayResponse::<()>::error(
+                "Request timeout".to_string(),
+                context.request_id,
+            )),
+        ).into_response()),
+    }
+}
+
+/// Request middleware for logging and context
+async fn request_middleware(
+    State(_state): State<GatewayState>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let method = request.method().clone();
+    let uri = request.uri().clone();
+    let start_time = Instant::now();
+    
+    log::info!("Request: {} {}", method, uri);
+    
+    let response = next.run(request).await;
+    let elapsed = start_time.elapsed();
+    
+    log::info!(
+        "Response: {} {} -> {} in {}ms",
+        method,
+        uri,
+        response.status(),
+        elapsed.as_millis()
+    );
+    
+    response
+}
+
+/// Forward request to service instance
+async fn forward_request(
+    instance: ServiceInstance,
+    uri: Uri,
+    method: Method,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Response, String> {
+    let client = reqwest::Client::new();
+    
+    // Build target URL
+    let target_url = format!(
+        "http://{}{}{}",
+        instance.endpoint.address,
+        uri.path(),
+        uri.query().map(|q| format!("?{}", q)).unwrap_or_default()
+    );
+    
+    // Convert headers
+    let mut req_headers = reqwest::header::HeaderMap::new();
+    for (key, value) in headers.iter() {
+        if let (Ok(key), Ok(value)) = (
+            reqwest::header::HeaderName::from_bytes(key.as_str().as_bytes()),
+            reqwest::header::HeaderValue::from_bytes(value.as_bytes()),
+        ) {
+            req_headers.insert(key, value);
+        }
+    }
+    
+    // Convert body
+    let body_bytes = match axum::body::to_bytes(body, usize::MAX).await {
+        Ok(bytes) => bytes.to_vec(),
+        Err(e) => return Err(format!("Failed to read request body: {}", e)),
+    };
+    
+    // Make request
+    let response = client
+        .request(method.try_into().unwrap_or(reqwest::Method::GET), &target_url)
+        .headers(req_headers)
+        .body(body_bytes)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+    
+    // Convert response
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = response.bytes().await
+        .map_err(|e| format!("Failed to read response body: {}", e))?;
+    
+    let mut response_builder = Response::builder().status(status);
+    for (key, value) in headers.iter() {
+        response_builder = response_builder.header(key, value);
+    }
+    
+    response_builder
+        .body(Body::from(body))
+        .map_err(|e| format!("Failed to build response: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[tokio::test]
+    async fn test_gateway_creation() {
+        let config = GatewayConfig::default();
+        let gateway = ApiGateway::new(config);
+        
+        assert_eq!(gateway.config.listen_addr.port(), 8080);
+    }
+    
+    #[tokio::test]
+    async fn test_add_route() {
+        let config = GatewayConfig::default();
+        let gateway = ApiGateway::new(config);
+        
+        let route = RouteConfig {
+            path: "/test".to_string(),
+            service: "test-service".to_string(),
+            methods: vec!["GET".to_string()],
+            auth_required: false,
+            rate_limit_override: None,
+            timeout_override: None,
+        };
+        
+        let result = gateway.add_route(route).await;
+        assert!(result.is_ok());
+    }
+}
