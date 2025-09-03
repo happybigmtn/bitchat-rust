@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
 
         Commands::Tui => {
             info!("Starting BitCraps TUI...");
-            let app = AppStateBitCrapsApp::new(config.clone()).await?;
+            let _app = AppStateBitCrapsApp::new(config.clone()).await?;
             // Create library app for TUI
             let lib_app = create_library_app(config).await?;
             run_tui_wrapper(lib_app).await?;
@@ -157,7 +157,7 @@ async fn create_library_app(config: AppConfig) -> Result<bitcraps::BitCrapsApp> 
 
 /// Start all monitoring services (Prometheus, Dashboard, Metrics Integration)
 #[cfg(not(feature = "mvp"))]
-async fn start_monitoring_services(app_state: Arc<AppStateBitCrapsApp>, config: &AppConfig) -> Result<()> {
+async fn start_monitoring_services(_app_state: Arc<AppStateBitCrapsApp>, config: &AppConfig) -> Result<()> {
     use bitcraps::monitoring::{
         PrometheusServer, PrometheusConfig, start_dashboard_server, start_metrics_integration,
         record_network_event,
@@ -240,7 +240,7 @@ fn install_panic_handler() {
 }
 
 /// Log panic information to console
-fn log_panic_to_console(panic_info: &std::panic::PanicInfo) {
+fn log_panic_to_console(panic_info: &std::panic::PanicHookInfo) {
     eprintln!("🚨 CRITICAL: Application panic detected!");
     eprintln!("Location: {}", format_panic_location(panic_info));
     eprintln!("Message: {}", extract_panic_message(panic_info));
@@ -248,7 +248,7 @@ fn log_panic_to_console(panic_info: &std::panic::PanicInfo) {
 }
 
 /// Log panic information to file
-fn log_panic_to_file(panic_info: &std::panic::PanicInfo) {
+fn log_panic_to_file(panic_info: &std::panic::PanicHookInfo) {
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -271,7 +271,7 @@ fn log_panic_to_file(panic_info: &std::panic::PanicInfo) {
 }
 
 /// Extract panic message from panic info
-fn extract_panic_message(panic_info: &std::panic::PanicInfo) -> String {
+fn extract_panic_message(panic_info: &std::panic::PanicHookInfo) -> String {
     panic_info
         .payload()
         .downcast_ref::<&str>()
@@ -280,7 +280,7 @@ fn extract_panic_message(panic_info: &std::panic::PanicInfo) -> String {
 }
 
 /// Format panic location for display
-fn format_panic_location(panic_info: &std::panic::PanicInfo) -> String {
+fn format_panic_location(panic_info: &std::panic::PanicHookInfo) -> String {
     panic_info
         .location()
         .map_or("unknown".to_string(), |l| l.to_string())

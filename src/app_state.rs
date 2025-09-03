@@ -47,7 +47,9 @@ pub struct BitCrapsApp {
     pub active_games: Arc<tokio::sync::RwLock<rustc_hash::FxHashMap<GameId, CrapsGame>>>,
 
     // P2P Consensus Components
+    #[allow(dead_code)]
     pub consensus_message_handler: Arc<ConsensusMessageHandler>,
+    #[allow(dead_code)]
     pub consensus_game_manager: Arc<ConsensusGameManager>,
 }
 
@@ -286,16 +288,19 @@ impl BitCrapsApp {
     // ============= P2P Consensus Game Methods =============
 
     /// Create a new consensus-based multiplayer game
+    #[allow(dead_code)]
     pub async fn create_consensus_game(&self, participants: Vec<PeerId>) -> Result<GameId> {
         self.consensus_game_manager.create_game(participants).await
     }
 
     /// Join an existing consensus game
+    #[allow(dead_code)]
     pub async fn join_consensus_game(&self, game_id: GameId) -> Result<()> {
         self.consensus_game_manager.join_game(game_id).await
     }
 
     /// Place a bet in a consensus game
+    #[allow(dead_code)]
     pub async fn place_consensus_bet(
         &self,
         game_id: GameId,
@@ -308,6 +313,7 @@ impl BitCrapsApp {
     }
 
     /// Roll dice in a consensus game
+    #[allow(dead_code)]
     pub async fn roll_consensus_dice(
         &self,
         game_id: GameId,
@@ -316,6 +322,7 @@ impl BitCrapsApp {
     }
 
     /// Get consensus game state
+    #[allow(dead_code)]
     pub async fn get_consensus_game_state(
         &self,
         game_id: &GameId,
@@ -324,6 +331,7 @@ impl BitCrapsApp {
     }
 
     /// List all active consensus games
+    #[allow(dead_code)]
     pub async fn list_consensus_games(
         &self,
     ) -> Vec<(GameId, bitcraps::gaming::ConsensusGameSession)> {
@@ -331,6 +339,7 @@ impl BitCrapsApp {
     }
 
     /// Get consensus system statistics
+    #[allow(dead_code)]
     pub async fn get_consensus_stats(&self) -> bitcraps::gaming::GameManagerStats {
         self.consensus_game_manager.get_stats().await
     }
@@ -510,6 +519,7 @@ impl BitCrapsApp {
 
 /// Health check result
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct AppHealth {
     pub is_ready: bool,
     pub peer_count: usize,
@@ -520,11 +530,13 @@ pub struct AppHealth {
 
 impl AppHealth {
     /// Check if the application is healthy
+    #[allow(dead_code)]
     pub fn is_healthy(&self) -> bool {
         self.is_ready // balance is u64, always >= 0
     }
 
     /// Get a human-readable status message
+    #[allow(dead_code)]
     pub fn status_message(&self) -> String {
         if self.is_healthy() {
             format!(

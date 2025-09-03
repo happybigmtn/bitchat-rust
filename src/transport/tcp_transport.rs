@@ -483,7 +483,7 @@ impl TcpTransport {
 
     async fn run_reader(
         peer_id: PeerId,
-        mut stream: Arc<Mutex<ConnectionStream>>,
+        stream: Arc<Mutex<ConnectionStream>>,
         event_sender: mpsc::Sender<TransportEvent>,
         connections: Arc<RwLock<HashMap<PeerId, TcpConnection>>>,
     ) {

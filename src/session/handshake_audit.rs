@@ -3,7 +3,7 @@
 //! This module provides comprehensive security auditing for Noise protocol handshakes,
 //! detecting downgrade attacks, replay attacks, and other cryptographic vulnerabilities.
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::security::constant_time::ConstantTimeOps;
 use crate::session::noise::{NoiseRole, NoiseSession, NoiseSessionState};
 use std::collections::HashMap;

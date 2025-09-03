@@ -14,7 +14,7 @@ use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tokio::time::interval;
 use uuid::Uuid;
 
-use super::consensus_game_manager::{ConsensusGameManager, GameEvent, ConsensusGameConfig};
+use super::consensus_game_manager::{ConsensusGameManager, GameEvent};
 use crate::crypto::BitchatIdentity;
 use crate::error::{Error, Result};
 use crate::mesh::MeshService;
@@ -1178,6 +1178,7 @@ impl GameOrchestrator {
 mod tests {
     use super::*;
     use crate::crypto::BitchatKeypair;
+    use crate::gaming::ConsensusGameConfig;
     use crate::mesh::ConsensusMessageHandler;
     use crate::transport::TransportCoordinator;
 

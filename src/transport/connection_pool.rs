@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, Semaphore};
 
-use super::bounded_queue::{BoundedEventQueue, OverflowBehavior, QueueConfig};
+use super::bounded_queue::{BoundedEventQueue, QueueConfig};
 use super::TransportEvent;
 
 /// Quality of Service requirements for connections

@@ -2,7 +2,6 @@
 
 use crossbeam_epoch::{self as epoch, Atomic, Owned};
 use crossbeam_skiplist::SkipMap;
-use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -436,6 +435,7 @@ fn current_timestamp() -> u64 {
 mod tests {
     use super::*;
     use crate::protocol::craps::CrapsGame;
+    use rustc_hash::FxHashMap;
     use std::sync::Arc;
     use std::thread;
 

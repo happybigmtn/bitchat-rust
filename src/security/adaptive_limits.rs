@@ -3,7 +3,6 @@
 //! This module provides intelligent, self-tuning rate limits and quotas that adapt
 //! based on network conditions, peer behavior, and security threat levels.
 
-use crate::error::{Error, Result};
 use crate::protocol::PeerId;
 use crate::security::resource_quotas::{QuotaConfig, ResourceQuotaManager, ResourceType};
 use std::collections::{HashMap, VecDeque};

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use warp::{Filter, Reply};
 
-use crate::monitoring::health::{HealthCheck, HealthStatus};
+use crate::monitoring::health::HealthCheck;
 use crate::monitoring::metrics::{METRICS, PerformanceMetrics};
 use crate::monitoring::dashboard::NetworkDashboard;
 

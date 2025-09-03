@@ -62,7 +62,7 @@ use tokio::time::interval;
 use crate::error::{Error, Result};
 use crate::memory_pool::GameMemoryPools;
 use crate::protocol::{BitchatPacket, PeerId};
-use bounded_queue::{BoundedQueueError, BoundedTransportEventQueue, OverflowBehavior, QueueConfig};
+use bounded_queue::{BoundedTransportEventQueue, OverflowBehavior, QueueConfig};
 
 // Specific re-exports to avoid ambiguous glob conflicts
 pub use ble_config::{BleConfigBuilder, BleTransportConfig};

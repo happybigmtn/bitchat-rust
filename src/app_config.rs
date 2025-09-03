@@ -82,6 +82,7 @@ pub enum Commands {
 
 impl Commands {
     /// Check if this command requires a running node
+    #[allow(dead_code)]
     pub fn requires_node(&self) -> bool {
         matches!(
             self,
@@ -95,11 +96,13 @@ impl Commands {
     }
 
     /// Check if this command is a quick query that doesn't need full initialization
+    #[allow(dead_code)]
     pub fn is_query_only(&self) -> bool {
         matches!(self, Commands::Balance | Commands::Games | Commands::Stats)
     }
 
     /// Get the name of this command
+    #[allow(dead_code)]
     pub fn name(&self) -> &'static str {
         match self {
             Commands::Start => "start",

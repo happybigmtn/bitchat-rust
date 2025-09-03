@@ -197,6 +197,7 @@ impl BitCrapsApp {
     }
     
     /// Add treasury to game if enabled in configuration
+    #[allow(dead_code)]
     async fn add_treasury_if_enabled(&self, game: &mut CrapsGame) {
         if self.config.enable_treasury {
             game.add_player(TREASURY_ADDRESS);
@@ -205,11 +206,13 @@ impl BitCrapsApp {
     }
     
     /// Store game in active games collection
+    #[allow(dead_code)]
     async fn store_game(&self, game_id: GameId, game: CrapsGame) {
         self.active_games.write().await.insert(game_id, game);
     }
     
     /// Broadcast game creation to network
+    #[allow(dead_code)]
     async fn broadcast_game_creation(&self, game_id: GameId, buy_in_crap: u64) -> Result<()> {
         let packet = bitcraps::protocol::create_game_packet(
             self.identity.peer_id,

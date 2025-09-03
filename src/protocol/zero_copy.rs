@@ -66,7 +66,7 @@ impl ZeroCopyBuffer {
     }
 
     /// Get a zero-copy writer for this buffer
-    pub fn writer(&mut self) -> ZeroCopyWriter {
+    pub fn writer(&mut self) -> ZeroCopyWriter<'_> {
         ZeroCopyWriter { buffer: self }
     }
 
