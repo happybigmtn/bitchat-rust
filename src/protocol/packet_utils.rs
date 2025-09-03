@@ -7,9 +7,10 @@ use crate::protocol::{
     BitchatPacket, GameId, PeerId, TlvField, PACKET_TYPE_DISCOVERY, PACKET_TYPE_GAME_DATA,
     PACKET_TYPE_PING,
 };
+use once_cell::sync::Lazy;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// Game creation data for network packets
@@ -222,12 +223,37 @@ pub fn create_game_discovery_packet(
     packet
 }
 
-/// Maximum allowed buy-in amount (prevents overflow attacks)
-const MAX_BUY_IN: u64 = 1_000_000; // 1M CRAP tokens
-/// Maximum allowed players in a game
-const MAX_PLAYERS: u8 = 16;
-/// Minimum allowed players in a game  
-const MIN_PLAYERS: u8 = 2;
+/// Game validation constants for production safety
+mod validation_limits {
+    /// Maximum allowed buy-in amount (prevents overflow attacks)
+    pub const MAX_BUY_IN: u64 = 1_000_000; // 1M CRAP tokens
+    
+    /// Minimum buy-in to prevent spam games
+    pub const MIN_BUY_IN: u64 = 1; // At least 1 CRAP token
+    
+    /// Maximum allowed players in a game
+    pub const MAX_PLAYERS: u8 = 16;
+    
+    /// Minimum allowed players in a game  
+    pub const MIN_PLAYERS: u8 = 2;
+    
+    /// Maximum clock drift tolerance in seconds
+    pub const MAX_CLOCK_DRIFT_SECS: u64 = 300; // 5 minutes
+    
+    /// Rate limiting: minimum interval between discovery requests (ms)
+    pub const MIN_DISCOVERY_INTERVAL_MS: u64 = 100;
+    
+    /// Discovery cache TTL in seconds
+    pub const DISCOVERY_CACHE_TTL_SECS: u64 = 5;
+    
+    /// Maximum cached entries before cleanup
+    pub const MAX_CACHE_ENTRIES: usize = 100;
+    
+    /// Maximum tracked peers before cleanup
+    pub const MAX_TRACKED_PEERS: usize = 1000;
+}
+
+use validation_limits::*;
 
 /// Validates game creation parameters
 fn validate_game_creation_params(data: &GameCreationData) -> bool {
@@ -237,8 +263,8 @@ fn validate_game_creation_params(data: &GameCreationData) -> bool {
         return false;
     }
     
-    // Validate buy-in amount (prevent overflow/underflow)
-    if data.buy_in == 0 || data.buy_in > MAX_BUY_IN {
+    // Validate buy-in amount (prevent overflow/underflow and spam)
+    if data.buy_in < MIN_BUY_IN || data.buy_in > MAX_BUY_IN {
         log::warn!("Invalid buy-in amount: {}", data.buy_in);
         return false;
     }
@@ -246,7 +272,10 @@ fn validate_game_creation_params(data: &GameCreationData) -> bool {
     // Validate timestamp (should be within reasonable range)
     let current_time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
+        .unwrap_or_else(|e| {
+            log::error!("System time error (clock may be wrong): {}", e);
+            Duration::from_secs(0)
+        })
         .as_secs();
     
     // Allow timestamps within 5 minutes of current time (clock drift tolerance)
@@ -256,7 +285,7 @@ fn validate_game_creation_params(data: &GameCreationData) -> bool {
         current_time - data.timestamp
     };
     
-    if time_diff > 300 {
+    if time_diff > MAX_CLOCK_DRIFT_SECS {
         log::warn!("Timestamp too far from current time: {} seconds", time_diff);
         return false;
     }
@@ -312,10 +341,10 @@ struct DiscoveryRateLimiter {
 impl DiscoveryRateLimiter {
     fn new() -> Self {
         Self {
-            peer_requests: HashMap::new(),
-            min_interval: Duration::from_millis(100), // Max 10 requests per second per peer
-            discovery_cache: HashMap::new(),
-            cache_ttl: Duration::from_secs(5), // Cache discoveries for 5 seconds
+            peer_requests: HashMap::with_capacity(64), // Pre-allocate for better performance
+            min_interval: Duration::from_millis(MIN_DISCOVERY_INTERVAL_MS),
+            discovery_cache: HashMap::with_capacity(32),
+            cache_ttl: Duration::from_secs(DISCOVERY_CACHE_TTL_SECS),
         }
     }
     
@@ -331,7 +360,7 @@ impl DiscoveryRateLimiter {
         self.peer_requests.insert(peer_id, now);
         
         // Clean up old entries periodically
-        if self.peer_requests.len() > 1000 {
+        if self.peer_requests.len() > MAX_TRACKED_PEERS {
             let cutoff = now - Duration::from_secs(60);
             self.peer_requests.retain(|_, time| *time > cutoff);
         }
@@ -349,7 +378,7 @@ impl DiscoveryRateLimiter {
         }
         
         // Clean up expired cache entries
-        if self.discovery_cache.len() > 100 {
+        if self.discovery_cache.len() > MAX_CACHE_ENTRIES {
             let cutoff = now - self.cache_ttl;
             self.discovery_cache.retain(|_, (_, time)| *time > cutoff);
         }
@@ -362,20 +391,18 @@ impl DiscoveryRateLimiter {
     }
 }
 
-// Global rate limiter instance
-lazy_static::lazy_static! {
-    static ref DISCOVERY_RATE_LIMITER: Mutex<DiscoveryRateLimiter> = 
-        Mutex::new(DiscoveryRateLimiter::new());
-}
+// Global rate limiter instance using once_cell for better performance
+static DISCOVERY_RATE_LIMITER: Lazy<Mutex<DiscoveryRateLimiter>> = 
+    Lazy::new(|| Mutex::new(DiscoveryRateLimiter::new()));
 
 /// Utility function to parse game discovery data from a packet with rate limiting
 pub fn parse_game_discovery_data(packet: &BitchatPacket) -> Option<GameDiscoveryData> {
     // Get sender for rate limiting
     let sender = packet.get_sender()?;
     
-    // Apply rate limiting
+    // Apply rate limiting with parking_lot (no unwrap needed)
     {
-        let mut limiter = DISCOVERY_RATE_LIMITER.lock().unwrap();
+        let mut limiter = DISCOVERY_RATE_LIMITER.lock();
         if !limiter.check_rate_limit(sender) {
             log::debug!("Rate limit exceeded for peer: {:?}", sender);
             return None;
@@ -385,9 +412,9 @@ pub fn parse_game_discovery_data(packet: &BitchatPacket) -> Option<GameDiscovery
     for tlv in &packet.tlv_data {
         if tlv.field_type == TLV_GAME_DISCOVERY {
             if let Ok(discovery_data) = GameDiscoveryData::deserialize(&tlv.value) {
-                // Check cache first
+                // Check cache first (parking_lot doesn't panic)
                 {
-                    let mut limiter = DISCOVERY_RATE_LIMITER.lock().unwrap();
+                    let mut limiter = DISCOVERY_RATE_LIMITER.lock();
                     if let Some(cached) = limiter.get_cached(&discovery_data.game_id) {
                         log::debug!("Returning cached discovery for game: {:?}", discovery_data.game_id);
                         return Some(cached);

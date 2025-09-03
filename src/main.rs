@@ -118,25 +118,29 @@ async fn main() -> Result<()> {
 async fn create_library_app(config: AppConfig) -> Result<bitcraps::BitCrapsApp> {
     use bitcraps::{BitCrapsApp, ApplicationConfig};
     use std::time::Duration;
+    use std::net::SocketAddr;
     
-    // Parse port from TCP address string if provided
+    // Parse port from TCP address string with proper error handling
     let port = if let Some(ref tcp_addr) = config.listen_tcp {
-        // Parse "0.0.0.0:8000" format
-        tcp_addr.split(':')
-            .nth(1)
-            .and_then(|p| p.parse::<u16>().ok())
-            .unwrap_or(8000)
+        // Parse socket address properly
+        tcp_addr.parse::<SocketAddr>()
+            .map(|addr| addr.port())
+            .unwrap_or_else(|e| {
+                log::warn!("Failed to parse TCP address '{}': {}, using default port 8000", tcp_addr, e);
+                8000
+            })
     } else {
         8000
     };
     
+    // Build configuration with production-ready defaults
     let lib_config = ApplicationConfig {
         port,
-        debug: true,
+        debug: config.pow_difficulty > 0, // Enable debug only if PoW is enabled
         db_path: config.data_dir.clone(),
         max_games: 100,
         session_timeout: Duration::from_secs(3600),
-        mobile_mode: false,
+        mobile_mode: cfg!(any(target_os = "android", target_os = "ios")),
         max_concurrent_connections: 1000,
         max_bandwidth_mbps: 100.0,
         max_string_length: 1024,

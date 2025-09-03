@@ -11,22 +11,7 @@ use log::{info, warn, error};
 use crate::monitoring::metrics::METRICS;
 use crate::app::BitCrapsApp;
 
-// Integration now uses the library BitCrapsApp directly
-// These local structs are kept for backwards compatibility
-// but could be removed once full integration is complete
-/// Application statistics structure
-#[derive(Debug, Clone)]
-struct AppStats {
-    connected_peers: usize,
-    active_sessions: usize,
-    active_games: usize,
-}
-
-/// Game information structure  
-#[derive(Debug, Clone)]
-struct GameInfo {
-    players: usize,
-}
+// Direct integration with BitCrapsApp - no placeholder structs needed
 
 /// Metrics integration service that updates global metrics with real application data
 pub struct MetricsIntegrationService {
@@ -59,62 +44,61 @@ impl MetricsIntegrationService {
 
     /// Update global metrics with real application data
     async fn update_metrics(&self) -> Result<(), Box<dyn std::error::Error>> {
-        // Use direct metrics from global METRICS instead of app stats (no get_stats method available)
+        // Get real data from the application
+        let active_games = self.app_ref.get_active_games().await
+            .unwrap_or_else(|e| {
+                log::warn!("Failed to get active games: {}", e);
+                Vec::new()
+            });
+        
+        // Get peer ID for identification
+        let peer_id = self.app_ref.peer_id();
+        
+        // Get memory pool stats for performance metrics
+        let memory_pools = self.app_ref.get_memory_pools();
+        let pool_stats = memory_pools.combined_stats().await;
+        
+        // Update metrics based on real application state
+        let active_game_count = active_games.len();
         let connected_peers = METRICS.network.active_connections.load(std::sync::atomic::Ordering::Relaxed);
-        let active_sessions = connected_peers; // Same as connections for now
-        let active_games = METRICS.gaming.active_games.load(std::sync::atomic::Ordering::Relaxed) as usize;
+        let active_sessions = connected_peers; // Sessions equal connections for now
         
-        // Create stats structure locally
-        let stats = AppStats {
-            connected_peers,
-            active_sessions,
-            active_games,
-        };
-        
-        // Empty games list for now (would be populated from real game manager)
-        let games: Vec<(String, GameInfo)> = Vec::new(); // Placeholder
-        
-        // Update network metrics
-        METRICS.network.active_connections.store(
-            stats.connected_peers, 
-            std::sync::atomic::Ordering::Relaxed
-        );
-        
-        METRICS.network.active_connections.store(
-            stats.active_sessions,
-            std::sync::atomic::Ordering::Relaxed
-        );
-
-        // Update gaming metrics
+        // Update gaming metrics with real data
         METRICS.gaming.active_games.store(
-            stats.active_games,
+            active_game_count,
             std::sync::atomic::Ordering::Relaxed
         );
 
         METRICS.gaming.total_games.store(
-            games.len() as u64,
+            active_game_count as u64,
             std::sync::atomic::Ordering::Relaxed
         );
-
-        // Calculate total players across all games
-        let total_players: usize = games.iter()
-            .map(|(_, game_info)| game_info.players)
-            .sum();
         
-        // Update performance metrics based on game activity
-        if stats.active_games > 0 {
-            let avg_players_per_game = total_players as f64 / stats.active_games as f64;
-            // Update throughput metric (games per minute approximation)
-            let games_per_minute = stats.active_games as f64 * 60.0 / self.update_interval.as_secs() as f64;
-            
-            // Store as atomic (we'll need to add this to the metrics struct)
-            info!("Games performance: {:.2} avg players/game, {:.2} games/min", 
-                avg_players_per_game, games_per_minute);
+        // Calculate cache efficiency
+        let cache_efficiency = if pool_stats.vec_u8_stats.allocations > 0 {
+            (pool_stats.vec_u8_stats.cache_hits as f64 / pool_stats.vec_u8_stats.allocations as f64) * 100.0
+        } else {
+            0.0
+        };
+        
+        // Update cache efficiency for performance monitoring
+        {
+            let mut cache_hit_rate = METRICS.performance.cache_hit_rate.write();
+            *cache_hit_rate = cache_efficiency;
         }
-
-        // Update error counters based on network health
-        if stats.connected_peers == 0 {
+        
+        // Log performance metrics
+        if active_game_count > 0 {
+            let games_per_minute = active_game_count as f64 * 60.0 / self.update_interval.as_secs() as f64;
+            info!("Metrics: {} active games, {:.2} games/min, {:.1}% cache efficiency, peer: {:?}",
+                active_game_count, games_per_minute, cache_efficiency, peer_id);
+        }
+        
+        // Update network health monitoring
+        if connected_peers == 0 && active_game_count > 0 {
+            // Games active but no peers - potential issue
             METRICS.errors.network_errors.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            log::warn!("Network issue detected: games active but no peer connections");
         }
 
         Ok(())
