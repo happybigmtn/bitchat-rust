@@ -419,6 +419,173 @@ fn bench_game_memory_pools(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark optimized connection pool performance
+fn bench_optimized_connection_pool(c: &mut Criterion) {
+    use bitcraps::transport::connection_pool::{BluetoothConnectionPool, PoolConfig, QoSPriority};
+    
+    let rt = create_runtime();
+    let mut group = c.benchmark_group("optimized_connection_pool");
+    
+    // Test different optimized pool configurations
+    let configs = vec![
+        ("baseline", PoolConfig { max_connections: 50, ..Default::default() }),
+        ("adaptive_high_load", PoolConfig::adaptive_config(0.9)),
+        ("adaptive_low_load", PoolConfig::adaptive_config(0.3)),
+    ];
+    
+    for (name, config) in configs {
+        let pool = BluetoothConnectionPool::new(config);
+        
+        group.bench_function(&format!("acquire_release_{}", name), |b| {
+            b.to_async(&rt).iter(|| async {
+                if let Ok(conn) = pool.get_connection(QoSPriority::Normal).await {
+                    pool.return_connection(conn).await;
+                }
+            });
+        });
+        
+        // Benchmark efficiency reporting (new feature)
+        group.bench_function(&format!("efficiency_report_{}", name), |b| {
+            b.to_async(&rt).iter(|| async {
+                let _report = pool.get_efficiency_report().await;
+            });
+        });
+    }
+    
+    group.finish();
+}
+
+/// Benchmark SIMD crypto optimizations
+fn bench_simd_crypto_performance(c: &mut Criterion) {
+    use bitcraps::crypto::simd_acceleration::{SimdCrypto, SimdXor};
+    
+    let mut group = c.benchmark_group("simd_crypto");
+    let crypto = SimdCrypto::new();
+    let simd_xor = SimdXor::new();
+    
+    // Batch signature verification benchmarks
+    for batch_size in [10, 50, 100].iter() {
+        group.throughput(Throughput::Elements(*batch_size as u64));
+        
+        group.bench_function(&format!("batch_verify_{}", batch_size), |b| {
+            b.iter_batched(
+                || {
+                    use ed25519_dalek::Signer;
+                    let mut signatures = Vec::new();
+                    let mut messages = Vec::new();
+                    let mut public_keys = Vec::new();
+                    
+                    for i in 0..*batch_size {
+                        let signing_key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
+                        let verifying_key = signing_key.verifying_key();
+                        let message = format!("Test message {}", i).into_bytes();
+                        let signature = signing_key.sign(&message);
+                        
+                        signatures.push(signature);
+                        messages.push(message);
+                        public_keys.push(verifying_key);
+                    }
+                    
+                    (signatures, messages, public_keys)
+                },
+                |(signatures, messages, public_keys)| {
+                    let _results = crypto.batch_verify(&signatures, &messages, &public_keys);
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+    }
+    
+    // SIMD XOR benchmarks
+    for size in [1024, 8192, 65536].iter() {
+        group.throughput(Throughput::Bytes(*size as u64));
+        
+        group.bench_function(&format!("simd_xor_{}_bytes", size), |b| {
+            b.iter_batched(
+                || {
+                    let mut a = vec![0xAAu8; *size];
+                    let b = vec![0x55u8; *size];
+                    (a, b)
+                },
+                |(mut a, b)| {
+                    simd_xor.xor(&mut a, &b);
+                    a
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+    }
+    
+    group.finish();
+}
+
+/// Benchmark optimized multi-tier cache
+fn bench_optimized_cache_performance(c: &mut Criterion) {
+    use bitcraps::cache::multi_tier::{MultiTierCache, CacheWarmingStrategy};
+    use tempfile::TempDir;
+    use serde::{Serialize, Deserialize};
+    
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    struct TestData {
+        data: String,
+    }
+    
+    let rt = create_runtime();
+    let mut group = c.benchmark_group("optimized_cache");
+    
+    let temp_dir = TempDir::new().unwrap();
+    
+    // Test different cache strategies
+    let strategies = vec![
+        ("no_warming", CacheWarmingStrategy::None),
+        ("pattern_based", CacheWarmingStrategy::PatternBased { max_prefetch: 5 }),
+        ("sequential", CacheWarmingStrategy::Sequential { lookahead: 3 }),
+    ];
+    
+    for (name, strategy) in strategies {
+        let cache: MultiTierCache<String, TestData> = MultiTierCache::with_warming_strategy(
+            temp_dir.path().to_path_buf(),
+            strategy,
+        ).unwrap();
+        
+        // Warm cache with test data
+        rt.block_on(async {
+            let mut warm_data = Vec::new();
+            for i in 0..50 {
+                warm_data.push((
+                    format!("warm_key_{}", i),
+                    TestData { data: format!("warm_data_{}", i) },
+                ));
+            }
+            let _ = cache.warm_cache(warm_data);
+        });
+        
+        // Benchmark optimized cache retrieval
+        group.bench_function(&format!("cache_get_{}", name), |b| {
+            let mut counter = 0;
+            b.iter(|| {
+                let key = format!("warm_key_{}", counter % 50);
+                counter += 1;
+                let _result = cache.get(&key);
+            });
+        });
+        
+        // Benchmark cache insertion with intelligent tier placement
+        group.bench_function(&format!("cache_insert_{}", name), |b| {
+            let mut counter = 0;
+            b.iter(|| {
+                let key = format!("new_key_{}", counter);
+                let value = TestData { data: format!("new_data_{}", counter) };
+                counter += 1;
+                
+                let _ = cache.insert(key, value);
+            });
+        });
+    }
+    
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_concurrent_access,
@@ -426,7 +593,10 @@ criterion_group!(
     bench_event_queues,
     bench_message_broadcasting,
     bench_stun_selection,
-    bench_game_memory_pools
+    bench_game_memory_pools,
+    bench_optimized_connection_pool,
+    bench_simd_crypto_performance,
+    bench_optimized_cache_performance
 );
 
 criterion_main!(benches);

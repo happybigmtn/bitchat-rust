@@ -253,6 +253,14 @@ impl Default for CacheWarmingStrategy {
     }
 }
 
+/// Cache priority for intelligent warming
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CachePriority {
+    High,   // L1 cache - hot data
+    Medium, // L2 cache - warm data  
+    Low,    // L3 cache - cold data
+}
+
 /// L3 cache - Memory-mapped file, persistent but slower
 pub struct L3Cache {
     cache_dir: PathBuf,
