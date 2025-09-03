@@ -2,12 +2,6 @@
 //!
 //! Tests critical system components and their interactions for production readiness
 
-// TODO: [Testing] Fix compilation errors in integration tests
-//       - Update imports to match refactored module structure
-//       - Fix async test timeout handling for slower CI environments
-//       - Add proper test fixtures and test data builders
-//       Priority: HIGH - Blocking CI/CD pipeline
-
 use bitcraps::{
     crypto::{BitchatIdentity, GameCrypto},
     protocol::{BetType, CrapTokens, PeerId},

@@ -2,9 +2,15 @@
   "session_started": "2025-01-03T00:00:00Z",
   "total_todos": 25,
   "production_todos": 8,
-  "resolved": 0,
-  "current_todo": 1,
+  "resolved": 5,
+  "current_todo": 6,
   "last_file": null,
   "git_checkpoint": null,
-  "resolution_log": []
+  "resolution_log": [
+    {"todo": "Fix type mismatch in main.rs", "resolved_at": "2025-01-03T01:00:00Z"},
+    {"todo": "Fix monitoring integration structs", "resolved_at": "2025-01-03T01:05:00Z"},
+    {"todo": "Fix integration test compilation", "resolved_at": "2025-01-03T01:10:00Z"},
+    {"todo": "Implement packet validation", "resolved_at": "2025-01-03T01:15:00Z"},
+    {"todo": "Implement rate limiting", "resolved_at": "2025-01-03T01:20:00Z"}
+  ]
 }

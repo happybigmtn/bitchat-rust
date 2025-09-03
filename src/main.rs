@@ -9,7 +9,7 @@ mod app_state;
 mod commands;
 
 use app_config::{resolve_data_dir, Cli, Commands};
-use app_state::BitCrapsApp;
+use app_state::BitCrapsApp as AppStateBitCrapsApp;
 use commands::commands as cmd;
 
 #[tokio::main]
@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Start => {
             info!("Starting BitCraps node...");
-            let app = BitCrapsApp::new(config.clone()).await?;
+            let app = AppStateBitCrapsApp::new(config.clone()).await?;
             let app_arc = Arc::new(app);
             start_monitoring_services(app_arc.clone(), &config).await?;
             
@@ -54,32 +54,34 @@ async fn main() -> Result<()> {
 
         Commands::Tui => {
             info!("Starting BitCraps TUI...");
-            let app = BitCrapsApp::new(config).await?;
-            run_tui_wrapper(app).await?;
+            let app = AppStateBitCrapsApp::new(config.clone()).await?;
+            // Create library app for TUI
+            let lib_app = create_library_app(config).await?;
+            run_tui_wrapper(lib_app).await?;
         }
 
         Commands::CreateGame { buy_in } => {
-            cmd::create_game_command(&BitCrapsApp::new(config.clone()).await?, buy_in).await?;
+            cmd::create_game_command(&AppStateBitCrapsApp::new(config.clone()).await?, buy_in).await?;
 
             // Start the main loop after creating game
-            let mut app = BitCrapsApp::new(config).await?;
+            let mut app = AppStateBitCrapsApp::new(config).await?;
             app.start().await?;
         }
 
         Commands::JoinGame { game_id } => {
-            cmd::join_game_command(&BitCrapsApp::new(config.clone()).await?, &game_id).await?;
+            cmd::join_game_command(&AppStateBitCrapsApp::new(config.clone()).await?, &game_id).await?;
 
             // Start the main loop after joining game
-            let mut app = BitCrapsApp::new(config).await?;
+            let mut app = AppStateBitCrapsApp::new(config).await?;
             app.start().await?;
         }
 
         Commands::Balance => {
-            cmd::balance_command(&BitCrapsApp::new(config).await?).await?;
+            cmd::balance_command(&AppStateBitCrapsApp::new(config).await?).await?;
         }
 
         Commands::Games => {
-            cmd::list_games_command(&BitCrapsApp::new(config).await?).await?;
+            cmd::list_games_command(&AppStateBitCrapsApp::new(config).await?).await?;
         }
 
         Commands::Bet {
@@ -88,7 +90,7 @@ async fn main() -> Result<()> {
             amount,
         } => {
             cmd::place_bet_command(
-                &BitCrapsApp::new(config.clone()).await?,
+                &AppStateBitCrapsApp::new(config.clone()).await?,
                 &game_id,
                 &bet_type,
                 amount,
@@ -96,25 +98,62 @@ async fn main() -> Result<()> {
             .await?;
 
             // Start the main loop after placing bet
-            let mut app = BitCrapsApp::new(config).await?;
+            let mut app = AppStateBitCrapsApp::new(config).await?;
             app.start().await?;
         }
 
         Commands::Stats => {
-            cmd::stats_command(&BitCrapsApp::new(config).await?).await?;
+            cmd::stats_command(&AppStateBitCrapsApp::new(config).await?).await?;
         }
 
         Commands::Ping => {
-            cmd::ping_command(&BitCrapsApp::new(config).await?).await?;
+            cmd::ping_command(&AppStateBitCrapsApp::new(config).await?).await?;
         }
     }
 
     Ok(())
 }
 
+/// Create library BitCrapsApp from config for monitoring/TUI integration
+async fn create_library_app(config: AppConfig) -> Result<bitcraps::BitCrapsApp> {
+    use bitcraps::{BitCrapsApp, ApplicationConfig};
+    use std::time::Duration;
+    
+    // Parse port from TCP address string if provided
+    let port = if let Some(ref tcp_addr) = config.listen_tcp {
+        // Parse "0.0.0.0:8000" format
+        tcp_addr.split(':')
+            .nth(1)
+            .and_then(|p| p.parse::<u16>().ok())
+            .unwrap_or(8000)
+    } else {
+        8000
+    };
+    
+    let lib_config = ApplicationConfig {
+        port,
+        debug: true,
+        db_path: config.data_dir.clone(),
+        max_games: 100,
+        session_timeout: Duration::from_secs(3600),
+        mobile_mode: false,
+        max_concurrent_connections: 1000,
+        max_bandwidth_mbps: 100.0,
+        max_string_length: 1024,
+        max_array_length: 1000,
+        max_message_rate: 1000,
+        vec_pool_size: 100,
+        vec_pool_capacity: 1024,
+        string_pool_size: 50,
+        string_pool_capacity: 256,
+    };
+    
+    BitCrapsApp::new(lib_config).await
+}
+
 /// Start all monitoring services (Prometheus, Dashboard, Metrics Integration)
 #[cfg(not(feature = "mvp"))]
-async fn start_monitoring_services(_app: Arc<BitCrapsApp>, config: &AppConfig) -> Result<()> {
+async fn start_monitoring_services(app_state: Arc<AppStateBitCrapsApp>, config: &AppConfig) -> Result<()> {
     use bitcraps::monitoring::{
         PrometheusServer, PrometheusConfig, start_dashboard_server, start_metrics_integration,
         record_network_event,
@@ -151,9 +190,10 @@ async fn start_monitoring_services(_app: Arc<BitCrapsApp>, config: &AppConfig) -
     });
     
     // Start Metrics Integration Service
-    // TODO: Fix type mismatch between app_state::BitCrapsApp and bitcraps::BitCrapsApp
-    // let _integration_handle = start_metrics_integration(app).await;
-    info!("✅ Metrics integration service disabled due to type mismatch");
+    // Create library app for metrics integration
+    let lib_app = create_library_app(config.clone()).await?;
+    let _integration_handle = start_metrics_integration(Arc::new(lib_app)).await;
+    info!("✅ Metrics integration service started");
     
     // Record initial startup event
     record_network_event("node_started", None);
@@ -174,15 +214,12 @@ async fn start_monitoring_services(_app: Arc<BitCrapsApp>, _config: &AppConfig) 
 
 // Wrapper to run TUI with correct types per build feature
 #[cfg(not(feature = "mvp"))]
-async fn run_tui_wrapper(_app: BitCrapsApp) -> Result<()> {
-    // TODO: Fix type mismatch between app_state::BitCrapsApp and bitcraps::BitCrapsApp
-    // bitcraps::ui::tui::run_integrated_tui(app).await.map_err(|e| Error::Protocol(format!("TUI failed: {}", e)))
-    println!("TUI disabled due to type mismatch - using CLI mode");
-    Ok(())
+async fn run_tui_wrapper(app: bitcraps::BitCrapsApp) -> Result<()> {
+    bitcraps::ui::tui::run_integrated_tui(app).await.map_err(|e| Error::Protocol(format!("TUI failed: {}", e)))
 }
 
 #[cfg(feature = "mvp")]
-async fn run_tui_wrapper(_app: BitCrapsApp) -> Result<()> {
+async fn run_tui_wrapper(_app: bitcraps::BitCrapsApp) -> Result<()> {
     eprintln!("TUI is disabled under MVP builds.");
     Ok(())
 }
