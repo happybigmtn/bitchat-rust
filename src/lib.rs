@@ -18,6 +18,7 @@
 
 pub mod app; // Main application coordinator
 pub mod cache; // Multi-tier caching system
+pub mod compliance; // Regulatory compliance and KYC/AML systems
 pub mod config;
 pub mod contracts; // Smart contract integration and cross-chain bridges
 pub mod coordinator; // Network coordination and monitoring
@@ -27,6 +28,7 @@ pub mod discovery; // Peer discovery (Bluetooth, DHT)
 pub mod economics; // Advanced token economics and supply management
 pub mod error;
 pub mod gaming; // Gaming interfaces and session management
+pub mod governance; // Decentralized autonomous organization and governance
 pub mod keystore; // Secure key management
 pub mod logging; // Production logging and observability
 pub mod memory_pool; // Memory pooling for performance optimization
@@ -37,6 +39,7 @@ pub mod optimization; // Performance optimizations
 pub mod performance; // Performance benchmarking and analysis
 pub mod persistence; // Data persistence layer
 pub mod platform; // Platform-specific integrations (Android, iOS)
+pub mod plugins; // Plugin system for additional casino games
 pub mod profiling; // Performance profiling and analysis
 pub mod protocol; // Core protocol and binary serialization
 pub mod resilience; // Network resilience and fault tolerance
@@ -49,6 +52,7 @@ pub mod ui; // User interface (CLI and TUI)
 pub mod utils; // Utility functions and helpers
 pub mod validation; // Security hardening and input validation
 pub mod services; // Microservices architecture
+pub mod wasm; // WebAssembly runtime and plugin system
 
 // UniFFI type tag (required by generated code)
 #[cfg(feature = "uniffi")]
@@ -89,6 +93,15 @@ pub use treasury::{
 };
 pub use ui::{Cli, Commands};
 pub use utils::{AdaptiveInterval, AdaptiveIntervalConfig};
+pub use compliance::{
+    ComplianceConfig, ComplianceLevel, ComplianceManager, ComplianceStatus, ComplianceRestriction,
+    KycProvider, KycStatus, AmlMonitor, RiskScore, SanctionsScreening, SanctionsResult,
+    AuditLogger, AuditEvent, ComplianceAudit,
+};
+pub use governance::{
+    GovernanceConfig, GovernanceCoordinator, Dao, DaoMember, MembershipTier,
+    Proposal, ProposalType, VotingMechanism, VotingPower,
+};
 
 /// Application configuration
 #[derive(Debug, Clone)]

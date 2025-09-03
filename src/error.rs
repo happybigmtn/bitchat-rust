@@ -154,6 +154,9 @@ pub enum Error {
 
     #[error("Game logic error: {0}")]
     GameLogic(String),
+
+    #[error("WASM error: {0}")]
+    Wasm(String),
 }
 
 impl From<std::ffi::NulError> for Error {

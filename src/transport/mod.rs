@@ -28,6 +28,10 @@ pub mod security;
 // TCP transport with optional TLS support
 pub mod tcp_transport;
 pub mod traits;
+// WebRTC transport for browser and P2P connectivity
+#[cfg(feature = "webrtc")]
+pub mod webrtc;
+pub mod network_optimizer;
 
 // Platform-specific BLE peripheral implementations
 // Android BLE support requires both target platform and android feature
@@ -83,6 +87,10 @@ pub use nat_traversal::{NatType, NetworkHandler, TransportMode};
 #[cfg(feature = "bluetooth")]
 pub use secure_gatt_server::{GattService, SecureGattServer};
 
+// WebRTC transport re-exports
+#[cfg(feature = "webrtc")]
+pub use webrtc::{WebRtcTransport, WebRtcConfig, WebRtcTransportBuilder, SignalingMessage, WebRtcStats};
+
 /// Transport address types for different connection methods
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum TransportAddress {
@@ -90,6 +98,7 @@ pub enum TransportAddress {
     Udp(SocketAddr),   // UDP connection (for testing/development)
     Bluetooth(String), // Bluetooth device ID/address
     Mesh(PeerId),      // Abstract mesh routing via peer ID
+    WebRtc(String),    // WebRTC peer ID or signaling address
 }
 
 /// Transport-specific error types

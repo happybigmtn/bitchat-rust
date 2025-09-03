@@ -299,11 +299,15 @@ impl DatabaseBackendTrait for SqliteBackend {
             let mut stmt = conn.prepare(&sql_owned)?;
             
             // Convert parameters to rusqlite format
-            let rusqlite_params: Vec<&dyn rusqlite::ToSql> = params_owned.iter()
+            let rusqlite_params: Vec<Box<dyn rusqlite::ToSql>> = params_owned.iter()
                 .map(|p| convert_to_rusqlite_param(p))
                 .collect();
             
-            let rows = stmt.query_map(&rusqlite_params[..], |row| {
+            let param_refs: Vec<&dyn rusqlite::ToSql> = rusqlite_params.iter()
+                .map(|b| b.as_ref())
+                .collect();
+            
+            let rows = stmt.query_map(&param_refs[..], |row| {
                 convert_sqlite_row(row)
             })?;
             
@@ -337,11 +341,15 @@ impl DatabaseBackendTrait for SqliteBackend {
         let params_owned: Vec<SqlValue> = params.iter().map(|p| p.as_sql_value()).collect();
         
         let result = connection.call(move |conn| {
-            let rusqlite_params: Vec<&dyn rusqlite::ToSql> = params_owned.iter()
+            let rusqlite_params: Vec<Box<dyn rusqlite::ToSql>> = params_owned.iter()
                 .map(|p| convert_to_rusqlite_param(p))
                 .collect();
             
-            let affected = conn.execute(&sql_owned, &rusqlite_params[..])?;
+            let param_refs: Vec<&dyn rusqlite::ToSql> = rusqlite_params.iter()
+                .map(|b| b.as_ref())
+                .collect();
+            
+            let affected = conn.execute(&sql_owned, &param_refs[..])?;
             Ok::<usize, rusqlite::Error>(affected)
         }).await.map_err(|e| Error::Database(format!("Execute failed: {}", e)))?;
         
@@ -470,11 +478,15 @@ impl TransactionTrait for SqliteTransactionWrapper {
         let params_owned: Vec<SqlValue> = params.iter().map(|p| p.as_sql_value()).collect();
         
         let result = connection.call(move |conn| {
-            let rusqlite_params: Vec<&dyn rusqlite::ToSql> = params_owned.iter()
+            let rusqlite_params: Vec<Box<dyn rusqlite::ToSql>> = params_owned.iter()
                 .map(|p| convert_to_rusqlite_param(p))
                 .collect();
             
-            let affected = conn.execute(&sql_owned, &rusqlite_params[..])?;
+            let param_refs: Vec<&dyn rusqlite::ToSql> = rusqlite_params.iter()
+                .map(|b| b.as_ref())
+                .collect();
+            
+            let affected = conn.execute(&sql_owned, &param_refs[..])?;
             Ok::<usize, rusqlite::Error>(affected)
         }).await.map_err(|e| Error::Database(format!("Transaction execute failed: {}", e)))?;
         
@@ -523,11 +535,15 @@ impl PreparedStatementTrait for SqlitePreparedStatement {
         let params_owned: Vec<SqlValue> = params.iter().map(|p| p.as_sql_value()).collect();
         
         let result = connection.call(move |conn| {
-            let rusqlite_params: Vec<&dyn rusqlite::ToSql> = params_owned.iter()
+            let rusqlite_params: Vec<Box<dyn rusqlite::ToSql>> = params_owned.iter()
                 .map(|p| convert_to_rusqlite_param(p))
                 .collect();
             
-            let affected = conn.execute(&sql_owned, &rusqlite_params[..])?;
+            let param_refs: Vec<&dyn rusqlite::ToSql> = rusqlite_params.iter()
+                .map(|b| b.as_ref())
+                .collect();
+            
+            let affected = conn.execute(&sql_owned, &param_refs[..])?;
             Ok::<usize, rusqlite::Error>(affected)
         }).await.map_err(|e| Error::Database(format!("Prepared execute failed: {}", e)))?;
         
@@ -570,17 +586,17 @@ impl PreparedStatementTrait for SqlitePreparedStatement {
 }
 
 // Helper functions for converting between types
-fn convert_to_rusqlite_param(value: &SqlValue) -> &dyn rusqlite::ToSql {
+fn convert_to_rusqlite_param(value: &SqlValue) -> Box<dyn rusqlite::ToSql> {
     match value {
-        SqlValue::Null => &rusqlite::types::Null,
-        SqlValue::Bool(v) => v,
-        SqlValue::I32(v) => v,
-        SqlValue::I64(v) => v,
-        SqlValue::F64(v) => v,
-        SqlValue::Text(v) => v,
-        SqlValue::Bytes(v) => v,
-        SqlValue::Uuid(v) => &v.to_string(),
-        SqlValue::Timestamp(v) => &v.timestamp(),
+        SqlValue::Null => Box::new(rusqlite::types::Null),
+        SqlValue::Bool(v) => Box::new(*v),
+        SqlValue::I32(v) => Box::new(*v),
+        SqlValue::I64(v) => Box::new(*v),
+        SqlValue::F64(v) => Box::new(*v),
+        SqlValue::Text(v) => Box::new(v.clone()),
+        SqlValue::Bytes(v) => Box::new(v.clone()),
+        SqlValue::Uuid(v) => Box::new(v.to_string()),
+        SqlValue::Timestamp(v) => Box::new(v.timestamp()),
     }
 }
 

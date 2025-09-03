@@ -22,11 +22,15 @@
 
 pub mod byzantine_engine;
 pub mod commit_reveal;
+pub mod comprehensive_tests;
 pub mod engine;
+pub mod formal_verification;
 pub mod lockfree_engine;
 pub mod merkle_cache;
+pub mod optimized_pbft;
 pub mod persistence;
 pub mod robust_engine;
+pub mod state_machine;
 pub mod validation;
 pub mod voting;
 
@@ -38,6 +42,18 @@ use crate::protocol::Hash256;
 // Re-export main types
 pub use commit_reveal::{EntropyPool, RandomnessCommit, RandomnessReveal};
 pub use engine::{ConsensusEngine, GameConsensusState, GameOperation, GameProposal};
+pub use formal_verification::{
+    TLASpecGenerator, PropertyTester, TemporalLogicChecker, ConsensusParameters,
+    PropertyTestResults, TemporalProperty, StateProperty
+};
+pub use optimized_pbft::{
+    OptimizedPBFTEngine, OptimizedPBFTConfig, PBFTMessage, OperationBatch,
+    ConsensusOperation, ReplicaState, PBFTMetricsSnapshot
+};
+pub use state_machine::{
+    DeterministicStateMachine, GameStateMachine, StateMachineConfig,
+    StateOperation, OperationType, ExecutionResult, StateMachineMetricsSnapshot
+};
 pub use validation::{Dispute, DisputeClaim, DisputeEvidence, DisputeVote, DisputeVoteType};
 pub use voting::{ConfirmationTracker, Fork, VoteTracker};
 
