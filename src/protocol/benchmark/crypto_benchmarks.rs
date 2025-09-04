@@ -10,7 +10,7 @@ mod benchmarks {
     };
     use crate::protocol::efficient_game_state::CompactGameState;
 
-    use super::{BenchmarkConfig, BenchmarkResults, MemoryBenchmarkStats};
+    use crate::protocol::benchmark::{BenchmarkConfig, BenchmarkResults, MemoryBenchmarkStats};
 
     /// Benchmark consensus operations
     pub fn benchmark_consensus(config: &BenchmarkConfig) -> Vec<BenchmarkResults> {

@@ -4,7 +4,10 @@
 //! and logged rather than silently failing.
 
 use std::future::Future;
-use crate::utils::task_tracker::{spawn_tracked, TaskType};
+use crate::utils::task_tracker::spawn_tracked;
+
+// Re-export for convenience
+pub use crate::utils::task_tracker::TaskType;
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use tokio::task::{JoinHandle, JoinError};

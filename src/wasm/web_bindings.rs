@@ -4,7 +4,8 @@
 //! allowing BitCraps to run in web browsers using WebAssembly.
 
 use crate::error::{Error, Result};
-use crate::gaming::{CrapsGame, GameAction, GameState};
+use crate::protocol::craps::{CrapsGame, GameState};
+use crate::gaming::GameAction;
 use crate::protocol::PeerId;
 use crate::wasm::{WasmRuntime, WasmValue, WasmConfig};
 use js_sys::{Array, Object, Promise, Uint8Array};

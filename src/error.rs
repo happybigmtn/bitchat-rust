@@ -35,6 +35,12 @@ pub enum Error {
     #[error("Network error: {0}")]
     Network(String),
 
+    #[error("Service error: {0}")]
+    ServiceError(String),
+
+    #[error("Network error: {0}")]
+    NetworkError(String),
+
     #[error("Transport error: {0}")]
     Transport(String),
 
@@ -89,6 +95,7 @@ pub enum Error {
     #[error("Database error: {0}")]
     Database(String),
 
+    #[cfg(feature = "sqlite")]
     #[error("SQLite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
 

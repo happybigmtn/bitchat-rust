@@ -1,6 +1,12 @@
 //! Multi-tier caching system for high-performance data access
 
 use crate::error::Result;
+
+/// Standard cache key type
+pub type CacheKey = String;
+
+/// Standard cache value type
+pub type CacheValue = Vec<u8>;
 use dashmap::DashMap;
 use lru::LruCache;
 use memmap2::MmapOptions;
@@ -189,7 +195,10 @@ where
     V: Clone,
 {
     pub fn new(max_entries: usize, max_size_mb: usize) -> Self {
-        let cache = LruCache::new(std::num::NonZeroUsize::new(max_entries).unwrap());
+        let cache = LruCache::new(
+            std::num::NonZeroUsize::new(max_entries.max(1))
+                .expect("max_entries must be non-zero after max(1)")
+        );
         Self {
             cache: Arc::new(RwLock::new(cache)),
             max_size_bytes: max_size_mb * 1024 * 1024,

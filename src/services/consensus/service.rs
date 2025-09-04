@@ -4,7 +4,7 @@
 
 use super::byzantine::ByzantineDetector;
 use super::types::*;
-use super::{ConsensusConfig, ConsensusAlgorithm, NetworkState, ConsensusMetrics};
+use super::{ConsensusConfig, ConsensusAlgorithm, NetworkState, ConsensusMetrics, ConsensusRound, ConsensusProposal, ConsensusResult, ConsensusVote};
 use crate::error::{Error, Result};
 use crate::protocol::{GameId, PeerId, TransactionId};
 use dashmap::DashMap;

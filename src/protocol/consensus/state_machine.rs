@@ -664,9 +664,9 @@ impl DeterministicStateMachine {
         }
 
         // Remove resolved bets
-        for player_bets in state.active_bets.values_mut() {
+        for (player_id, player_bets) in state.active_bets.iter_mut() {
             player_bets.retain(|bet| {
-                !resolutions.iter().any(|r| r.player == resolution.player && r.bet_type == bet.bet_type)
+                !resolutions.iter().any(|r| r.player == *player_id && r.bet_type == bet.bet_type)
             });
         }
 

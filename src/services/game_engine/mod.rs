@@ -36,7 +36,7 @@ impl Default for GameEngineConfig {
             max_players_per_game: 8,
             min_bet_amount: 1,
             max_bet_amount: 10000,
-            game_timeout: std::time::Duration::from_mins(30),
+            game_timeout: std::time::Duration::from_secs(30 * 60), // 30 minutes
         }
     }
 }
@@ -154,7 +154,7 @@ impl GameEngine for CrapsGameEngine {
                         amount: self.config.min_bet_amount 
                     });
                 },
-                GamePhase::Point(_) => {
+                GamePhase::Point => {
                     actions.push(GameAction::PlaceBet { 
                         bet_type: BetType::Come, 
                         amount: self.config.min_bet_amount 

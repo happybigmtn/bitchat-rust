@@ -5,7 +5,7 @@
 //! in a secure and controlled manner.
 
 use crate::error::{Error, Result};
-use crate::gaming::{CrapsGame, GameAction, GameState, Player};
+use crate::gaming::{CrapsGameEngine, GameAction, GameStateSnapshot, PlayerJoinData};
 use crate::protocol::{BitchatPacket, PeerId};
 use crate::wasm::WasmValue;
 use dashmap::DashMap;
@@ -22,9 +22,9 @@ pub struct WasmHostFunctions {
     /// Function registry
     functions: HashMap<String, HostFunction>,
     /// Game state access
-    game_states: Arc<DashMap<Uuid, GameState>>,
-    /// Player registry
-    players: Arc<DashMap<PeerId, Player>>,
+    game_states: Arc<DashMap<Uuid, GameStateSnapshot>>,
+    /// PlayerJoinData registry
+    players: Arc<DashMap<PeerId, PlayerJoinData>>,
     /// Call statistics
     call_count: AtomicU64,
     /// Security context
@@ -181,7 +181,7 @@ impl WasmHostFunctions {
             },
         });
 
-        // Player functions
+        // PlayerJoinData functions
         functions.insert("get_player_info".to_string(), HostFunction {
             name: "get_player_info".to_string(),
             signature: HostFunctionSignature {
@@ -504,12 +504,12 @@ impl WasmHostFunctions {
     }
 
     /// Update game state cache (called by runtime)
-    pub fn update_game_state_cache(&self, game_id: Uuid, state: GameState) {
+    pub fn update_game_state_cache(&self, game_id: Uuid, state: GameStateSnapshot) {
         self.game_states.insert(game_id, state);
     }
 
     /// Update player cache (called by runtime)
-    pub fn update_player_cache(&self, peer_id: PeerId, player: Player) {
+    pub fn update_player_cache(&self, peer_id: PeerId, player: PlayerJoinData) {
         self.players.insert(peer_id, player);
     }
 

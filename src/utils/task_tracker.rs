@@ -49,6 +49,8 @@ pub enum TaskType {
     Maintenance,
     /// User interface updates
     UI,
+    /// Background tasks
+    Background,
     /// General purpose
     General,
 }

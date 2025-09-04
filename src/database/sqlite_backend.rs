@@ -141,7 +141,7 @@ impl SqliteBackend {
     }
     
     async fn initialize_schema(&self) -> Result<()> {
-        let schema_sql = include_str!("../migrations/sqlite/001_initial_schema.sql");
+        let schema_sql = include_str!("migrations/sqlite/001_initial_schema.sql");
         self.execute(schema_sql, &[]).await?;
         Ok(())
     }

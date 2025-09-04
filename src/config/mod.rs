@@ -12,6 +12,7 @@ pub mod runtime_reload;
 pub mod scalability;
 
 use crate::error::{Error, Result};
+use log::warn;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
@@ -476,7 +477,7 @@ use std::sync::RwLock;
 
 static CONFIG: Lazy<RwLock<Config>> = Lazy::new(|| {
     RwLock::new(Config::load().unwrap_or_else(|e| {
-        eprintln!(
+        warn!(
             "WARNING: Failed to load configuration, using defaults: {}",
             e
         );

@@ -854,13 +854,13 @@ impl AdaptiveResourceScheduler {
     async fn collect_system_metrics(&self) {
         // In a real implementation, this would collect actual system metrics
         // For now, we'll simulate some values
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-
         let active_tasks = self.active_tasks.read().await.len();
         let (high_queue, normal_queue, background_queue) = self.get_queue_status().await;
         let queued_tasks = high_queue + normal_queue + background_queue;
         
+        // Create RNG after await points to ensure Send future compatibility
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
         let cpu_utilization = rng.gen_range(0.2..0.9);
         let memory_utilization = rng.gen_range(0.3..0.8);
         

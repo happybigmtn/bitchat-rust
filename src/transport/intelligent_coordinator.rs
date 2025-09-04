@@ -14,9 +14,9 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 
 use crate::error::{Error, Result};
 use crate::protocol::PeerId;
-use crate::transport::{
-    nat_traversal::NetworkHandler, Transport, TransportAddress, TransportEvent,
-};
+#[cfg(feature = "nat-traversal")]
+use crate::transport::nat_traversal::NetworkHandler;
+use crate::transport::{Transport, TransportAddress, TransportEvent};
 
 /// Transport priority levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

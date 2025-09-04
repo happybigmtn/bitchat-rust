@@ -93,7 +93,7 @@ impl Default for AuthConfig {
         Self {
             enabled: true,
             jwt_secret: "default-secret".to_string(),
-            token_expiration: Duration::from_hours(24),
+            token_expiration: Duration::from_secs(24 * 3600), // 24 hours
             api_keys: HashMap::new(),
         }
     }

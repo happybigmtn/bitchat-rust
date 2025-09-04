@@ -1,4 +1,5 @@
 use crate::protocol::PeerId;
+#[cfg(feature = "nat-traversal")]
 use crate::transport::nat_traversal::NetworkHandler;
 use crate::transport::pow_identity::ProofOfWork;
 use serde::{Deserialize, Serialize};

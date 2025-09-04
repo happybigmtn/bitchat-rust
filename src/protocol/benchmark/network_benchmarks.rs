@@ -3,7 +3,7 @@
 use criterion::{black_box, Criterion};
 use std::time::Duration;
 
-use super::{BenchmarkConfig, BenchmarkResults, MemoryBenchmarkStats};
+use crate::protocol::benchmark::{BenchmarkConfig, BenchmarkResults, MemoryBenchmarkStats};
 
 /// Benchmark state synchronization
 pub fn benchmark_state_sync(_config: &BenchmarkConfig) -> Vec<BenchmarkResults> {

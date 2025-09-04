@@ -5,7 +5,7 @@
 //! sandboxing and resource management.
 
 use crate::error::{Error, Result};
-use crate::gaming::{CrapsGame, GameAction, GameState, Player};
+use crate::gaming::{CrapsGameEngine, GameAction, GameStateSnapshot, PlayerJoinData};
 use crate::protocol::PeerId;
 use crate::wasm::{
     WasmConfig, WasmExecutionContext, WasmExecutionResult, WasmModule, WasmModuleInfo,
@@ -19,7 +19,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use serde::{Serialize, Deserialize};
 use tokio::fs;
 use tokio::sync::{mpsc, RwLock};
 use uuid::Uuid;
@@ -210,22 +209,22 @@ pub trait GameLogicPlugin {
     async fn execute_action(
         &mut self,
         action: &GameAction,
-        state: &GameState,
+        state: &GameStateSnapshot,
         context: &PluginExecutionContext,
-    ) -> Result<GameState>;
+    ) -> Result<GameStateSnapshot>;
 
     /// Validate a game action
     async fn validate_action(
         &self,
         action: &GameAction,
-        state: &GameState,
+        state: &GameStateSnapshot,
         context: &PluginExecutionContext,
     ) -> Result<bool>;
 
     /// Calculate game outcomes
     async fn calculate_outcomes(
         &self,
-        state: &GameState,
+        state: &GameStateSnapshot,
         context: &PluginExecutionContext,
     ) -> Result<HashMap<PeerId, f64>>;
 

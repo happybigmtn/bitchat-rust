@@ -790,3 +790,9 @@ pub struct EdgeRuntimeStats {
     pub average_memory_usage: f32,
     pub average_latency_ms: f32,
 }
+
+// Re-export types from submodules
+pub use cdn::{CdnManager, CdnConfig, CdnProvider, EdgeWorker};
+pub use orchestrator::{EdgeOrchestrator, OrchestratorConfig, EdgeCluster, AutoScalingConfig};
+pub use mec::{MecManager, MecConfig, MecPlatform, NetworkSlice, QosClass};
+pub use cache::{EdgeCacheManager, EdgeCacheConfig, CacheTier, CacheMetrics};

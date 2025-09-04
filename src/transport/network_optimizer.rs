@@ -17,7 +17,7 @@ use parking_lot::RwLock as ParkingRwLock;
 use serde::{Serialize, Deserialize};
 use tracing::{info, warn, error, debug};
 
-use crate::transport::connection_pool::ConnectionPool;
+use crate::optimization::connection_pool_optimizer::ConnectionPool;
 use crate::monitoring::metrics::METRICS;
 use crate::utils::LoopBudget;
 use crate::utils::task_tracker::{spawn_tracked, TaskType};

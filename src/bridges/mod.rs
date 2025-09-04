@@ -27,7 +27,8 @@ use crate::crypto::BitchatKeypair;
 use crate::validation::InputValidator;
 use crate::security::{SecurityManager, SecurityEvent};
 use crate::utils::spawn_tracked;
-use crate::utils::task::{TaskType, TaskHandle};
+use crate::utils::task::TaskType;
+use tokio::task::JoinHandle;
 
 pub mod ethereum;
 pub mod bitcoin;
@@ -338,12 +339,11 @@ impl BridgeSecurityManager {
         
         for (rule_name, rule) in rules.iter() {
             if !rule.evaluate(tx) {
-                let security_event = SecurityEvent {
-                    event_type: "fraud_detection_triggered".to_string(),
-                    severity: rule.severity,
+                let security_event = SecurityEvent::GameIntegrityViolation {
+                    game_id: [0u8; 16], // Bridge transactions don't have game IDs
+                    player_id: [0u8; 32], // Use default for bridge transactions
+                    violation_type: "fraud_detection_triggered".to_string(),
                     details: format!("Rule '{}' triggered for transaction {}", rule_name, hex::encode(&tx.tx_id)),
-                    timestamp: Self::current_timestamp(),
-                    source: "bridge_security".to_string(),
                 };
 
                 self.security_events.write().await.push(security_event);
@@ -361,7 +361,7 @@ impl BridgeSecurityManager {
 
     /// Validate validator signature
     pub async fn validate_validator_signature(&self, signature: &ValidatorSignature, tx_id: &Hash256) -> Result<()> {
-        use ed25519_dalek::{PublicKey, Signature, Verifier};
+        use ed25519_dalek::{VerifyingKey as PublicKey, Signature, Verifier};
 
         // Reconstruct message to verify
         let message = self.create_signature_message(tx_id);
@@ -585,7 +585,7 @@ pub struct BridgeEventMonitor {
     state_manager: Arc<BridgeStateManager>,
     security_manager: Arc<BridgeSecurityManager>,
     bridge_implementations: HashMap<ChainId, Arc<dyn Bridge>>,
-    monitoring_tasks: Vec<TaskHandle>,
+    monitoring_tasks: Vec<JoinHandle<()>>,
 }
 
 impl BridgeEventMonitor {

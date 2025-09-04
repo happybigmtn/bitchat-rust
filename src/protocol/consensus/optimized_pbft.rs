@@ -291,7 +291,7 @@ enum ConsensusPhase {
 }
 
 /// Adaptive timeout controller
-struct TimeoutController {
+pub struct TimeoutController {
     /// Base timeout
     base_timeout: Duration,
     /// Current multiplier

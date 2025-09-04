@@ -923,7 +923,7 @@ impl MobileMemoryManager {
     }
 
     /// Desktop memory pressure detection using sysinfo
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(all(not(any(target_os = "android", target_os = "ios")), feature = "monitoring"))]
     async fn get_desktop_memory_pressure(&self) -> f64 {
         use sysinfo::{System, SystemExt};
 

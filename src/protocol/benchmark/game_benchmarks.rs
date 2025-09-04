@@ -7,7 +7,7 @@ use crate::protocol::efficient_bet_resolution::{EfficientBetResolver, PayoutLook
 use crate::protocol::efficient_game_state::{CompactGameState, StateSnapshot, VarInt};
 use crate::protocol::{BetType, CrapTokens, DiceRoll};
 
-use super::{BenchmarkConfig, BenchmarkResults, MemoryBenchmarkStats};
+use crate::protocol::benchmark::{BenchmarkConfig, BenchmarkResults, MemoryBenchmarkStats};
 
 /// Benchmark compact game state operations
 pub fn benchmark_compact_game_state(config: &BenchmarkConfig) -> Vec<BenchmarkResults> {

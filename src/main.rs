@@ -224,7 +224,7 @@ async fn run_tui_wrapper(app: bitcraps::BitCrapsApp) -> Result<()> {
 
 #[cfg(feature = "mvp")]
 async fn run_tui_wrapper(_app: bitcraps::BitCrapsApp) -> Result<()> {
-    eprintln!("TUI is disabled under MVP builds.");
+    log::warn!("TUI is disabled under MVP builds.");
     Ok(())
 }
 
@@ -241,10 +241,10 @@ fn install_panic_handler() {
 
 /// Log panic information to console
 fn log_panic_to_console(panic_info: &std::panic::PanicHookInfo) {
-    eprintln!("🚨 CRITICAL: Application panic detected!");
-    eprintln!("Location: {}", format_panic_location(panic_info));
-    eprintln!("Message: {}", extract_panic_message(panic_info));
-    eprintln!("Attempting graceful shutdown...");
+    log::error!("🚨 CRITICAL: Application panic detected!");
+    log::error!("Location: {}", format_panic_location(panic_info));
+    log::error!("Message: {}", extract_panic_message(panic_info));
+    log::error!("Attempting graceful shutdown...");
 }
 
 /// Log panic information to file
@@ -296,7 +296,7 @@ fn initialize_logging(verbose: bool) {
 
 /// Print application banner
 fn print_banner() {
-    println!("🎲 BitCraps - Decentralized Casino Protocol");
-    println!("⚡ Real-time craps over Bluetooth mesh with CRAP tokens");
-    println!();
+    log::info!("🎲 BitCraps - Decentralized Casino Protocol");
+    log::info!("⚡ Real-time craps over Bluetooth mesh with CRAP tokens");
+    log::info!("");
 }

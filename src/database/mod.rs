@@ -13,16 +13,22 @@ pub mod cache;
 pub mod cli;
 pub mod database_manager;
 pub mod migration_manager;
+#[cfg(feature = "sqlite")]
 pub mod migrations;
 pub mod models;
+#[cfg(feature = "postgres")]
 pub mod pgbouncer_config;
+#[cfg(feature = "postgres")]
 pub mod postgres_backend;
 pub mod query_builder;
 pub mod repositories;
+#[cfg(feature = "sqlite")]
 pub mod repository;
+#[cfg(feature = "postgres")]
 pub mod sharding_examples;
+#[cfg(feature = "sqlite")]
 pub mod sqlite_backend;
-
+#[cfg(feature = "sqlite")]
 pub mod async_pool;
 
 // Re-export commonly used types
@@ -31,12 +37,17 @@ pub use cache::{CacheConfig, DatabaseCache};
 pub use database_manager::{DatabaseManager, DatabaseManagerConfig};
 pub use migration_manager::{Migration, MigrationManager, MigrationReport};
 pub use models::*;
+#[cfg(feature = "postgres")]
 pub use pgbouncer_config::{PgBouncerConfig, PoolMode};
+#[cfg(feature = "postgres")]
 pub use postgres_backend::PostgresBackend;
 pub use query_builder::{GameQueries, QueryBuilder, UserQueries};
 pub use repositories::*;
+#[cfg(feature = "sqlite")]
 pub use repository::{GameRepository, StatsRepository, TransactionRepository, UserRepository};
+#[cfg(feature = "postgres")]
 pub use sharding_examples::{BitCrapsShardingStrategies, ProductionShardingConfig};
+#[cfg(feature = "sqlite")]
 pub use sqlite_backend::SqliteBackend;
 
 /// Generic repository trait for database access patterns
@@ -49,15 +60,15 @@ pub trait Repository<T> {
 }
 
 use crate::error::{Error, Result};
+#[cfg(feature = "sqlite")]
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-
-pub mod async_pool;
 use crate::config::DatabaseConfig;
+#[cfg(feature = "sqlite")]
 pub use async_pool::{AsyncDatabasePool, AsyncDbConfig, PoolStats as AsyncPoolStats};
 
 /// Database connection pool

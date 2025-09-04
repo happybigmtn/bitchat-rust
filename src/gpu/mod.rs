@@ -25,8 +25,6 @@
 pub mod physics;
 pub mod crypto;
 pub mod ml;
-#[cfg(test)]
-pub mod tests;
 
 use crate::error::Result;
 use std::sync::Arc;

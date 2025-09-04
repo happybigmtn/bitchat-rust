@@ -8,7 +8,8 @@
 //! - Memory management and security isolation
 
 use crate::error::{Error, Result};
-use crate::gaming::{CrapsGame, GameAction, GameState, Player};
+use crate::gaming::{CrapsGameEngine, GameAction, GameStateSnapshot, PlayerJoinData};
+use crate::protocol::craps::GameState;
 use crate::protocol::PeerId;
 use crate::utils::{spawn_tracked, TaskType};
 use bytes::Bytes;

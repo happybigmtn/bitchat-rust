@@ -24,7 +24,9 @@ pub mod config;
 pub mod contracts; // Smart contract integration and cross-chain bridges
 pub mod coordinator; // Network coordination and monitoring
 pub mod crypto; // Cryptographic foundations
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
 pub mod database;
+#[cfg(feature = "bluetooth")]
 pub mod discovery; // Peer discovery (Bluetooth, DHT)
 pub mod economics; // Advanced token economics and supply management
 pub mod edge; // Edge computing and CDN integration
@@ -37,7 +39,9 @@ pub mod keystore; // Secure key management
 pub mod logging; // Production logging and observability
 pub mod memory_pool; // Memory pooling for performance optimization
 pub mod mesh; // Mesh networking coordination
+#[cfg(any(feature = "android", feature = "uniffi"))]
 pub mod mobile; // Mobile platform bindings and UniFFI interface
+#[cfg(feature = "monitoring")]
 pub mod monitoring; // Production monitoring and metrics
 pub mod optimization; // Performance optimizations
 pub mod performance; // Performance benchmarking and analysis
@@ -52,6 +56,7 @@ pub mod session; // Session management with Noise protocol
 pub mod token; // Token economics and CRAP tokens
 pub mod transport; // Network transport layer (Bluetooth mesh)
 pub mod treasury; // Treasury management and automated market making
+#[cfg(feature = "ui")]
 pub mod ui; // User interface (CLI and TUI)
 pub mod utils; // Utility functions and helpers
 pub mod validation; // Security hardening and input validation
@@ -65,6 +70,7 @@ pub struct UniFfiTag;
 // Re-export commonly used types for easy access
 pub use coordinator::{HealthMetrics, MultiTransportCoordinator, NetworkMonitor, NetworkTopology};
 pub use crypto::{BitchatIdentity, BitchatKeypair, GameCrypto, ProofOfWork};
+#[cfg(feature = "bluetooth")]
 pub use discovery::{BluetoothDiscovery, DhtDiscovery, DhtPeer, DiscoveredPeer};
 pub use error::{Error, Result};
 pub use mesh::{MeshPeer, MeshService};

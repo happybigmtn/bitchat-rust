@@ -15,7 +15,7 @@ byteorder = "1.5"
 humantime-serde = "1.1"
 lz4_flex = "0.11"
 uuid = { version = "1.6", features = ["v4", "serde"] }
-tokio = { version = "1.47", features = ["full"] }
+tokio = { version = "1.47", features = ["rt-multi-thread", "net", "time", "sync", "macros"], default-features = false }
 async-trait = "0.1"
 futures = "0.3"
 crossbeam-channel = "0.5"
@@ -51,7 +51,7 @@ bytemuck = { version = "1.14", optional = true }
 pollster = { version = "0.3", optional = true }
 
 # Bluetooth transport
-btleplug = "0.11"
+btleplug = { version = "0.11", optional = true, default-features = false }
 once_cell = "1.20"
 
 # UniFFI for cross-platform bindings
@@ -62,7 +62,7 @@ jni = { version = "0.21", optional = true }
 android_logger = { version = "0.14", optional = true }
 
 # Database and storage
-rusqlite = { version = "0.32", features = ["bundled", "backup"], optional = true }
+rusqlite = { version = "0.32", features = ["bundled", "backup"], optional = true, default-features = false }
 tokio-postgres = { version = "0.7", optional = true }
 deadpool-postgres = { version = "0.14", optional = true }
 sea-orm = { version = "1.0", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros"], optional = true }
@@ -75,7 +75,7 @@ postgres-types = { version = "0.2", optional = true }
 refinery = { version = "0.8", features = ["tokio-postgres"], optional = true }
 
 # System monitoring
-sysinfo = "0.29"
+sysinfo = { version = "0.29", optional = true, default-features = false }
 procfs = { version = "0.16", optional = true }
 tokio-rusqlite = "0.6"
 
@@ -99,9 +99,9 @@ flate2 = "1.0"
 zstd = "0.13"
 brotli = "7.0"
 
-# UI dependencies
-ratatui = "0.29.0"
-crossterm = "0.29.0"
+# UI dependencies (optional)
+ratatui = { version = "0.29.0", optional = true, default-features = false, features = ["crossterm"] }
+crossterm = { version = "0.29.0", optional = true, default-features = false, features = ["events"] }
 clap = { version = "4.5.45", features = ["derive", "cargo"] }
 
 # TLS support
@@ -156,7 +156,7 @@ wasmtime = { version = "15.0", optional = true }
 axum = "0.7"
 tower = { version = "0.5", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "timeout"] }
-tonic = { version = "0.12", optional = true }
+tonic = "0.12"
 hyper = { version = "1.0", features = ["full"] }
 
 [build-dependencies]
@@ -231,8 +231,17 @@ strip = true
 opt-level = 3
 
 [features]
-# Default build is conservative: BLE on, NAT traversal on; tests controlled via features
-default = ["bluetooth", "nat-traversal", "sqlite"]
+# Default build is minimal - only core consensus and basic networking
+default = []
+
+# Core feature set - everything needed for basic functionality
+core = ["bluetooth", "sqlite", "consensus", "monitoring", "ui"]
+
+# Full feature set - everything enabled
+full = ["core", "nat-traversal", "tls", "postgres", "android", "gpu", "wasm"]
+
+# Core components
+consensus = []  # Core consensus protocols
 
 # Test-gating features
 mvp = []                # Enable MVP-focused tests
@@ -241,7 +250,9 @@ legacy-examples = []    # Enable legacy examples (off by default)
 
 benchmarks = []
 physical_device_tests = []
-bluetooth = [] # Core Bluetooth LE mesh transport
+bluetooth = ["dep:btleplug"] # Core Bluetooth LE mesh transport
+ui = ["dep:ratatui", "dep:crossterm"] # Terminal UI support
+monitoring = ["dep:sysinfo"] # System monitoring
 nat-traversal = [] # STUN/TURN NAT traversal support
 upnp = [] # UPnP port mapping support
 

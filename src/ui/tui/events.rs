@@ -4,7 +4,9 @@
 //! including CLI, TUI, and specialized casino widgets.
 
 use super::widgets::ChatMessage;
+#[cfg(feature = "sqlite")]
 use rusqlite::params;
+#[cfg(feature = "sqlite")]
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -49,6 +51,7 @@ pub struct StorageError {
     pub message: String,
 }
 
+#[cfg(feature = "sqlite")]
 impl From<rusqlite::Error> for StorageError {
     fn from(err: rusqlite::Error) -> Self {
         StorageError {

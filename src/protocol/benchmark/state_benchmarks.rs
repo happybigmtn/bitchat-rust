@@ -9,7 +9,7 @@ use crate::protocol::efficient_history::{EfficientGameHistory, HistoryConfig};
 // Removed unused import: EfficientBetResolver
 // Removed unused imports: BetType, CrapTokens, DiceRoll
 
-use super::{BenchmarkConfig, BenchmarkResults, MemoryBenchmarkStats};
+use crate::protocol::benchmark::{BenchmarkConfig, BenchmarkResults, MemoryBenchmarkStats};
 
 /// Benchmark history storage
 pub fn benchmark_history_storage(config: &BenchmarkConfig) -> Vec<BenchmarkResults> {

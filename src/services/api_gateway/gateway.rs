@@ -3,7 +3,8 @@
 //! Main gateway service that coordinates routing, authentication, and load balancing.
 
 use super::circuit_breaker::CircuitBreaker;
-use super::load_balancer::{LoadBalancer, LoadBalancingStrategy};
+use super::load_balancer::LoadBalancer;
+use super::LoadBalancingStrategy;
 use super::middleware::{AuthMiddleware, RateLimitMiddleware};
 use super::routing::Router;
 use super::*;

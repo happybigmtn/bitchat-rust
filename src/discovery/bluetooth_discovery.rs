@@ -5,7 +5,9 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::interval;
 
+#[cfg(feature = "bluetooth")]
 use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
+#[cfg(feature = "bluetooth")]
 use btleplug::platform::{Adapter, Manager};
 
 use crate::crypto::BitchatIdentity;

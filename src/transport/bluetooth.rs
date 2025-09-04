@@ -16,9 +16,10 @@ use crate::protocol::{BitchatPacket, PeerId};
 use crate::transport::{
     bounded_queue::{BoundedTransportEventQueue, BoundedTransportEventSender},
     crypto::{ConnectionPriority, TransportCrypto},
-    secure_gatt_server::SecureGattServer,
     Transport, TransportAddress, TransportEvent,
 };
+#[cfg(feature = "bluetooth")]
+use crate::transport::secure_gatt_server::SecureGattServer;
 
 /// BitCraps GATT Service UUID
 const BITCRAPS_SERVICE_UUID: Uuid = Uuid::from_u128(0x12345678_1234_5678_1234_567812345678);
@@ -1164,14 +1165,20 @@ impl BluetoothTransport {
     }
 
     /// Get GATT server statistics
+    #[cfg(feature = "bluetooth")]
     pub async fn get_gatt_server_stats(
         &self,
     ) -> Option<crate::transport::secure_gatt_server::GattServerStats> {
-        if *self.peripheral_mode_enabled.read().await {
-            Some(self.gatt_server.get_stats().await)
-        } else {
-            None
+        #[cfg(feature = "bluetooth")]
+        {
+            if *self.peripheral_mode_enabled.read().await {
+                Some(self.gatt_server.get_stats().await)
+            } else {
+                None
+            }
         }
+        #[cfg(not(feature = "bluetooth"))]
+        None
     }
 
     /// Enable/disable peripheral mode

@@ -244,7 +244,7 @@ impl PostgresBackend {
     }
     
     async fn initialize_schema(&self) -> Result<()> {
-        let schema_sql = include_str!("../migrations/postgresql/001_initial_schema.sql");
+        let schema_sql = include_str!("migrations/postgresql/001_initial_schema.sql");
         self.execute(schema_sql, &[]).await?;
         Ok(())
     }
