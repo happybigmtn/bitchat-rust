@@ -137,6 +137,7 @@ pub struct IntelligentTransportCoordinator {
     config: IntelligentCoordinatorConfig,
     transports: Arc<RwLock<HashMap<String, ManagedTransport>>>,
     peer_connections: Arc<RwLock<HashMap<PeerId, Vec<String>>>>, // peer_id -> transport_ids
+    #[cfg(feature = "nat-traversal")]
     nat_handler: Arc<NetworkHandler>,
     event_sender: mpsc::Sender<TransportEvent>,
     event_receiver: Arc<Mutex<mpsc::Receiver<TransportEvent>>>,
@@ -146,6 +147,7 @@ pub struct IntelligentTransportCoordinator {
 
 impl IntelligentTransportCoordinator {
     /// Create new intelligent transport coordinator
+    #[cfg(feature = "nat-traversal")]
     pub fn new(config: IntelligentCoordinatorConfig, nat_handler: NetworkHandler) -> Self {
         let (event_sender, event_receiver) = mpsc::channel(10000); // Critical path: high-capacity for coordination events
 
@@ -153,7 +155,24 @@ impl IntelligentTransportCoordinator {
             config,
             transports: Arc::new(RwLock::new(HashMap::new())),
             peer_connections: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(feature = "nat-traversal")]
             nat_handler: Arc::new(nat_handler),
+            event_sender,
+            event_receiver: Arc::new(Mutex::new(event_receiver)),
+            routing_table: Arc::new(RwLock::new(HashMap::new())),
+            performance_history: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Create new intelligent transport coordinator without NAT traversal
+    #[cfg(not(feature = "nat-traversal"))]
+    pub fn new(config: IntelligentCoordinatorConfig) -> Self {
+        let (event_sender, event_receiver) = mpsc::channel(10000); // Critical path: high-capacity for coordination events
+
+        Self {
+            config,
+            transports: Arc::new(RwLock::new(HashMap::new())),
+            peer_connections: Arc::new(RwLock::new(HashMap::new())),
             event_sender,
             event_receiver: Arc::new(Mutex::new(event_receiver)),
             routing_table: Arc::new(RwLock::new(HashMap::new())),
@@ -436,6 +455,7 @@ impl IntelligentTransportCoordinator {
         // Use dummy address for demonstration
         let target_address = "192.168.1.100:8080".parse().unwrap();
 
+        #[cfg(feature = "nat-traversal")]
         match self.nat_handler.setup_nat_traversal().await {
             Ok(_) => {
                 println!(
@@ -450,6 +470,9 @@ impl IntelligentTransportCoordinator {
             }
             Err(e) => Err(Error::Network(format!("NAT traversal failed: {}", e))),
         }
+        
+        #[cfg(not(feature = "nat-traversal"))]
+        Err(Error::Network("NAT traversal not enabled".to_string()))
     }
 
     /// Send message with intelligent routing
@@ -737,6 +760,7 @@ mod tests {
     use tokio::net::UdpSocket;
 
     #[tokio::test]
+    #[cfg(feature = "nat-traversal")]
     async fn test_transport_score_calculation() {
         let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let nat_handler = NetworkHandler::new(socket, None, "127.0.0.1:0".parse().unwrap());

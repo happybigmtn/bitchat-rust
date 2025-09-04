@@ -87,7 +87,7 @@ impl GameEngine for CrapsGameEngine {
             return Err(Error::GameError("Too many players".to_string()));
         }
         
-        let game_id = GameId::new();
+        let game_id = [0u8; 16];
         let game = CrapsGame::new(players);
         Ok((game_id, game))
     }

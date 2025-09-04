@@ -657,7 +657,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execution_context() {
-        let peer_id = PeerId::new([1u8; 32]);
+        let peer_id: PeerId = [1u8; 32];
         let instance_id = Uuid::new_v4();
         
         let context = WasmExecutionContext {

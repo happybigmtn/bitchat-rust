@@ -279,7 +279,7 @@ impl WasmMemoryManager {
 
         let allocations = self.allocations.clone();
         let memory_pools = self.memory_pools.clone();
-        let allocated_memory = self.allocated_memory.clone();
+        let allocated_memory = AtomicUsize::new(self.allocated_memory.load(Ordering::Relaxed));
         let gc_config = self.gc_config.clone();
 
         crate::utils::spawn_tracked("wasm_memory_gc", crate::utils::TaskType::Background, async move {

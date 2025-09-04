@@ -115,7 +115,7 @@ pub enum EntryType {
 }
 
 /// Sanctions authority/regime
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SanctionsAuthority {
     /// US Treasury OFAC
     OFAC,

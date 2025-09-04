@@ -130,7 +130,7 @@ impl AuditEvent {
 }
 
 /// Severity levels for audit events
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum AuditSeverity {
     /// Informational events
     Low = 1,
@@ -152,14 +152,18 @@ pub struct AuditLogEntry {
     /// The audit event
     pub event: AuditEvent,
     /// Cryptographic signature
+    #[serde(with = "serde_bytes")]
     pub signature: [u8; 64],
     /// Hash of previous entry (for chain integrity)
+    #[serde(with = "serde_bytes")]
     pub previous_hash: [u8; 32],
     /// Hash of this entry
+    #[serde(with = "serde_bytes")]
     pub entry_hash: [u8; 32],
     /// When entry was created
     pub created_at: DateTime<Utc>,
     /// Audit logger identity
+    #[serde(with = "serde_bytes")]
     pub logger_id: [u8; 32],
 }
 

@@ -195,6 +195,34 @@ impl ApiGateway {
             rate_limit_override: None,
             timeout_override: None,
         }).await?;
+
+        // Quorum certificate (proof) endpoint
+        self.add_route(RouteConfig {
+            path: "/api/v1/consensus/qc".to_string(),
+            service: "consensus".to_string(),
+            methods: vec!["GET".to_string()],
+            auth_required: false,
+            rate_limit_override: None,
+            timeout_override: None,
+        }).await?;
+
+        // Admin validator management endpoints (restricted via auth middleware)
+        self.add_route(RouteConfig {
+            path: "/api/v1/consensus/admin/add-validator".to_string(),
+            service: "consensus".to_string(),
+            methods: vec!["POST".to_string()],
+            auth_required: true,
+            rate_limit_override: Some(50),
+            timeout_override: None,
+        }).await?;
+        self.add_route(RouteConfig {
+            path: "/api/v1/consensus/admin/remove-validator".to_string(),
+            service: "consensus".to_string(),
+            methods: vec!["POST".to_string()],
+            auth_required: true,
+            rate_limit_override: Some(50),
+            timeout_override: None,
+        }).await?;
         
         Ok(())
     }

@@ -421,7 +421,7 @@ mod tests {
         let config = ConsensusConfig::default();
         let detector = ByzantineDetector::new(config);
         
-        let validator = PeerId::new();
+        let validator = [0u8; 32];
         let proposal_id = TransactionId::default();
         let round = 1;
         
@@ -464,7 +464,7 @@ mod tests {
         let config = ConsensusConfig::default();
         let detector = ByzantineDetector::new(config);
         
-        let validator = PeerId::new();
+        let validator = [0u8; 32];
         
         // Record multiple invalid messages
         for _ in 0..15 {

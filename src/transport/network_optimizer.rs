@@ -11,8 +11,11 @@ use std::sync::{Arc, atomic::{AtomicUsize, AtomicU64, Ordering}};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::net::SocketAddr;
+use std::future::Future;
+use std::pin::Pin;
 use tokio::sync::{RwLock, Mutex, Semaphore};
 use tokio::time::{sleep, interval};
+use crate::optimization::connection_pool_optimizer::{AdaptiveConnectionPool, ConnectionPoolConfig};
 use parking_lot::RwLock as ParkingRwLock;
 use serde::{Serialize, Deserialize};
 use tracing::{info, warn, error, debug};
@@ -23,10 +26,13 @@ use crate::monitoring::metrics::METRICS;
 use crate::utils::LoopBudget;
 use crate::utils::task_tracker::{spawn_tracked, TaskType};
 
+type ConnectionFactory = fn() -> Pin<Box<dyn Future<Output = Result<SocketAddr, Box<dyn std::error::Error + Send + Sync>>> + Send>>;
+type ConnectionFuture = Pin<Box<dyn Future<Output = Result<SocketAddr, Box<dyn std::error::Error + Send + Sync>>> + Send>>;
+
 /// Network optimization engine
 pub struct NetworkOptimizer {
     /// Connection pool with adaptive sizing
-    connection_pool: Arc<ConnectionPool>,
+    connection_pool: Arc<AdaptiveConnectionPool<SocketAddr, ConnectionFactory, ConnectionFuture>>,
     /// Load balancer for distributing connections
     load_balancer: Arc<LoadBalancer>,
     /// Protocol optimizer for message efficiency
@@ -43,7 +49,20 @@ pub struct NetworkOptimizer {
 
 impl NetworkOptimizer {
     pub fn new(config: NetworkOptimizerConfig) -> Self {
-        let connection_pool = Arc::new(ConnectionPool::new(config.max_connections));
+        let connection_pool = Arc::new(AdaptiveConnectionPool::new(
+            ConnectionPoolConfig {
+                min_connections: 1,
+                max_connections: config.max_connections,
+                idle_timeout: Duration::from_secs(300),
+                validation_timeout: Duration::from_secs(5),
+                health_check_interval: Duration::from_secs(30),
+                expansion_rate: 1.0,
+                contraction_rate: 0.5,
+                load_threshold: 0.8,
+                health_threshold: 0.9,
+            },
+            || Box::pin(futures::future::ready(Ok("127.0.0.1:8080".parse().unwrap()))),
+        ));
 
         Self {
             connection_pool: Arc::clone(&connection_pool),
@@ -501,8 +520,11 @@ impl BandwidthManager {
                 budget.consume(1);
 
                 // Update current throughput measurement
-                let bytes_sent = METRICS.network.bytes_sent.load(Ordering::Relaxed);
-                current_throughput.store(bytes_sent, Ordering::Relaxed);
+                #[cfg(feature = "monitoring")]
+                {
+                    let bytes_sent = METRICS.network.bytes_sent.load(Ordering::Relaxed);
+                    current_throughput.store(bytes_sent, Ordering::Relaxed);
+                }
             }
         });
     }
@@ -562,7 +584,10 @@ impl LatencyOptimizer {
                 budget.consume(1);
 
                 // Collect latency sample
+                #[cfg(feature = "monitoring")]
                 let current_latency = METRICS.consensus.average_latency_ms();
+                #[cfg(not(feature = "monitoring"))]
+                let current_latency = 0.0;
                 let mut samples = latency_samples.write().await;
                 if samples.len() >= 100 {
                     samples.pop_front();
@@ -807,7 +832,10 @@ impl NetworkStats {
 
     pub async fn update(&mut self) {
         // Update statistics from global metrics
+        #[cfg(feature = "monitoring")]
         let active_conns = METRICS.network.active_connections.load(Ordering::Relaxed);
+        #[cfg(not(feature = "monitoring"))]
+        let active_conns = 0;
         let total_conns = 1000; // Example capacity
         self.connection_utilization_percent = (active_conns as f64 / total_conns as f64) * 100.0;
 

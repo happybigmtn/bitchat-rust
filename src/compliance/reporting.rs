@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
 /// Types of regulatory reports
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ReportType {
     /// Suspicious Activity Report
     SAR,

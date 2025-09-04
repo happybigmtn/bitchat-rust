@@ -487,6 +487,7 @@ pub struct KademliaNode {
     storage: Arc<RwLock<HashMap<Vec<u8>, StoredValue>>>,
     pending_queries: Arc<RwLock<HashMap<u64, oneshot::Sender<KademliaResponse>>>>,
     query_counter: Arc<RwLock<u64>>,
+    #[cfg(feature = "nat-traversal")]
     network_handler: Arc<NetworkHandler>,
     event_sender: mpsc::Sender<KademliaEvent>,
 }
@@ -592,6 +593,7 @@ impl KademliaNode {
             Err(_) => None, // TCP fallback not available
         };
 
+        #[cfg(feature = "nat-traversal")]
         let network_handler =
             Arc::new(NetworkHandler::new(udp_socket, tcp_listener, local_address));
 
@@ -605,6 +607,7 @@ impl KademliaNode {
             storage: Arc::new(RwLock::new(HashMap::new())),
             pending_queries: Arc::new(RwLock::new(HashMap::new())),
             query_counter: Arc::new(RwLock::new(0)),
+            #[cfg(feature = "nat-traversal")]
             network_handler,
             event_sender,
         };
@@ -615,12 +618,16 @@ impl KademliaNode {
     /// Start the Kademlia node and begin listening for messages
     pub async fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
         // Perform NAT traversal setup
+        #[cfg(feature = "nat-traversal")]
         self.network_handler.setup_nat_traversal().await?;
 
         self.start_message_handler().await?;
         self.start_maintenance_tasks().await?;
 
+        #[cfg(feature = "nat-traversal")]
         let public_addr = self.network_handler.public_address.read().await;
+        #[cfg(not(feature = "nat-traversal"))]
+        let public_addr = None;
         println!(
             "Kademlia node started on {} (public: {:?})",
             self.local_address, *public_addr
@@ -629,6 +636,7 @@ impl KademliaNode {
     }
 
     /// Send message with reliable transport and retransmission
+    #[cfg(feature = "nat-traversal")]
     pub async fn send_reliable(
         &self,
         dest: SocketAddr,
@@ -652,6 +660,7 @@ impl KademliaNode {
         let timeout = Duration::from_secs(10); // Longer timeout for reliable transport
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(response)) => {
+                #[cfg(feature = "nat-traversal")]
                 self.network_handler.acknowledge_message(message_id).await;
                 Ok(response)
             }
@@ -1079,10 +1088,14 @@ impl KademliaNode {
         let mut message_data = bincode::serialize(&message)?;
         message_data.splice(0..0, query_id.to_be_bytes());
 
+        #[cfg(feature = "nat-traversal")]
         self.network_handler
             .udp_socket
             .send_to(&message_data, address)
             .await?;
+            
+        #[cfg(not(feature = "nat-traversal"))]
+        return Err("NAT traversal feature not enabled".into());
 
         // Wait for response with timeout
         let timeout = Duration::from_secs(5);
@@ -1112,7 +1125,10 @@ impl KademliaNode {
 
     /// Start message handler
     async fn start_message_handler(&self) -> Result<(), Box<dyn std::error::Error>> {
+        #[cfg(feature = "nat-traversal")]
         let udp_socket = self.network_handler.udp_socket.clone();
+        #[cfg(not(feature = "nat-traversal"))]
+        let udp_socket = tokio::net::UdpSocket::bind(self.local_address).await?;
         let routing_table = self.routing_table.clone();
         let storage = self.storage.clone();
         let pending_queries = self.pending_queries.clone();
@@ -1421,6 +1437,7 @@ impl KademliaNode {
                 let mut full_data = query_id.to_be_bytes().to_vec();
                 full_data.extend_from_slice(&message_data);
 
+                #[cfg(feature = "nat-traversal")]
                 self.network_handler
                     .udp_socket
                     .send_to(&full_data, addr)

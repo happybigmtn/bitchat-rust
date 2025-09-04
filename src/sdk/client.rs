@@ -15,6 +15,7 @@ use crate::gaming::{
     MultiGameFramework, GameInfo, CreateSessionRequest, GameSessionConfig,
     PlayerJoinData, GameAction, GameActionResult, SessionSummary, GameFrameworkEvent
 };
+#[cfg(feature = "monitoring")]
 use crate::monitoring::metrics::METRICS;
 use crate::mesh::service::MeshService;
 use crate::token::{TokenLedger, TransactionType, Transaction};

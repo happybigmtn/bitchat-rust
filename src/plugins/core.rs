@@ -17,6 +17,10 @@ use uuid::Uuid;
 use crate::gaming::{GameAction, GameActionResult, GameSession};
 use rand::{CryptoRng, RngCore};
 
+/// Combined trait for cryptographic random number generators
+pub trait CryptoRngCore: CryptoRng + RngCore {}
+impl<T: CryptoRng + RngCore> CryptoRngCore for T {}
+
 /// Result type for plugin operations
 pub type PluginResult<T> = Result<T, PluginError>;
 
@@ -120,7 +124,7 @@ pub struct PluginDependency {
 }
 
 /// Types of casino games supported
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum GameType {
     Blackjack,
     Poker,
@@ -228,7 +232,7 @@ pub struct PluginManager {
     /// Statistics
     stats: Arc<PluginManagerStats>,
     /// Random number generator
-    rng: Arc<dyn CryptoRng + RngCore + Send + Sync>,
+    rng: Arc<dyn CryptoRngCore + Send + Sync>,
 }
 
 impl PluginManager {

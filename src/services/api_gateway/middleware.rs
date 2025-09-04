@@ -238,7 +238,7 @@ mod tests {
     async fn test_auth_middleware_api_key() {
         let mut api_keys = std::collections::HashMap::new();
         api_keys.insert("test-key".to_string(), ApiKeyInfo {
-            peer_id: PeerId::new(),
+            peer_id: [0u8; 32],
             permissions: vec!["read".to_string()],
             rate_limit_override: None,
             expires_at: None,

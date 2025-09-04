@@ -295,16 +295,16 @@ impl MicroService for GameEngineServiceWrapper {
 
 /// Wrapper for ConsensusService to implement MicroService trait
 pub struct ConsensusServiceWrapper {
-    service: consensus::ConsensusService,
+    service: std::sync::Arc<tokio::sync::RwLock<consensus::ConsensusService>>,
     address: SocketAddr,
 }
 
 impl ConsensusServiceWrapper {
     pub fn new(config: consensus::ConsensusConfig) -> Self {
         let address = "127.0.0.1:8082".parse().unwrap(); // Default address
-        let peer_id = crate::protocol::PeerId::new();
+        let peer_id: crate::protocol::PeerId = [0u8; 32];
         let service = consensus::ConsensusService::new(config, peer_id);
-        
+        let service = std::sync::Arc::new(tokio::sync::RwLock::new(service));
         Self { service, address }
     }
 }
@@ -320,16 +320,23 @@ impl MicroService for ConsensusServiceWrapper {
     }
     
     async fn start(&mut self) -> Result<()> {
-        self.service.start().await
+        use crate::services::consensus::http::start_http;
+        {
+            let mut svc = self.service.write().await;
+            svc.start().await?;
+        }
+        start_http(self.service.clone(), self.address).await?;
+        Ok(())
     }
     
     async fn stop(&mut self) -> Result<()> {
-        self.service.stop().await
+        let mut svc = self.service.write().await;
+        svc.stop().await
     }
     
     async fn health_check(&self) -> Result<ServiceHealth> {
         // Check if service is responding to status requests
-        match self.service.get_status(consensus::types::StatusRequest { proposal_id: None }).await {
+        match self.service.read().await.get_status(consensus::types::StatusRequest { proposal_id: None }).await {
             Ok(_) => Ok(ServiceHealth::Healthy),
             Err(_) => Ok(ServiceHealth::Unhealthy),
         }

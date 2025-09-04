@@ -24,7 +24,7 @@ pub struct BlackjackPlugin {
     config: Arc<RwLock<HashMap<String, serde_json::Value>>>,
     error_handler: PluginErrorHandler,
     statistics: BasePluginStatistics,
-    rng: Arc<dyn CryptoRng + RngCore + Send + Sync>,
+    rng: Arc<dyn crate::plugins::core::CryptoRngCore + Send + Sync>,
 }
 
 impl BlackjackPlugin {
@@ -556,7 +556,7 @@ struct BlackjackGameSession {
 
 impl BlackjackGameSession {
     /// Shuffle a new deck
-    async fn shuffle_deck(&mut self, rng: &Arc<dyn CryptoRng + RngCore + Send + Sync>) -> PluginResult<()> {
+    async fn shuffle_deck(&mut self, rng: &Arc<dyn RngCore + CryptoRng + Send + Sync>) -> PluginResult<()> {
         self.deck.clear();
         
         // Create standard 52-card deck (or multiple decks)

@@ -126,6 +126,19 @@ pub enum PBFTMessage {
     },
 }
 
+/// Quorum certificate produced on commit
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuorumCertificate {
+    /// View in which the batch was committed
+    pub view: u64,
+    /// Sequence number committed
+    pub sequence: u64,
+    /// Committed batch hash
+    pub batch_hash: Hash256,
+    /// Commit signatures from validators reaching the threshold
+    pub commit_signatures: Vec<(PeerId, Signature)>,
+}
+
 /// Batch of operations for improved throughput
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationBatch {
@@ -280,6 +293,8 @@ struct ConsensusInstance {
     created_at: Instant,
     /// Timeout multiplier
     timeout_multiplier: f64,
+    /// Quorum certificate once committed
+    quorum_certificate: Option<QuorumCertificate>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -463,6 +478,22 @@ impl OptimizedPBFTEngine {
             last_checkpoint: Atomic::new(0),
             metrics: Arc::new(PBFTMetrics::default()),
         })
+    }
+
+    /// Create an `OptimizedPBFTConfig` from optional tuning values
+    #[cfg(feature = "scale")]
+    pub fn config_from_tuning(
+        batch_size: Option<usize>,
+        pipeline_depth: Option<usize>,
+        base_timeout_ms: Option<u64>,
+        view_timeout_ms: Option<u64>,
+    ) -> OptimizedPBFTConfig {
+        let mut cfg = OptimizedPBFTConfig::default();
+        if let Some(b) = batch_size { cfg.batch_size = b; }
+        if let Some(p) = pipeline_depth { cfg.pipeline_depth = p; }
+        if let Some(t) = base_timeout_ms { cfg.base_timeout = Duration::from_millis(t); }
+        if let Some(v) = view_timeout_ms { cfg.view_change_timeout = Duration::from_millis(v); }
+        cfg
     }
 
     /// Start the PBFT engine
@@ -651,6 +682,7 @@ impl OptimizedPBFTEngine {
             commit_messages: HashMap::new(),
             created_at: Instant::now(),
             timeout_multiplier: 1.0,
+            quorum_certificate: None,
         };
 
         // Add to instances
@@ -843,6 +875,7 @@ impl OptimizedPBFTEngine {
             commit_messages: HashMap::new(),
             created_at: Instant::now(),
             timeout_multiplier: 1.0,
+            quorum_certificate: None,
         };
 
         instances_guard.insert(sequence, instance);
@@ -946,6 +979,20 @@ impl OptimizedPBFTEngine {
             if let Some(batch) = &instance.batch {
                 Self::execute_batch(batch).await?;
             }
+
+            // Build quorum certificate for client verification
+            if let Some(bh) = instance.batch_hash {
+                let mut sigs: Vec<(PeerId, Signature)> = Vec::with_capacity(instance.commit_messages.len());
+                for (peer, sig) in instance.commit_messages.iter() {
+                    sigs.push((*peer, sig.clone()));
+                }
+                instance.quorum_certificate = Some(QuorumCertificate {
+                    view,
+                    sequence,
+                    batch_hash: bh,
+                    commit_signatures: sigs,
+                });
+            }
         }
 
         Ok(())
@@ -1033,6 +1080,14 @@ impl OptimizedPBFTEngine {
         }
 
         Ok(is_valid)
+    }
+
+    /// Get quorum certificate for a committed sequence if available
+    pub fn get_quorum_certificate(&self, sequence: u64) -> Option<QuorumCertificate> {
+        let instances = self.instances.read();
+        instances
+            .get(&sequence)
+            .and_then(|inst| inst.quorum_certificate.clone())
     }
 
     /// Start timeout monitor

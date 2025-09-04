@@ -887,6 +887,21 @@ impl CrapTokens {
     pub fn to_crap(&self) -> f64 {
         self.0 as f64 / 1_000_000.0
     }
+
+    /// Create CrapTokens with zero value
+    pub fn zero() -> Self {
+        Self::ZERO
+    }
+
+    /// Create CrapTokens from inner value
+    pub fn from_inner(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Get inner value
+    pub fn inner(&self) -> u64 {
+        self.0
+    }
 }
 
 impl From<u64> for CrapTokens {

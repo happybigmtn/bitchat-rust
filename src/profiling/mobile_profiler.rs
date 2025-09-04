@@ -403,10 +403,15 @@ impl ThermalMetrics {
         self.samples
             .iter()
             .filter(|s| {
-                matches!(
-                    s.thermal_state,
-                    ThermalState::Warning | ThermalState::Critical
-                )
+                #[cfg(any(feature = "android", feature = "uniffi"))]
+                {
+                    matches!(
+                        s.thermal_state,
+                        ThermalState::Warning | ThermalState::Critical
+                    )
+                }
+                #[cfg(not(any(feature = "android", feature = "uniffi")))]
+                false
             })
             .count() as u32
     }
@@ -431,6 +436,7 @@ pub struct ThermalSample {
     pub cpu_temperature: f32,     // Celsius
     pub battery_temperature: f32, // Celsius
     pub ambient_temperature: f32, // Celsius
+    #[cfg(any(feature = "android", feature = "uniffi"))]
     pub thermal_state: ThermalState,
     pub timestamp: Instant,
 }

@@ -832,7 +832,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_plugin_instance_lifecycle() {
-        let peer_id = PeerId::new([1u8; 32]);
+        let peer_id: PeerId = [1u8; 32];
         let instance = PluginInstance {
             id: Uuid::new_v4(),
             plugin_name: "test_plugin".to_string(),

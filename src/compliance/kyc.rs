@@ -106,10 +106,13 @@ impl AgeVerificationResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZkAgeProof {
     /// Cryptographic commitment to age range
+    #[serde(with = "serde_bytes")]
     pub age_range_commitment: [u8; 32],
     /// Proof that committed age is above threshold
+    #[serde(with = "serde_bytes")]
     pub threshold_proof: [u8; 64],
     /// Public parameters for verification
+    #[serde(with = "serde_bytes")]
     pub public_params: [u8; 32],
 }
 

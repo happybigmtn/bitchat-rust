@@ -508,7 +508,8 @@ impl MemoryOptimizer {
                     
                     // Keep bounded
                     if stats_vec.len() > 1000 {
-                        stats_vec.drain(0..stats_vec.len() / 2);
+                        let drain_to = stats_vec.len() / 2;
+                        stats_vec.drain(0..drain_to);
                     }
                 }
                 

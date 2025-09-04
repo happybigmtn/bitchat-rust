@@ -634,7 +634,7 @@ impl DeterministicStateMachine {
         resolutions: &[BetResolution],
     ) -> Result<()> {
         for resolution in resolutions {
-            if let Some(player_bets) = state.active_bets.get_mut(&resolution.player) {
+            if let Some(player_bets) = state.active_bets.get_mut(&resolution.player()) {
                 // Find and resolve the bet
                 for (index, bet) in player_bets.iter().enumerate() {
                     if bet.bet_type == resolution.bet_type {
@@ -642,17 +642,17 @@ impl DeterministicStateMachine {
                         let payout = self.calculate_payout(bet, resolution)?;
                         
                         // Update player balance
-                        let current_balance = state.player_balances.get(&resolution.player)
+                        let current_balance = state.player_balances.get(&resolution.player())
                             .copied()
                             .unwrap_or(CrapTokens::new_unchecked(0));
                         
                         let new_balance = token_arithmetic::safe_add_tokens(current_balance, payout)?;
-                        state.player_balances.insert(resolution.player, new_balance);
-                        balance_changes.insert(resolution.player, new_balance);
+                        state.player_balances.insert(resolution.player(), new_balance);
+                        balance_changes.insert(resolution.player(), new_balance);
 
                         // Mark bet as resolved
                         changes.bet_changes.push(BetChange::Resolved {
-                            player: resolution.player,
+                            player: resolution.player(),
                             bet_index: index,
                             resolution: resolution.clone(),
                         });
@@ -666,7 +666,7 @@ impl DeterministicStateMachine {
         // Remove resolved bets
         for (player_id, player_bets) in state.active_bets.iter_mut() {
             player_bets.retain(|bet| {
-                !resolutions.iter().any(|r| r.player == *player_id && r.bet_type == bet.bet_type)
+                !resolutions.iter().any(|r| r.player() == *player_id && r.bet_type() == bet.bet_type)
             });
         }
 
@@ -679,7 +679,7 @@ impl DeterministicStateMachine {
         // craps rules and odds for each bet type
         
         // For now, simple win/lose logic
-        if resolution.won {
+        if matches!(resolution, bet_types::BetResolution::Won { .. }) {
             // Return bet amount plus winnings based on odds
             let multiplier = self.get_bet_multiplier(&bet.bet_type);
             let winnings = CrapTokens::new_unchecked(

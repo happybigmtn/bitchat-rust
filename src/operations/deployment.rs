@@ -11,6 +11,7 @@ use serde::{Serialize, Deserialize};
 use tracing::{info, warn, error, debug};
 use uuid::Uuid;
 
+#[cfg(feature = "monitoring")]
 use crate::monitoring::metrics::METRICS;
 
 /// Deployment manager for automated deployments

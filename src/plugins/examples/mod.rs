@@ -123,10 +123,19 @@ pub struct PlayerState {
 }
 
 /// Plugin error handling utilities
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PluginErrorHandler {
     error_count: std::sync::atomic::AtomicU64,
     warnings: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl Clone for PluginErrorHandler {
+    fn clone(&self) -> Self {
+        Self {
+            error_count: std::sync::atomic::AtomicU64::new(self.error_count.load(std::sync::atomic::Ordering::Relaxed)),
+            warnings: std::sync::Arc::clone(&self.warnings),
+        }
+    }
 }
 
 impl PluginErrorHandler {

@@ -149,6 +149,9 @@ pub enum Error {
     #[error("Security error: {0}")]
     Security(String),
 
+    #[error("Security violation: {0}")]
+    SecurityViolation(String),
+
     #[error("Not found: {0}")]
     NotFound(String),
 
@@ -170,10 +173,105 @@ pub enum Error {
 
     #[error("GPU error: {0}")]
     GpuError(String),
+
+    // Additional missing variants referenced throughout the codebase
+    #[error("Configuration error: {0}")]
+    Configuration(String),
+
+    #[error("Resource exhausted: {0}")]
+    ResourceExhausted(String),
+
+    #[error("Internal error: {0}")]
+    InternalError(String),
+
+    #[error("Not implemented: {0}")]
+    NotImplemented(String),
+
+    #[error("Decompression too large: {0}")]
+    DecompressionTooLarge(String),
+
+    #[error("Invalid operation: {0}")]
+    InvalidOperation(String),
+
+    #[error("Invalid chain: {0}")]
+    InvalidChain(String),
+
+    #[error("Chain error: {0}")]
+    ChainError(String),
+
+    #[error("Resource limits exceeded: {0}")]
+    ResourceLimits(String),
+
+    #[error("Key error: {0}")]
+    KeyError(String),
+
+    #[error("Corrupt state: {0}")]
+    CorruptState(String),
+
+    #[error("Operation failed: {0}")]
+    OperationFailed(String),
+
+    #[error("Timeout: {0}")]
+    Timeout(String),
+
+    #[error("Size limit exceeded: {0}")]
+    SizeLimitExceeded(String),
+
+    #[error("Rate limit exceeded: {0}")]
+    RateLimitExceeded(String),
+
+    #[error("State error: {0}")]
+    StateError(String),
+
+    // Additional variants found in compilation errors
+    #[error("Unimplemented: {0}")]
+    Unimplemented(String),
+
+    #[error("Parsing error: {0}")]
+    Parsing(String),
+
+    #[error("Dependency error: {0}")]
+    Dependency(String),
+
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
+
+    #[error("Consensus error: {0}")]
+    ConsensusError(String),
+
+    #[error("Config error: {0}")]
+    ConfigError(String),
+
+    #[error("Invalid configuration: {0}")]
+    InvalidConfiguration(String),
+
+    #[error("Invalid roll: {0}")]
+    InvalidRoll(String),
+
+    #[error("Duplicate peer: {0}")]
+    DuplicatePeer(String),
 }
 
 impl From<std::ffi::NulError> for Error {
     fn from(err: std::ffi::NulError) -> Self {
         Error::Platform(format!("Null byte in C string: {}", err))
+    }
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(err: serde_json::Error) -> Self {
+        Error::SerializationError(format!("JSON error: {}", err))
+    }
+}
+
+impl From<reqwest::Error> for Error {
+    fn from(err: reqwest::Error) -> Self {
+        Error::Network(format!("HTTP request error: {}", err))
+    }
+}
+
+impl From<http::header::InvalidHeaderValue> for Error {
+    fn from(err: http::header::InvalidHeaderValue) -> Self {
+        Error::Network(format!("Invalid header value: {}", err))
     }
 }

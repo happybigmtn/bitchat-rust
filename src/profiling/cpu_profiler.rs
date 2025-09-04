@@ -10,6 +10,7 @@ use crate::error::BitCrapsError;
 
 /// CPU performance profiler with thermal monitoring
 pub struct CpuProfiler {
+    #[cfg(feature = "monitoring")]
     system: Arc<RwLock<System>>,
     metrics: Arc<RwLock<CpuMetrics>>,
     profiling_active: Arc<RwLock<bool>>,
@@ -19,10 +20,13 @@ pub struct CpuProfiler {
 
 impl CpuProfiler {
     pub fn new() -> Result<Self, BitCrapsError> {
+        #[cfg(feature = "monitoring")]
         let mut system = System::new();
+        #[cfg(feature = "monitoring")]
         system.refresh_cpu();
 
         Ok(Self {
+            #[cfg(feature = "monitoring")]
             system: Arc::new(RwLock::new(system)),
             metrics: Arc::new(RwLock::new(CpuMetrics::new())),
             profiling_active: Arc::new(RwLock::new(false)),

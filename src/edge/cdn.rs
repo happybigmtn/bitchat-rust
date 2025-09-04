@@ -24,6 +24,7 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 use url::Url;
 use uuid::Uuid;
+use chrono::Timelike;
 
 /// CDN provider types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -502,8 +503,8 @@ impl CdnManager {
             .post(&url)
             .headers(headers)
             .body(content.to_vec())
-            .send()
             .timeout(Duration::from_secs(30))
+            .send()
             .await?
             .error_for_status()?;
         
@@ -547,8 +548,8 @@ impl CdnManager {
             .put(&url)
             .headers(headers)
             .body(content.to_vec())
-            .send()
             .timeout(Duration::from_secs(30))
+            .send()
             .await?
             .error_for_status()?;
         
@@ -609,8 +610,8 @@ impl CdnManager {
                     .post(&url)
                     .headers(headers)
                     .json(&payload)
-                    .send()
                     .timeout(Duration::from_secs(10))
+                    .send()
                     .await?
                     .error_for_status()?;
             }
@@ -626,8 +627,8 @@ impl CdnManager {
                 self.client
                     .post(&url)
                     .headers(headers)
-                    .send()
                     .timeout(Duration::from_secs(10))
+                    .send()
                     .await?
                     .error_for_status()?;
             }
@@ -657,8 +658,8 @@ impl CdnManager {
                     .put(&url)
                     .headers(headers)
                     .body(worker.wasm_code.clone())
-                    .send()
                     .timeout(Duration::from_secs(30))
+                    .send()
                     .await?
                     .error_for_status()?;
             }
@@ -691,8 +692,8 @@ impl CdnManager {
                 self.client
                     .delete(&url)
                     .headers(headers)
-                    .send()
                     .timeout(Duration::from_secs(10))
+                    .send()
                     .await?
                     .error_for_status()?;
             }

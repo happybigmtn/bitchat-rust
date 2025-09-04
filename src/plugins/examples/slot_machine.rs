@@ -24,7 +24,7 @@ pub struct SlotMachinePlugin {
     config: Arc<RwLock<HashMap<String, serde_json::Value>>>,
     error_handler: PluginErrorHandler,
     statistics: BasePluginStatistics,
-    rng: Arc<dyn CryptoRng + RngCore + Send + Sync>,
+    rng: Arc<dyn RngCore + Send + Sync>,
 }
 
 impl SlotMachinePlugin {

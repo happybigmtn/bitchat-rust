@@ -717,7 +717,7 @@ impl MecManager {
         if let Some(platform) = platforms.get(&current_platform) {
             // Check if UE is still within coverage
             let distance = platform.location.distance_km(&ue_info.location);
-            if distance > platform.coverage_radius_km {
+            if distance > platform.coverage_radius_km as f64 {
                 return Ok(true);
             }
 

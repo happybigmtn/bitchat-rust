@@ -600,7 +600,7 @@ mod tests {
         let host_functions = WasmHostFunctions::new();
         let context = HostFunctionContextBuilder::new()
             .caller_id(Uuid::new_v4())
-            .caller_peer(PeerId::new([1u8; 32]))
+            .caller_peer([1u8; 32])
             .permissions(vec!["game_read".to_string()])
             .build()
             .unwrap();
@@ -623,7 +623,7 @@ mod tests {
         let host_functions = WasmHostFunctions::new();
         let context = HostFunctionContextBuilder::new()
             .caller_id(Uuid::new_v4())
-            .caller_peer(PeerId::new([1u8; 32]))
+            .caller_peer([1u8; 32])
             .permissions(vec![]) // No permissions
             .build()
             .unwrap();
@@ -645,7 +645,7 @@ mod tests {
 
         let context = HostFunctionContextBuilder::new()
             .caller_id(Uuid::new_v4())
-            .caller_peer(PeerId::new([1u8; 32]))
+            .caller_peer([1u8; 32])
             .permissions(vec!["game_write".to_string()])
             .build()
             .unwrap();
@@ -668,7 +668,7 @@ mod tests {
         let host_functions = WasmHostFunctions::new();
         let context = HostFunctionContextBuilder::new()
             .caller_id(Uuid::new_v4())
-            .caller_peer(PeerId::new([1u8; 32]))
+            .caller_peer([1u8; 32])
             .build()
             .unwrap();
 
@@ -694,7 +694,7 @@ mod tests {
         let host_functions = WasmHostFunctions::new();
         let context = HostFunctionContextBuilder::new()
             .caller_id(Uuid::new_v4())
-            .caller_peer(PeerId::new([1u8; 32]))
+            .caller_peer([1u8; 32])
             .permissions(vec!["crypto".to_string()])
             .build()
             .unwrap();

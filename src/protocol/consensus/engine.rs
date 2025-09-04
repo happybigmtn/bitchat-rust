@@ -791,7 +791,7 @@ impl ConsensusEngine {
             }
 
             GameOperation::CommitRandomness {
-                player: _,
+                player,
                 round_id: _,
                 commitment,
             } => {
@@ -799,16 +799,23 @@ impl ConsensusEngine {
                 if commitment.iter().all(|&b| b == 0) {
                     return Ok(false);
                 }
+                // Restrict randomness commits to consensus participants (validators)
+                if !self.participants.contains(player) {
+                    return Ok(false);
+                }
                 Ok(true)
             }
 
             GameOperation::RevealRandomness {
-                player: _,
+                player,
                 round_id: _,
                 nonce,
             } => {
                 // Validate nonce is not all zeros (weak randomness)
                 if nonce.iter().all(|&b| b == 0) {
+                    return Ok(false);
+                }
+                if !self.participants.contains(player) {
                     return Ok(false);
                 }
                 Ok(true)

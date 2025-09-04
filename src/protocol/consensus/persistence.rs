@@ -8,6 +8,8 @@ use crate::protocol::{Hash256, PeerId};
 #[cfg(feature = "sqlite")]
 use rusqlite::{params, Connection, Result as SqlResult};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "sqlite")]
+use tokio_rusqlite::params;
 use std::fs;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -71,6 +73,7 @@ pub enum ConsensusOperation {
 /// Consensus persistence manager
 pub struct ConsensusPersistence {
     /// SQLite database connection
+    #[cfg(feature = "sqlite")]
     db: Arc<Mutex<Connection>>,
 
     /// Write-ahead log
@@ -85,6 +88,7 @@ pub struct ConsensusPersistence {
 
 impl ConsensusPersistence {
     /// Create or open consensus persistence
+    #[cfg(feature = "sqlite")]
     pub fn new<P: AsRef<Path>>(storage_path: P) -> Result<Self> {
         let storage_path = storage_path.as_ref().to_path_buf();
 
@@ -120,6 +124,7 @@ impl ConsensusPersistence {
     }
 
     /// Create database tables
+    #[cfg(feature = "sqlite")]
     fn create_tables(db: &Connection) -> Result<()> {
         // Consensus state table
         db.execute(
@@ -175,6 +180,7 @@ impl ConsensusPersistence {
     }
 
     /// Get maximum sequence number
+    #[cfg(feature = "sqlite")]
     fn get_max_sequence(db: &Connection) -> Result<u64> {
         let result: SqlResult<i64> =
             db.query_row("SELECT MAX(round_id) FROM consensus_state", [], |row| {
@@ -185,6 +191,7 @@ impl ConsensusPersistence {
     }
 
     /// Store consensus state
+    #[cfg(feature = "sqlite")]
     pub fn store_consensus_state(
         &self,
         round_id: u64,
@@ -243,6 +250,7 @@ impl ConsensusPersistence {
     }
 
     /// Load consensus state
+    #[cfg(feature = "sqlite")]
     pub fn load_consensus_state(&self, round_id: u64) -> Result<Option<Vec<u8>>> {
         let db = self.db.lock().map_err(|e| {
             rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
@@ -265,6 +273,7 @@ impl ConsensusPersistence {
     }
 
     /// Get latest consensus state
+    #[cfg(feature = "sqlite")]
     pub fn load_latest_state(&self) -> Result<Option<(u64, Vec<u8>)>> {
         let db = self.db.lock().map_err(|e| {
             rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
@@ -288,6 +297,7 @@ impl ConsensusPersistence {
     }
 
     /// Store consensus vote
+    #[cfg(feature = "sqlite")]
     pub fn store_vote(
         &self,
         round_id: u64,
@@ -342,6 +352,7 @@ impl ConsensusPersistence {
     }
 
     /// Get votes for a round
+    #[cfg(feature = "sqlite")]
     pub fn get_votes(&self, round_id: u64) -> Result<Vec<(PeerId, Vec<u8>, [u8; 64])>> {
         let db = self.db.lock().map_err(|e| {
             rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
@@ -379,6 +390,7 @@ impl ConsensusPersistence {
     }
 
     /// Create checkpoint
+    #[cfg(feature = "sqlite")]
     pub fn create_checkpoint(&self, round_id: u64) -> Result<()> {
         let state = self
             .load_consensus_state(round_id)?
@@ -425,6 +437,7 @@ impl ConsensusPersistence {
     }
 
     /// Load latest checkpoint
+    #[cfg(feature = "sqlite")]
     pub fn load_latest_checkpoint(&self) -> Result<Option<ConsensusCheckpoint>> {
         let db = self.db.lock().map_err(|e| {
             rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
@@ -452,6 +465,7 @@ impl ConsensusPersistence {
     }
 
     /// Prune old data before checkpoint
+    #[cfg(feature = "sqlite")]
     fn prune_old_data(&self, checkpoint_round: u64) -> Result<()> {
         let cutoff = checkpoint_round.saturating_sub(CHECKPOINT_INTERVAL * 2);
 
@@ -488,6 +502,7 @@ impl ConsensusPersistence {
     }
 
     /// Recover from crash using WAL
+    #[cfg(feature = "sqlite")]
     pub fn recover(&self) -> Result<()> {
         let wal = self.wal.lock().unwrap();
         let entries = wal.read_all()?;
@@ -514,6 +529,30 @@ impl ConsensusPersistence {
 
         Ok(())
     }
+}
+
+#[cfg(not(feature = "sqlite"))]
+impl ConsensusPersistence {
+    /// Dummy implementation when sqlite is not enabled
+    pub fn new<P: AsRef<Path>>(storage_path: P) -> Result<Self> {
+        Ok(Self {
+            wal: Arc::new(Mutex::new(WriteAheadLog {
+                path: PathBuf::from("dummy"),
+                current_size: 0,
+            })),
+            _storage_path: storage_path.as_ref().to_path_buf(),
+            sequence: Arc::new(Mutex::new(0)),
+        })
+    }
+
+    pub fn store_consensus_state(&self, _round_id: u64, _state: &[u8]) -> Result<()> { Ok(()) }
+    pub fn load_consensus_state(&self, _round_id: u64) -> Result<Option<Vec<u8>>> { Ok(None) }
+    pub fn load_latest_state(&self) -> Result<Option<(u64, Vec<u8>)>> { Ok(None) }
+    pub fn store_vote(&self, _round_id: u64, _peer_id: PeerId, _vote_data: &[u8], _signature: [u8; 64]) -> Result<()> { Ok(()) }
+    pub fn get_votes(&self, _round_id: u64) -> Result<Vec<(PeerId, Vec<u8>, [u8; 64])>> { Ok(Vec::new()) }
+    pub fn create_checkpoint(&self, _round_id: u64) -> Result<()> { Ok(()) }
+    pub fn load_latest_checkpoint(&self) -> Result<Option<ConsensusCheckpoint>> { Ok(None) }
+    pub fn recover(&self) -> Result<()> { Ok(()) }
 }
 
 /// Write-ahead log implementation

@@ -168,7 +168,18 @@ impl ComplianceManager {
         sanctions_screening: Box<dyn SanctionsScreening + Send + Sync>,
     ) -> Result<Self> {
         let jurisdiction_engine = JurisdictionEngine::new(&config.jurisdictions)?;
-        let audit_logger = AuditLogger::new(config.audit_config.clone()).await?;
+        let audit_logger = AuditLogger::new(audit::AuditConfig {
+            enabled: config.audit_config.enabled,
+            retention_days: config.audit_config.retention_days,
+            encrypt_logs: config.audit_config.encrypt_logs,
+            sign_logs: config.audit_config.sign_logs,
+            max_entries_per_file: 10000,
+            compression_level: 6,
+            alert_thresholds: audit::AlertThresholds {
+                high_severity_per_hour: 100,
+                critical_per_day: 10,
+            },
+        }).await?;
         let reporter = ComplianceReporter::new().await?;
         
         Ok(Self {
@@ -284,7 +295,13 @@ impl ComplianceManager {
         transaction_type: String,
     ) -> Result<TransactionRisk> {
         if !self.config.enable_aml {
-            return Ok(TransactionRisk::Low);
+            return Ok(TransactionRisk {
+                score: crate::compliance::aml::RiskScore::Low,
+                confidence: 100,
+                risk_factors: vec![],
+                recommendations: vec![crate::compliance::aml::RiskRecommendation::Allow],
+                assessed_at: chrono::Utc::now(),
+            });
         }
 
         let risk = self.aml_monitor.monitor_transaction(

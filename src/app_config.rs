@@ -4,6 +4,8 @@
 //! argument parsing, and application configuration.
 
 use clap::{Parser, Subcommand};
+use std::str::FromStr;
+use bitcraps::NodeRole;
 
 /// Command-line interface definition for BitCraps
 #[derive(Parser)]
@@ -37,6 +39,26 @@ pub struct Cli {
     /// Disable BLE transports (TCP-only MVP)
     #[arg(long, default_value_t = true)]
     pub no_ble: bool,
+
+    /// Node role for tiered architecture (validator|gateway|client)
+    #[arg(long, default_value = "client")]
+    pub role: String,
+
+    /// PBFT batch size (operations per batch)
+    #[arg(long)]
+    pub pbft_batch_size: Option<usize>,
+
+    /// PBFT pipeline depth (parallel instances)
+    #[arg(long)]
+    pub pbft_pipeline_depth: Option<usize>,
+
+    /// PBFT base timeout in milliseconds
+    #[arg(long)]
+    pub pbft_base_timeout_ms: Option<u64>,
+
+    /// PBFT view change timeout in milliseconds
+    #[arg(long)]
+    pub pbft_view_timeout_ms: Option<u64>,
 }
 
 /// Available commands for the BitCraps CLI
@@ -257,6 +279,17 @@ pub fn resolve_data_dir(data_dir: &str) -> Result<String, String> {
         }
     } else {
         Ok(data_dir.to_string())
+    }
+}
+
+/// Parse node role string into NodeRole enum (case-insensitive)
+pub fn parse_node_role(role_str: &str) -> Result<NodeRole, String> {
+    let normalized = role_str.trim().to_lowercase();
+    match normalized.as_str() {
+        "validator" | "val" => Ok(NodeRole::Validator),
+        "gateway" | "gw" => Ok(NodeRole::Gateway),
+        "client" | "spectator" | "cli" => Ok(NodeRole::Client),
+        other => Err(format!("Invalid role '{}'. Use validator|gateway|client", other)),
     }
 }
 

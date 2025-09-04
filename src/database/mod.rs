@@ -71,31 +71,68 @@ use crate::config::DatabaseConfig;
 #[cfg(feature = "sqlite")]
 pub use async_pool::{AsyncDatabasePool, AsyncDbConfig, PoolStats as AsyncPoolStats};
 
-/// Database connection pool
-pub struct DatabasePool {
-    connections: Arc<RwLock<Vec<DatabaseConnection>>>,
-    config: DatabaseConfig,
-    backup_manager: Arc<BackupManager>,
-    health_monitor: Arc<HealthMonitor>,
-    shutdown: Arc<AtomicBool>,
-    background_handles: Arc<RwLock<Vec<tokio::task::JoinHandle<()>>>>,
+#[cfg(feature = "sqlite")]
+mod sqlite_pool {
+    use super::*;
+    use rusqlite::Connection;
+    
+    /// Database connection pool
+    pub struct DatabasePool {
+        connections: Arc<RwLock<Vec<DatabaseConnection>>>,
+        config: DatabaseConfig,
+        backup_manager: Arc<BackupManager>,
+        health_monitor: Arc<HealthMonitor>,
+        shutdown: Arc<AtomicBool>,
+        background_handles: Arc<RwLock<Vec<tokio::task::JoinHandle<()>>>>,
+    }
+    
+    /// Managed database connection
+    pub struct DatabaseConnection {
+        conn: Connection,
+        in_use: bool,
+        created_at: Instant,
+        last_used: Instant,
+        transaction_count: u64,
+    }
 }
 
-/// Managed database connection
-pub struct DatabaseConnection {
-    conn: Connection,
-    in_use: bool,
-    created_at: Instant,
-    last_used: Instant,
-    transaction_count: u64,
+#[cfg(feature = "sqlite")]
+pub use sqlite_pool::*;
+
+/// Fallback in-memory database when no features enabled
+#[cfg(not(any(feature = "sqlite", feature = "postgres")))]
+mod memory_db {
+    use super::*;
+    use std::collections::HashMap;
+    
+    /// In-memory database fallback
+    pub struct DatabasePool {
+        data: Arc<RwLock<HashMap<String, String>>>,
+        config: DatabaseConfig,
+    }
+    
+    /// In-memory database connection
+    pub struct DatabaseConnection {
+        pool: Arc<RwLock<HashMap<String, String>>>,
+        in_use: bool,
+    }
 }
+
+#[cfg(not(any(feature = "sqlite", feature = "postgres")))]
+pub use memory_db::*;
 
 /// Database backup manager
+#[cfg(feature = "sqlite")]
 pub struct BackupManager {
     backup_dir: PathBuf,
     backup_interval: Duration,
     last_backup: Arc<RwLock<Instant>>,
     _retention_days: u32,
+}
+
+#[cfg(not(feature = "sqlite"))]
+pub struct BackupManager {
+    _backup_dir: PathBuf,
 }
 
 /// Database health monitoring

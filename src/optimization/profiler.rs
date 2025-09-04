@@ -9,6 +9,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
+use serde::{Serialize, Serializer};
+
+/// Helper function to serialize Duration as milliseconds
+fn duration_as_millis<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_u64(duration.as_millis() as u64)
+}
 
 /// Profiler configuration
 #[derive(Clone, Debug)]
@@ -151,8 +160,9 @@ pub struct IoProfile {
 }
 
 /// Comprehensive profiler statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ProfilerStatistics {
+    #[serde(serialize_with = "duration_as_millis")]
     pub uptime: Duration,
     pub total_operations: u64,
     pub slow_operations: u64,
@@ -168,7 +178,7 @@ pub struct ProfilerStatistics {
 }
 
 /// Performance bottleneck detection
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PerformanceBottleneck {
     pub bottleneck_type: BottleneckType,
     pub severity: BottleneckSeverity,
@@ -178,7 +188,7 @@ pub struct PerformanceBottleneck {
     pub impact_estimate: ImpactEstimate,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum BottleneckType {
     CpuBound,
     MemoryBound,
@@ -189,7 +199,7 @@ pub enum BottleneckType {
     GarbageCollection,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum BottleneckSeverity {
     Low,
     Medium,
@@ -197,14 +207,14 @@ pub enum BottleneckSeverity {
     Critical,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ImpactEstimate {
     pub performance_gain_percent: f64,
     pub effort_level: EffortLevel,
     pub priority_score: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum EffortLevel {
     Low,
     Medium,
@@ -324,7 +334,8 @@ impl RuntimeProfiler {
             
             // Keep only recent slow operations
             if slow_ops.len() > self.config.max_samples / 10 {
-                slow_ops.drain(0..slow_ops.len() / 2);
+                let drain_to = slow_ops.len() / 2;
+                slow_ops.drain(0..drain_to);
             }
         }
     }
@@ -353,7 +364,8 @@ impl RuntimeProfiler {
         
         // Keep memory allocation history bounded
         if allocations.len() > self.config.max_samples {
-            allocations.drain(0..allocations.len() / 2);
+            let drain_to = allocations.len() / 2;
+            allocations.drain(0..drain_to);
         }
     }
 
@@ -503,7 +515,8 @@ impl RuntimeProfiler {
                     
                     // Keep bounded
                     if profiles.len() > profiler.config.max_samples {
-                        profiles.drain(0..profiles.len() / 2);
+                        let drain_to = profiles.len() / 2;
+                        profiles.drain(0..drain_to);
                     }
                 }
                 
@@ -537,7 +550,8 @@ impl RuntimeProfiler {
                     
                     // Keep bounded
                     if profiles.len() > profiler.config.max_samples {
-                        profiles.drain(0..profiles.len() / 2);
+                        let drain_to = profiles.len() / 2;
+                        profiles.drain(0..drain_to);
                     }
                 }
                 
@@ -558,7 +572,8 @@ impl RuntimeProfiler {
                     
                     // Keep bounded
                     if profiles.len() > profiler.config.max_samples {
-                        profiles.drain(0..profiles.len() / 2);
+                        let drain_to = profiles.len() / 2;
+                        profiles.drain(0..drain_to);
                     }
                 }
                 

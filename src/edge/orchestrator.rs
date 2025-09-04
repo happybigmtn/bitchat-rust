@@ -643,9 +643,9 @@ impl EdgeOrchestrator {
                 let latency_score = 1.0 / (1.0 + node.metrics.network_latency_ms / 50.0);
                 let resource_score = node.priority_score();
                 let geo_score = if let Some(target_location) = workload.target_location {
-                    1.0 / (1.0 + node.location.distance_km(&target_location) / 1000.0)
+                    1.0f32 / (1.0f32 + (node.location.distance_km(&target_location) as f32) / 1000.0f32)
                 } else {
-                    1.0
+                    1.0f32
                 };
 
                 score = latency_score * latency_weight + 

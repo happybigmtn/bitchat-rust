@@ -80,17 +80,17 @@ pub use protocol::versioning::{
     ProtocolCompatibility, ProtocolFeature, ProtocolVersion, VersionedMessage,
 };
 pub use protocol::{BetType, CrapTokens, DiceRoll, GameId, PeerId};
-pub use transport::{BluetoothTransport, TransportAddress, TransportCoordinator};
+pub use transport::{TransportAddress, TransportCoordinator};
+#[cfg(feature = "bluetooth")]
+pub use transport::BluetoothTransport;
 pub const TREASURY_ADDRESS: PeerId = [0xFFu8; 32];
 pub use app::{ApplicationConfig, BitCrapsApp};
 pub use contracts::{
     BlockchainNetwork, BridgeContract, ContractManager, StakingContract, TokenContract,
 };
 pub use economics::{AdvancedStakingPosition, EconomicsConfig, EconomicsStats, TokenEconomics};
-#[cfg(not(feature = "mvp"))]
+#[cfg(feature = "monitoring")]
 pub use monitoring::{HealthCheck, NetworkDashboard, NetworkMetrics};
-#[cfg(feature = "mvp")]
-pub use monitoring::metrics::NetworkMetrics;
 pub use persistence::PersistenceManager;
 pub use security::{
     DosProtection, InputValidator, RateLimiter, SecurityConfig, SecurityEvent, SecurityEventLogger,
@@ -101,6 +101,7 @@ pub use token::{Account, ProofOfRelay, TokenLedger, TransactionType};
 pub use treasury::{
     AutomatedMarketMaker, TreasuryConfig, TreasuryManager, TreasuryStats, TreasuryWallet,
 };
+#[cfg(feature = "ui")]
 pub use ui::{Cli, Commands};
 pub use utils::{AdaptiveInterval, AdaptiveIntervalConfig};
 pub use compliance::{
@@ -141,13 +142,29 @@ pub use bridges::universal::{
 };
 
 /// Application configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeRole {
+    Validator,
+    Gateway,
+    Client,
+}
+
 pub struct AppConfig {
     pub data_dir: String,
     pub nickname: Option<String>,
     pub pow_difficulty: u32,
     pub max_connections: usize,
     pub enable_treasury: bool,
+    /// Node role for tiered architecture
+    pub role: NodeRole,
+    /// PBFT tuning: optional batch size override
+    pub pbft_batch_size: Option<usize>,
+    /// PBFT tuning: optional pipeline depth override
+    pub pbft_pipeline_depth: Option<usize>,
+    /// PBFT tuning: optional base timeout (ms)
+    pub pbft_base_timeout_ms: Option<u64>,
+    /// PBFT tuning: optional view change timeout (ms)
+    pub pbft_view_timeout_ms: Option<u64>,
     // MVP networking options
     pub listen_tcp: Option<String>,
     pub connect_tcp: Vec<String>,
@@ -165,6 +182,11 @@ impl Default for AppConfig {
             max_connections: 50,
             enable_treasury: true,
             nickname: None,
+            role: NodeRole::Client,
+            pbft_batch_size: None,
+            pbft_pipeline_depth: None,
+            pbft_base_timeout_ms: None,
+            pbft_view_timeout_ms: None,
             listen_tcp: None,
             connect_tcp: Vec::new(),
             enable_ble: false,

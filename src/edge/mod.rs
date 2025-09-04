@@ -51,7 +51,7 @@ pub const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(60);
 pub type EdgeNodeId = Uuid;
 
 /// Geographic coordinates for edge nodes
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeoLocation {
     pub latitude: f64,
     pub longitude: f64,
@@ -594,8 +594,8 @@ impl EdgeRuntime {
             // Geographic score (if target location specified)
             if let Some(target_location) = workload.target_location {
                 let distance = node.location.distance_km(&target_location);
-                let geo_score = 1.0 / (1.0 + distance / 1000.0); // Normalize to ~1000km
-                score += geo_score * 0.3;
+                let geo_score = 1.0f32 / (1.0f32 + (distance as f32) / 1000.0f32); // Normalize to ~1000km
+                score += geo_score * 0.3f32;
             } else {
                 score += 0.3; // No geographic penalty
             }

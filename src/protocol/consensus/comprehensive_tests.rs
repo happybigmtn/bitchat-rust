@@ -73,7 +73,7 @@ impl Default for TestConfig {
 }
 
 /// Test results aggregation
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct TestResults {
     /// Total tests run
     pub total_tests: usize,

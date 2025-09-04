@@ -6,12 +6,16 @@
 //! - Peer discovery and connection management
 //! - Packet routing and forwarding
 
+#[cfg(feature = "bluetooth")]
 pub mod ble_config;
+#[cfg(feature = "bluetooth")]
 pub mod ble_peripheral;
+#[cfg(feature = "bluetooth")]
 pub mod bluetooth;
 pub mod bounded_queue;
 pub mod connection_pool;
 pub mod crypto;
+#[cfg(feature = "bluetooth")]
 pub mod enhanced_bluetooth;
 pub mod intelligent_coordinator;
 pub mod kademlia;
@@ -35,13 +39,13 @@ pub mod network_optimizer;
 
 // Platform-specific BLE peripheral implementations
 // Android BLE support requires both target platform and android feature
-#[cfg(all(target_os = "android", feature = "android"))]
+#[cfg(all(target_os = "android", feature = "android", feature = "bluetooth"))]
 pub mod android_ble;
 // iOS/macOS BLE support with platform detection
-#[cfg(any(target_os = "ios", target_os = "macos"))]
+#[cfg(all(any(target_os = "ios", target_os = "macos"), feature = "bluetooth"))]
 pub mod ios_ble;
 // Linux BLE support via BlueZ
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "bluetooth"))]
 pub mod linux_ble;
 
 // Test modules organized by speed
@@ -69,11 +73,16 @@ use crate::protocol::{BitchatPacket, PeerId};
 use bounded_queue::{BoundedTransportEventQueue, OverflowBehavior, QueueConfig};
 
 // Specific re-exports to avoid ambiguous glob conflicts
+#[cfg(feature = "bluetooth")]
 pub use ble_config::{BleConfigBuilder, BleTransportConfig};
+#[cfg(feature = "bluetooth")]
 pub use ble_peripheral::AdvertisingConfig;
+#[cfg(feature = "bluetooth")]
 pub use ble_peripheral::{BlePeripheral, PeripheralEvent};
+#[cfg(feature = "bluetooth")]
 pub use bluetooth::{BluetoothStats, BluetoothTransport};
 pub use crypto::TransportCrypto; // CryptoEvent not implemented yet
+#[cfg(feature = "bluetooth")]
 pub use enhanced_bluetooth::{EnhancedBluetoothStats, EnhancedBluetoothTransport};
 pub use keystore::{KeystoreConfig, SecureTransportKeystore};
 pub use security::{BleSecurityConfig, EnhancedTransportSecurity};
@@ -251,7 +260,9 @@ enum MessagePriority {
 
 /// Transport coordinator managing multiple transport types with backpressure
 pub struct TransportCoordinator {
+    #[cfg(feature = "bluetooth")]
     bluetooth: Option<Arc<RwLock<BluetoothTransport>>>,
+    #[cfg(feature = "bluetooth")]
     enhanced_bluetooth: Option<Arc<RwLock<EnhancedBluetoothTransport>>>,
     tcp_transport: Option<Arc<RwLock<tcp_transport::TcpTransport>>>,
     transports: Arc<RwLock<Vec<TransportInstance>>>,
@@ -323,7 +334,9 @@ impl TransportCoordinator {
         let memory_pools = Arc::new(GameMemoryPools::new());
 
         let coordinator = Self {
+            #[cfg(feature = "bluetooth")]
             bluetooth: None,
+            #[cfg(feature = "bluetooth")]
             enhanced_bluetooth: None,
             tcp_transport: None,
             transports: Arc::new(RwLock::new(Vec::new())),
@@ -346,6 +359,30 @@ impl TransportCoordinator {
         coordinator.start_cleanup_task();
 
         coordinator
+    }
+
+    /// Get bluetooth transport reference
+    #[cfg(feature = "bluetooth")]
+    pub fn bluetooth(&self) -> &Option<Arc<RwLock<BluetoothTransport>>> {
+        &self.bluetooth
+    }
+    
+    /// Get enhanced bluetooth transport reference
+    #[cfg(feature = "bluetooth")]  
+    pub fn enhanced_bluetooth(&self) -> &Option<Arc<RwLock<EnhancedBluetoothTransport>>> {
+        &self.enhanced_bluetooth
+    }
+    
+    /// Get mutable bluetooth transport reference
+    #[cfg(feature = "bluetooth")]
+    pub fn bluetooth_mut(&mut self) -> &mut Option<Arc<RwLock<BluetoothTransport>>> {
+        &mut self.bluetooth
+    }
+    
+    /// Get mutable enhanced bluetooth transport reference
+    #[cfg(feature = "bluetooth")]
+    pub fn enhanced_bluetooth_mut(&mut self) -> &mut Option<Arc<RwLock<EnhancedBluetoothTransport>>> {
+        &mut self.enhanced_bluetooth
     }
 
     /// Get a pooled Vec<u8> buffer for temporary use
@@ -629,7 +666,10 @@ impl TransportCoordinator {
             .await
             .map_err(|e| Error::Network(format!("Failed to initialize Bluetooth: {}", e)))?;
 
-        self.bluetooth = Some(Arc::new(RwLock::new(bluetooth)));
+        #[cfg(feature = "bluetooth")]
+        {
+            self.bluetooth = Some(Arc::new(RwLock::new(bluetooth)));
+        }
         Ok(())
     }
 
@@ -651,7 +691,10 @@ impl TransportCoordinator {
             ))
         })?;
 
-        self.enhanced_bluetooth = Some(Arc::new(RwLock::new(enhanced_bluetooth)));
+        #[cfg(feature = "bluetooth")]
+        {
+            self.enhanced_bluetooth = Some(Arc::new(RwLock::new(enhanced_bluetooth)));
+        }
 
         // Register as active transport
         self.active_transports.insert(
@@ -763,8 +806,10 @@ impl TransportCoordinator {
     /// Start background task to monitor transport health and performance
     async fn start_transport_monitoring(&self) {
         let active_transports = self.active_transports.clone();
-        let bluetooth = self.bluetooth.clone();
-        let enhanced_bluetooth = self.enhanced_bluetooth.clone();
+        #[cfg(feature = "bluetooth")]
+        let bluetooth = self.bluetooth().clone();
+        #[cfg(feature = "bluetooth")]
+        let enhanced_bluetooth = self.enhanced_bluetooth().clone();
         let tcp_transport = self.tcp_transport.clone();
         let event_sender = self.event_sender.clone();
 
@@ -781,20 +826,34 @@ impl TransportCoordinator {
                     let (name, transport_type) = (entry.key(), entry.value());
                     let is_healthy = match transport_type {
                         TransportType::Bluetooth => {
-                            if let Some(bt) = &bluetooth {
-                                // Check Bluetooth health
-                                let stats = bt.read().await.bluetooth_stats().await;
-                                stats.active_connections > 0 || stats.recent_connection_attempts > 0
-                            } else {
+                            #[cfg(feature = "bluetooth")]
+                            {
+                                if let Some(bt) = &bluetooth {
+                                    // Check Bluetooth health
+                                    let stats = bt.read().await.bluetooth_stats().await;
+                                    stats.active_connections > 0 || stats.recent_connection_attempts > 0
+                                } else {
+                                    false
+                                }
+                            }
+                            #[cfg(not(feature = "bluetooth"))]
+                            {
                                 false
                             }
                         }
                         TransportType::EnhancedBluetooth => {
-                            if let Some(ebt) = &enhanced_bluetooth {
-                                // Check enhanced Bluetooth health
-                                let stats = ebt.read().await.get_combined_stats().await;
-                                stats.total_connections > 0
-                            } else {
+                            #[cfg(feature = "bluetooth")]
+                            {
+                                if let Some(ebt) = &enhanced_bluetooth {
+                                    // Check enhanced Bluetooth health
+                                    let stats = ebt.read().await.get_combined_stats().await;
+                                    stats.total_connections > 0
+                                } else {
+                                    false
+                                }
+                            }
+                            #[cfg(not(feature = "bluetooth"))]
+                            {
                                 false
                             }
                         }
@@ -830,8 +889,9 @@ impl TransportCoordinator {
     }
 
     /// Start BLE advertising (requires enhanced Bluetooth transport)
+    #[cfg(feature = "bluetooth")]
     pub async fn start_ble_advertising(&self, config: AdvertisingConfig) -> Result<()> {
-        if let Some(enhanced_bt) = &self.enhanced_bluetooth {
+        if let Some(enhanced_bt) = self.enhanced_bluetooth() {
             let mut bt = enhanced_bt.write().await;
             bt.start_advertising(config)
                 .await
@@ -844,8 +904,9 @@ impl TransportCoordinator {
     }
 
     /// Stop BLE advertising
+    #[cfg(feature = "bluetooth")]
     pub async fn stop_ble_advertising(&self) -> Result<()> {
-        if let Some(enhanced_bt) = &self.enhanced_bluetooth {
+        if let Some(enhanced_bt) = self.enhanced_bluetooth() {
             let mut bt = enhanced_bt.write().await;
             bt.stop_advertising()
                 .await
@@ -858,8 +919,9 @@ impl TransportCoordinator {
     }
 
     /// Start mesh mode (both advertising and scanning)
+    #[cfg(feature = "bluetooth")]
     pub async fn start_mesh_mode(&self, config: AdvertisingConfig) -> Result<()> {
-        if let Some(enhanced_bt) = &self.enhanced_bluetooth {
+        if let Some(enhanced_bt) = self.enhanced_bluetooth() {
             let mut bt = enhanced_bt.write().await;
             bt.start_mesh_mode(config)
                 .await
@@ -872,8 +934,9 @@ impl TransportCoordinator {
     }
 
     /// Get enhanced Bluetooth statistics
+    #[cfg(feature = "bluetooth")]
     pub async fn get_enhanced_bluetooth_stats(&self) -> Result<EnhancedBluetoothStats> {
-        if let Some(enhanced_bt) = &self.enhanced_bluetooth {
+        if let Some(enhanced_bt) = self.enhanced_bluetooth() {
             let bt = enhanced_bt.read().await;
             Ok(bt.get_combined_stats().await)
         } else {
@@ -886,16 +949,19 @@ impl TransportCoordinator {
     /// Start listening on all available transports
     pub async fn start_listening(&self) -> Result<()> {
         // Prefer enhanced Bluetooth if available
-        if let Some(enhanced_bluetooth) = &self.enhanced_bluetooth {
-            let mut bt = enhanced_bluetooth.write().await;
-            bt.listen(TransportAddress::Bluetooth("BitCraps".to_string()))
-                .await
-                .map_err(|e| Error::Network(format!("Enhanced Bluetooth listen failed: {}", e)))?;
-        } else if let Some(bluetooth) = &self.bluetooth {
-            let mut bt = bluetooth.write().await;
-            bt.listen(TransportAddress::Bluetooth("BitCraps".to_string()))
-                .await
-                .map_err(|e| Error::Network(format!("Bluetooth listen failed: {}", e)))?;
+        #[cfg(feature = "bluetooth")]
+        {
+            if let Some(enhanced_bluetooth) = self.enhanced_bluetooth() {
+                let mut bt = enhanced_bluetooth.write().await;
+                bt.listen(TransportAddress::Bluetooth("BitCraps".to_string()))
+                    .await
+                    .map_err(|e| Error::Network(format!("Enhanced Bluetooth listen failed: {}", e)))?;
+            } else if let Some(bluetooth) = self.bluetooth() {
+                let mut bt = bluetooth.write().await;
+                bt.listen(TransportAddress::Bluetooth("BitCraps".to_string()))
+                    .await
+                    .map_err(|e| Error::Network(format!("Bluetooth listen failed: {}", e)))?;
+            }
         }
 
         Ok(())
@@ -964,6 +1030,7 @@ impl TransportCoordinator {
                     });
                     
                     // Record network metric
+                    #[cfg(feature = "monitoring")]
                     crate::monitoring::record_network_event("peer_connected", Some(&format!("{:?}", peer_id)));
 
                     return Ok(());
@@ -1005,7 +1072,7 @@ impl TransportCoordinator {
         match address {
             TransportAddress::Bluetooth(_) => {
                 // For Bluetooth addresses, prefer enhanced BT over legacy
-                if let Some(enhanced_bt) = &self.enhanced_bluetooth {
+                if let Some(enhanced_bt) = self.enhanced_bluetooth() {
                     let enhanced_bt = enhanced_bt.clone();
                     let address = address.clone();
                     attempts.push((
@@ -1025,7 +1092,7 @@ impl TransportCoordinator {
                     ));
                 }
 
-                if let Some(bluetooth) = &self.bluetooth {
+                if let Some(bluetooth) = self.bluetooth(){
                     let bluetooth = bluetooth.clone();
                     let address = address.clone();
                     attempts.push((
@@ -1063,7 +1130,7 @@ impl TransportCoordinator {
             }
             TransportAddress::Mesh(_) => {
                 // For mesh addresses, try all available transports
-                if let Some(enhanced_bt) = &self.enhanced_bluetooth {
+                if let Some(enhanced_bt) = self.enhanced_bluetooth() {
                     let enhanced_bt = enhanced_bt.clone();
                     let mesh_address = TransportAddress::Bluetooth("mesh".to_string());
                     attempts.push((
@@ -1125,7 +1192,7 @@ impl TransportCoordinator {
     ) -> Result<()> {
         match address {
             TransportAddress::Bluetooth(_) => {
-                if let Some(bluetooth) = &self.bluetooth {
+                if let Some(bluetooth) = self.bluetooth(){
                     let mut bt = bluetooth.write().await;
 
                     // Attempt the connection
@@ -1179,7 +1246,7 @@ impl TransportCoordinator {
             // Perform actual disconnect based on transport type
             match metadata.address {
                 TransportAddress::Bluetooth(_) => {
-                    if let Some(bluetooth) = &self.bluetooth {
+                    if let Some(bluetooth) = self.bluetooth(){
                         let mut bt = bluetooth.write().await;
                         bt.disconnect(peer_id).await.map_err(|e| {
                             Error::Network(format!("Bluetooth disconnect failed: {}", e))
@@ -1198,6 +1265,7 @@ impl TransportCoordinator {
             });
             
             // Record network metric
+            #[cfg(feature = "monitoring")]
             crate::monitoring::record_network_event("peer_disconnected", Some(&format!("{:?}", peer_id)));
         }
 
@@ -1290,7 +1358,7 @@ impl TransportCoordinator {
         match address {
             TransportAddress::Bluetooth(_) => {
                 // Try enhanced Bluetooth first, then fall back to regular Bluetooth
-                if let Some(enhanced_bt) = &self.enhanced_bluetooth {
+                if let Some(enhanced_bt) = self.enhanced_bluetooth() {
                     if let Ok(result) = enhanced_bt
                         .read()
                         .await
@@ -1301,7 +1369,7 @@ impl TransportCoordinator {
                     }
                 }
 
-                if let Some(bluetooth) = &self.bluetooth {
+                if let Some(bluetooth) = self.bluetooth(){
                     let mut bt = bluetooth.write().await;
                     bt.send(peer_id, data.to_vec())
                         .await
@@ -1338,7 +1406,7 @@ impl TransportCoordinator {
         let mut last_error = Error::Network("No transports available".to_string());
 
         // Try enhanced Bluetooth
-        if let Some(enhanced_bt) = &self.enhanced_bluetooth {
+        if let Some(enhanced_bt) = self.enhanced_bluetooth() {
             match enhanced_bt
                 .read()
                 .await
@@ -1378,7 +1446,7 @@ impl TransportCoordinator {
         }
 
         // Try regular Bluetooth as last resort
-        if let Some(bluetooth) = &self.bluetooth {
+        if let Some(bluetooth) = self.bluetooth(){
             match bluetooth.write().await.send(peer_id, data).await {
                 Ok(_) => {
                     log::debug!("Successfully sent via Bluetooth to peer {:?}", peer_id);

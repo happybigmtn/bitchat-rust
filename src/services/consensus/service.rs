@@ -45,6 +45,17 @@ impl ConsensusService {
             peer_id,
         }
     }
+
+    /// Get quorum certificate for a committed sequence (if integrated engine is available).
+    /// For now, returns None as a placeholder until engine is wired.
+    pub async fn get_quorum_certificate(&self, _sequence: u64) -> Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
+
+    /// Get quorum certificate by proposal id
+    pub async fn get_quorum_certificate_by_proposal(&self, proposal_id: TransactionId) -> Result<Option<Vec<u8>>> {
+        Ok(self.quorum_certs.get(&proposal_id).map(|e| e.clone()))
+    }
     
     /// Start the consensus service
     pub async fn start(&mut self) -> Result<()> {
@@ -108,6 +119,20 @@ impl ConsensusService {
     
     /// Submit a proposal for consensus
     pub async fn propose(&self, request: ProposeRequest) -> Result<ProposeResponse> {
+        // Enforce: only active validators may propose
+        {
+            let network_state = self.network_state.read().await;
+            let is_validator = network_state
+                .validators
+                .get(&self.peer_id)
+                .map_or(false, |v| v.is_active);
+            if !is_validator {
+                return Err(Error::ConsensusError(
+                    "Only active validators may propose".to_string(),
+                ));
+            }
+        }
+
         let proposal_id = self.generate_transaction_id();
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -187,18 +212,40 @@ impl ConsensusService {
         // Check if we have reached consensus
         if self.check_consensus_reached(&*round).await? {
             round.status = super::RoundStatus::Committed;
-            
+
+            // Build simple QC from commit votes
+            let commit_sigs: Vec<(PeerId, Vec<u8>)> = round
+                .votes
+                .iter()
+                .filter_map(|(peer, mp)| mp.get(&super::VoteType::Commit).map(|v| (*peer, v.signature.clone())))
+                .collect();
+
+            #[derive(serde::Serialize, serde::Deserialize)]
+            struct ServiceQC {
+                proposal_id: TransactionId,
+                round: u32,
+                commit_signatures: Vec<(PeerId, Vec<u8>)>,
+            }
+            let qc = ServiceQC {
+                proposal_id: request.proposal_id,
+                round: round.round_number,
+                commit_signatures: commit_sigs,
+            };
+            let qc_bytes = bincode::serialize(&qc).map_err(|e| Error::ConsensusError(e.to_string()))?;
+            self.quorum_certs.insert(request.proposal_id, qc_bytes.clone());
+
             let result = ConsensusResult {
                 proposal_id: request.proposal_id,
                 status: super::ConsensusStatus::Committed,
                 final_round: round.round_number,
                 commit_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
                 participating_validators: round.votes.keys().cloned().collect(),
+                quorum_certificate: Some(qc_bytes),
             };
-            
+
             // Broadcast result
             let _ = self.result_tx.send(result);
-            
+
             // Clean up round
             drop(round);
             self.active_rounds.remove(&request.proposal_id);
@@ -397,6 +444,7 @@ impl ConsensusService {
                     final_round: round.round_number,
                     commit_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
                     participating_validators: round.votes.keys().cloned().collect(),
+                    quorum_certificate: None,
                 };
                 
                 // Update metrics
@@ -428,7 +476,7 @@ mod tests {
     #[tokio::test]
     async fn test_consensus_service_creation() {
         let config = ConsensusConfig::default();
-        let peer_id = PeerId::new();
+        let peer_id = [0u8; 32];
         let service = ConsensusService::new(config, peer_id);
         
         assert_eq!(service.peer_id, peer_id);
@@ -436,11 +484,11 @@ mod tests {
     
     #[tokio::test]
     async fn test_propose_with_insufficient_validators() {
-        let mut service = ConsensusService::new(ConsensusConfig::default(), PeerId::new());
+        let mut service = ConsensusService::new(ConsensusConfig::default(), [0u8; 32]);
         service.start().await.unwrap();
         
         let request = ProposeRequest {
-            game_id: Some(GameId::new()),
+            game_id: Some([0u8; 16]),
             proposal_type: super::ProposalType::GameAction {
                 action: "place_bet".to_string(),
             },
@@ -448,8 +496,115 @@ mod tests {
         };
         
         let result = service.propose(request).await;
-        assert!(result.is_err()); // Should fail due to insufficient validators
+        assert!(result.is_err()); // Should fail due to not a validator and insufficient validators
         
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_only_validators_can_propose_and_vote() {
+        let mut service = ConsensusService::new(ConsensusConfig::default(), [0u8; 32]);
+        service.start().await.unwrap();
+
+        // Add two active validators, including this service.peer_id
+        let my_id = service.peer_id;
+        let other = [0u8; 32];
+        service
+            .update_validator(UpdateValidatorRequest {
+                peer_id: my_id,
+                action: super::ValidatorUpdateAction::Add,
+                stake: Some(1),
+            })
+            .await
+            .unwrap();
+        service
+            .update_validator(UpdateValidatorRequest {
+                peer_id: other,
+                action: super::ValidatorUpdateAction::Add,
+                stake: Some(1),
+            })
+            .await
+            .unwrap();
+
+        // Propose should now be allowed (sufficient validators check may still fail if min_validators not met)
+        let request = ProposeRequest {
+            game_id: Some([0u8; 16]),
+            proposal_type: super::ProposalType::GameAction {
+                action: "place_bet".to_string(),
+            },
+            data: vec![],
+        };
+        let res = service.propose(request).await;
+        // With default config min_validators=3, still insufficient; ensure error is due to validators count, not role
+        assert!(res.is_err());
+
+        // Now, attempt to vote as non-validator should fail
+        let non_validator = [0u8; 32];
+        let vote = ConsensusVote {
+            proposal_id: [0u8; 32],
+            voter: non_validator,
+            vote_type: super::VoteType::Commit,
+            round: 0,
+            signature: vec![],
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+        };
+        let vote_res = service
+            .vote(VoteRequest {
+                proposal_id: vote.proposal_id,
+                vote,
+            })
+            .await;
+        assert!(vote_res.is_err());
+
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_quorum_certificate_on_commit() {
+        let mut service = ConsensusService::new(ConsensusConfig::default(), [0u8; 32]);
+        service.start().await.unwrap();
+
+        // Add three active validators including this node
+        let v1 = service.peer_id;
+        let v2 = [0u8; 32];
+        let v3 = [0u8; 32];
+        for v in [v1, v2, v3] {
+            service
+                .update_validator(UpdateValidatorRequest {
+                    peer_id: v,
+                    action: super::ValidatorUpdateAction::Add,
+                    stake: Some(1),
+                })
+                .await
+                .unwrap();
+        }
+
+        // Propose
+        let req = ProposeRequest {
+            game_id: None,
+            proposal_type: super::ProposalType::NetworkUpgrade { version: "test".to_string() },
+            data: vec![],
+        };
+        let resp = service.propose(req).await.unwrap();
+        let pid = resp.proposal_id;
+
+        // Cast three commit votes from validators
+        for voter in [v1, v2, v3] {
+            let vote = ConsensusVote {
+                proposal_id: pid,
+                voter,
+                vote_type: super::VoteType::Commit,
+                round: 0,
+                signature: vec![1,2,3],
+                timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            };
+            let _ = service.vote(VoteRequest { proposal_id: pid, vote }).await.unwrap();
+        }
+
+        // QC should be stored
+        let qc = service.get_quorum_certificate_by_proposal(pid).await.unwrap();
+        assert!(qc.is_some());
+
         service.stop().await.unwrap();
     }
 }

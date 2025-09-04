@@ -77,7 +77,7 @@ pub struct DaoMember {
 }
 
 /// Membership tiers
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum MembershipTier {
     /// Basic member
     Basic = 1,
@@ -244,20 +244,30 @@ impl Dao {
         member.voting_activity.last_vote = Some(Utc::now());
 
         // Recalculate participation rate
-        self.calculate_participation_rate(member);
+        Self::calculate_participation_rate(member);
 
         Ok(())
     }
 
     /// Update member reputation
     pub async fn update_reputation(&mut self, peer_id: PeerId, new_reputation: u32) -> Result<()> {
+        // First get the member info we need without holding a mutable borrow
+        let token_balance = {
+            let member = self.members.get(&peer_id)
+                .ok_or_else(|| Error::ValidationError("Member not found".to_string()))?;
+            member.token_balance
+        };
+        
+        // Calculate new tier before getting mutable access
+        let new_tier = self.determine_membership_tier(token_balance, new_reputation);
+        
+        // Now update the member with mutable access
         let member = self.members.get_mut(&peer_id)
             .ok_or_else(|| Error::ValidationError("Member not found".to_string()))?;
 
         member.reputation_score = new_reputation;
         
         // Check if tier should be updated
-        let new_tier = self.determine_membership_tier(member.token_balance, new_reputation);
         if new_tier != member.membership_tier {
             member.membership_tier = new_tier;
         }
@@ -296,7 +306,7 @@ impl Dao {
     }
 
     /// Calculate participation rate for a member
-    fn calculate_participation_rate(&self, member: &mut DaoMember) {
+    fn calculate_participation_rate(member: &mut DaoMember) {
         // Simplified calculation - would be more sophisticated in production
         let days_since_join = Utc::now().signed_duration_since(member.joined_at).num_days();
         if days_since_join > 0 {

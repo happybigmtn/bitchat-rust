@@ -25,7 +25,7 @@ pub struct RoulettePlugin {
     config: Arc<RwLock<HashMap<String, serde_json::Value>>>,
     error_handler: PluginErrorHandler,
     statistics: BasePluginStatistics,
-    rng: Arc<dyn CryptoRng + RngCore + Send + Sync>,
+    rng: Arc<dyn RngCore + Send + Sync>,
 }
 
 impl RoulettePlugin {
@@ -610,6 +610,7 @@ struct RouletteGameSession {
     total_bets: u64,
     total_payout: u64,
     physics: RoulettePhysics,
+    #[serde(skip, default)]
     spin_start_time: Option<Instant>,
     created_at: std::time::SystemTime,
 }
@@ -638,6 +639,7 @@ enum RouletteGamePhase {
 struct RouletteBet {
     bet_type: BetType,
     amount: u64,
+    #[serde(skip, default = "std::time::Instant::now")]
     placed_at: Instant,
 }
 

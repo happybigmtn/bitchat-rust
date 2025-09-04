@@ -7,6 +7,7 @@ pub mod api;
 pub mod service;
 pub mod types;
 pub mod byzantine;
+pub mod http;
 
 pub use service::ConsensusService;
 pub use types::*;
@@ -96,7 +97,7 @@ pub struct ConsensusVote {
 }
 
 /// Types of votes
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum VoteType {
     Prepare,    // PBFT prepare phase
     Commit,     // PBFT commit phase
@@ -209,6 +210,8 @@ pub struct ConsensusResult {
     pub final_round: u32,
     pub commit_time: u64,
     pub participating_validators: Vec<PeerId>,
+    /// Optional quorum certificate bytes (engine-specific encoding)
+    pub quorum_certificate: Option<Vec<u8>>,
 }
 
 /// Final status of consensus

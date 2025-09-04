@@ -36,6 +36,29 @@ impl ConsensusAPI {
             voting_history: Arc::new(RwLock::new(Vec::new())),
         }
     }
+
+    /// Fetch a quorum certificate by sequence (if available)
+    pub async fn get_quorum_certificate_by_sequence(&self, sequence: u64) -> SDKResult<Option<Vec<u8>>> {
+        // GET consensus/qc?sequence={sequence}
+        let path = format!("consensus/qc?sequence={}", sequence);
+        // Expect either 200 with base64 or hex payload; for now, try to deserialize Vec<u8>
+        let qc_bytes: Option<Vec<u8>> = self.rest_client.get(&path).await?;
+        Ok(qc_bytes)
+    }
+
+    /// Fetch a quorum certificate by proposal id (preferred)
+    pub async fn get_quorum_certificate_by_proposal(&self, proposal_id_hex: &str) -> SDKResult<Option<Vec<u8>>> {
+        // GET consensus/qc?proposal_id=...
+        let path = format!("consensus/qc?proposal_id={}", proposal_id_hex);
+        let qc_bytes: Option<Vec<u8>> = self.rest_client.get(&path).await?;
+        Ok(qc_bytes)
+    }
+
+    /// Verify a quorum certificate (placeholder until full validator key registry integration)
+    pub async fn verify_quorum_certificate(&self, _qc_bytes: &[u8]) -> SDKResult<bool> {
+        // TODO: deserialize QC and verify signatures against known validator keys
+        Ok(true)
+    }
     
     /// Submit a new consensus proposal
     pub async fn propose(&self, game_id: &GameId, action: GameAction) -> SDKResult<ProposalId> {

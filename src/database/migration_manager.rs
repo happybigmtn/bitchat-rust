@@ -98,28 +98,32 @@ impl MigrationManager {
     async fn load_available_migrations(&mut self) -> Result<()> {
         self.available_migrations.clear();
         
-        // Determine backend-specific directory
-        let backend_dir = match self.determine_backend().await? {
-            DatabaseBackend::SQLite => self.migrations_dir.join("sqlite"),
-            DatabaseBackend::PostgreSQL => self.migrations_dir.join("postgresql"),
-        };
-        
-        if !backend_dir.exists() {
-            return Ok(()); // No migrations directory for this backend
-        }
-        
-        // Read migration files
-        let entries = fs::read_dir(&backend_dir)
-            .map_err(|e| Error::Database(format!("Failed to read migrations directory: {}", e)))?;
-        
-        for entry in entries {
-            let entry = entry
-                .map_err(|e| Error::Database(format!("Failed to read directory entry: {}", e)))?;
+        // Only load migrations if database features are enabled
+        #[cfg(any(feature = "sqlite", feature = "postgres"))]
+        {
+            // Determine backend-specific directory
+            let backend_dir = match self.determine_backend().await? {
+                DatabaseBackend::SQLite => self.migrations_dir.join("sqlite"),
+                DatabaseBackend::PostgreSQL => self.migrations_dir.join("postgresql"),
+            };
             
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) == Some("sql") {
-                if let Some(migration) = self.parse_migration_file(&path).await? {
-                    self.available_migrations.insert(migration.version.clone(), migration);
+            if !backend_dir.exists() {
+                return Ok(()); // No migrations directory for this backend
+            }
+            
+            // Read migration files
+            let entries = fs::read_dir(&backend_dir)
+                .map_err(|e| Error::Database(format!("Failed to read migrations directory: {}", e)))?;
+            
+            for entry in entries {
+                let entry = entry
+                    .map_err(|e| Error::Database(format!("Failed to read directory entry: {}", e)))?;
+                
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("sql") {
+                    if let Some(migration) = self.parse_migration_file(&path).await? {
+                        self.available_migrations.insert(migration.version.clone(), migration);
+                    }
                 }
             }
         }
@@ -128,6 +132,7 @@ impl MigrationManager {
     }
     
     /// Parse a migration file
+    #[cfg(any(feature = "sqlite", feature = "postgres"))]
     async fn parse_migration_file(&self, path: &Path) -> Result<Option<Migration>> {
         let content = fs::read_to_string(path)
             .map_err(|e| Error::Database(format!("Failed to read migration file: {}", e)))?;

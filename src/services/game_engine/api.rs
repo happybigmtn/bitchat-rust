@@ -83,7 +83,7 @@ async fn list_games_handler(
     if let Some(player_id_str) = params.get("player_id") {
         // Parse player ID from string (simplified for this example)
         // In production, you'd have proper UUID parsing
-        request.player_id = Some(crate::protocol::PeerId::new());
+        request.player_id = Some([0u8; 32]);
     }
     
     match service.list_games(request).await {
@@ -98,7 +98,7 @@ async fn get_game_state_handler(
     State(service): State<Arc<GameEngineService>>,
 ) -> std::result::Result<Json<GetGameStateResponse>, (StatusCode, String)> {
     // Parse game ID from string (simplified for this example)
-    let game_id = crate::protocol::GameId::new(); // In production, parse from path
+    let game_id = [0u8; 16]; // In production, parse from path
     
     let request = GetGameStateRequest { game_id };
     
@@ -118,7 +118,7 @@ async fn process_action_handler(
     Json(mut request): Json<ProcessActionRequest>,
 ) -> std::result::Result<Json<ProcessActionResponse>, (StatusCode, String)> {
     // Parse game ID from path
-    request.game_id = crate::protocol::GameId::new(); // In production, parse from path
+    request.game_id = [0u8; 16]; // In production, parse from path
     
     match service.process_action(request).await {
         Ok(response) => Ok(Json(response)),

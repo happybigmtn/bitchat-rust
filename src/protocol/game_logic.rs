@@ -345,7 +345,7 @@ impl CrapsGame {
 }
 
 /// Simplified game state for external consumers
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct GameState {
     pub phase: GamePhase,
     pub point: Option<u8>,

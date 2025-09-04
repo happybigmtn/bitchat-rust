@@ -133,6 +133,7 @@ struct FragmentationManager {
 }
 
 /// Connection state for a peer
+#[cfg(feature = "bluetooth")]
 #[derive(Debug)]
 #[allow(dead_code)]
 struct PeerConnection {

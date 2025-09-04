@@ -37,6 +37,12 @@ impl SafeArithmetic {
         Ok(a / b)
     }
 
+    /// Safe addition for i64 with overflow checking
+    pub fn safe_add_i64(a: i64, b: i64) -> Result<i64> {
+        a.checked_add(b)
+            .ok_or_else(|| Error::ArithmeticOverflow(format!("i64 addition overflow: {} + {}", a, b)))
+    }
+
     /// Safe percentage calculation with overflow protection
     pub fn safe_percentage(value: u64, percentage: u8) -> Result<u64> {
         if percentage > 100 {

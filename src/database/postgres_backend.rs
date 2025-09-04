@@ -34,10 +34,13 @@ pub struct PostgresConfig {
     pub database: String,
     pub username: String,
     pub password: String,
+    #[cfg(feature = "postgres")]
     pub pool_type: PoolType,
+    #[cfg(feature = "postgres")]
     pub ssl_mode: SslMode,
     pub read_replicas: Vec<PostgresReplicaConfig>,
     pub connection_pool: PoolConfiguration,
+    #[cfg(feature = "postgres")]
     pub performance: PostgresPerformanceConfig,
 }
 
@@ -49,6 +52,7 @@ pub struct PostgresReplicaConfig {
     pub max_lag: Duration,
 }
 
+#[cfg(feature = "postgres")]
 #[derive(Debug, Clone)]
 pub enum PoolType {
     Deadpool,
@@ -56,6 +60,7 @@ pub enum PoolType {
     R2d2,
 }
 
+#[cfg(feature = "postgres")]
 #[derive(Debug, Clone)]
 pub enum SslMode {
     Disable,
@@ -64,6 +69,7 @@ pub enum SslMode {
     VerifyFull,
 }
 
+#[cfg(feature = "postgres")]
 #[derive(Debug, Clone)]
 pub struct PostgresPerformanceConfig {
     pub statement_cache_size: usize,
@@ -81,10 +87,13 @@ impl Default for PostgresConfig {
             database: "bitcraps".to_string(),
             username: "bitcraps".to_string(),
             password: "bitcraps".to_string(),
+            #[cfg(feature = "postgres")]
             pool_type: PoolType::Deadpool,
+            #[cfg(feature = "postgres")]
             ssl_mode: SslMode::Prefer,
             read_replicas: Vec::new(),
             connection_pool: PoolConfiguration::default(),
+            #[cfg(feature = "postgres")]
             performance: PostgresPerformanceConfig {
                 statement_cache_size: 100,
                 query_timeout: Duration::from_secs(30),

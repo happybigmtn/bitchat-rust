@@ -23,6 +23,7 @@ use blake3::Hasher;
 use tracing::{info, warn, error, debug};
 
 use crate::error::Error;
+#[cfg(feature = "monitoring")]
 use crate::monitoring::metrics::METRICS;
 use crate::storage::encryption::{EncryptionEngine, FileKeyManager, EncryptedData, KeyManager};
 use crate::storage::postgresql_backend::{PostgresBackend, PostgresConfig};

@@ -2,6 +2,7 @@
 
 use super::*;
 use std::collections::HashMap;
+use chrono::Timelike;
 
 /// Theme manager for handling multiple themes
 pub struct ThemeManager {

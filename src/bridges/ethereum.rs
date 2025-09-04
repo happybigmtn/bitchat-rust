@@ -323,7 +323,7 @@ impl EthereumBridge {
         let balance_result = self.call_contract(&balance_data).await?;
         
         // Parse balance from result
-        let balance = self.parse_balance_result(&balance_result)?;
+        let balance = self.parse_balance_result(&balance_result).await?;
         
         Ok(balance)
     }

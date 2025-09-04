@@ -300,7 +300,7 @@ mod tests {
         let mut service = GameEngineService::new(GameEngineConfig::default());
         service.start().await.unwrap();
         
-        let players = vec![PeerId::new(), PeerId::new()];
+        let players = vec![[0u8; 32], [0u8; 32]];
         let request = CreateGameRequest {
             players: players.clone(),
             game_type: "craps".to_string(),
@@ -320,7 +320,7 @@ mod tests {
         service.start().await.unwrap();
         
         // Create a game
-        let players = vec![PeerId::new(), PeerId::new()];
+        let players = vec![[0u8; 32], [0u8; 32]];
         let create_request = CreateGameRequest {
             players: players.clone(),
             game_type: "craps".to_string(),

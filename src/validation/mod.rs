@@ -284,6 +284,37 @@ impl InputValidator {
 
         Ok(())
     }
+
+    /// Validate a network address
+    pub fn validate_address(&self, address: &str) -> Result<()> {
+        if address.is_empty() {
+            return Err(Error::ValidationError("Address cannot be empty".to_string()));
+        }
+
+        if address.len() > self.rules.max_string_length {
+            return Err(Error::ValidationError(format!(
+                "Address length {} exceeds maximum {}",
+                address.len(),
+                self.rules.max_string_length
+            )));
+        }
+
+        // Basic format validation - check for common address patterns
+        if !address.contains(':') && !address.contains('.') && !address.starts_with('/') {
+            return Err(Error::ValidationError(
+                "Address format not recognized".to_string(),
+            ));
+        }
+
+        // Check for dangerous characters
+        if address.contains('\0') || address.contains('\r') || address.contains('\n') {
+            return Err(Error::ValidationError(
+                "Address contains invalid characters".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 impl RateLimiter {

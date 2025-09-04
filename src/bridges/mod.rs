@@ -338,7 +338,7 @@ impl BridgeSecurityManager {
         let rules = self.fraud_detection_rules.read().await;
         
         for (rule_name, rule) in rules.iter() {
-            if !rule.evaluate(tx) {
+            if !(rule.evaluate)(tx) {
                 let security_event = SecurityEvent::GameIntegrityViolation {
                     game_id: [0u8; 16], // Bridge transactions don't have game IDs
                     player_id: [0u8; 32], // Use default for bridge transactions

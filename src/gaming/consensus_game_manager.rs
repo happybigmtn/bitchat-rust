@@ -341,6 +341,7 @@ impl ConsensusGameManager {
         );
         
         // Record game creation metric
+        #[cfg(feature = "monitoring")]
         crate::monitoring::record_game_event("game_created", &format!("{:?}", game_id));
         
         Ok(game_id)
@@ -679,6 +680,7 @@ impl ConsensusGameManager {
         );
         
         // Record bet placement metric
+        #[cfg(feature = "monitoring")]
         crate::monitoring::record_game_event("bet_placed", &format!("{:?}", game_id));
         
         Ok(())

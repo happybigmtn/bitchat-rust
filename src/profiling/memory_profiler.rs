@@ -9,6 +9,7 @@ use crate::error::BitCrapsError;
 
 /// Memory profiler with allocation tracking and leak detection
 pub struct MemoryProfiler {
+    #[cfg(feature = "monitoring")]
     system: Arc<RwLock<System>>,
     metrics: Arc<RwLock<MemoryMetrics>>,
     allocation_tracker: Arc<RwLock<AllocationTracker>>,
@@ -18,10 +19,13 @@ pub struct MemoryProfiler {
 
 impl MemoryProfiler {
     pub fn new() -> Result<Self, BitCrapsError> {
+        #[cfg(feature = "monitoring")]
         let mut system = System::new();
+        #[cfg(feature = "monitoring")]
         system.refresh_memory();
 
         Ok(Self {
+            #[cfg(feature = "monitoring")]
             system: Arc::new(RwLock::new(system)),
             metrics: Arc::new(RwLock::new(MemoryMetrics::new())),
             allocation_tracker: Arc::new(RwLock::new(AllocationTracker::new())),

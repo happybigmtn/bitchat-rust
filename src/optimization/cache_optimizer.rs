@@ -181,7 +181,7 @@ where
 
 impl<K, V> IntelligentCache<K, V>
 where
-    K: Clone + Hash + Eq + Send + Sync + 'static,
+    K: Clone + Hash + Eq + Send + Sync + 'static + std::fmt::Debug,
     V: Clone + Send + Sync + 'static,
 {
     pub fn new(name: String, config: CacheOptimizerConfig) -> Self {
@@ -434,7 +434,7 @@ where
         let now = Instant::now();
         for (key, pattern) in patterns.iter() {
             if let Some(predicted_access) = pattern.predicted_next_access {
-                if predicted_access.duration_since(now) < Duration::from_minutes(5) {
+                if predicted_access.duration_since(now) < Duration::from_secs(5 * 60) {
                     keys_to_warm.push(key.clone());
                 }
             }
@@ -754,7 +754,8 @@ where
         
         // Keep bounded history
         if history.len() > 100 {
-            history.drain(0..history.len() / 2);
+            let drain_to = history.len() / 2;
+            history.drain(0..drain_to);
         }
     }
 
@@ -769,7 +770,7 @@ where
             let mut l1 = self.l1_cache.write().await;
             let keys_to_demote: Vec<_> = l1.iter()
                 .filter(|(_, (_, metadata))| {
-                    metadata.last_accessed.elapsed() > Duration::from_minutes(30) &&
+                    metadata.last_accessed.elapsed() > Duration::from_secs(30 * 60) &&
                     metadata.access_count < 3
                 })
                 .map(|(k, _)| k.clone())

@@ -8,7 +8,7 @@ mod app_config;
 mod app_state;
 mod commands;
 
-use app_config::{resolve_data_dir, Cli, Commands};
+use app_config::{resolve_data_dir, parse_node_role, Cli, Commands};
 use app_state::BitCrapsApp as AppStateBitCrapsApp;
 use commands::commands as cmd;
 
@@ -27,6 +27,9 @@ async fn main() -> Result<()> {
     let data_dir = resolve_data_dir(&cli.data_dir)
         .map_err(|e| Error::Protocol(e))?;
 
+    // Parse role string to NodeRole
+    let role = parse_node_role(&cli.role).map_err(|e| Error::Protocol(e))?;
+
     let config = AppConfig {
         data_dir,
         nickname: cli.nickname,
@@ -34,15 +37,23 @@ async fn main() -> Result<()> {
         listen_tcp: cli.listen_tcp.clone(),
         connect_tcp: cli.connect_tcp.clone(),
         enable_ble: !cli.no_ble,
+        role,
+        pbft_batch_size: cli.pbft_batch_size,
+        pbft_pipeline_depth: cli.pbft_pipeline_depth,
+        pbft_base_timeout_ms: cli.pbft_base_timeout_ms,
+        pbft_view_timeout_ms: cli.pbft_view_timeout_ms,
         ..AppConfig::default()
     };
 
     match cli.command {
         Commands::Start => {
-            info!("Starting BitCraps node...");
+            info!("Starting BitCraps node as {:?}...", config.role);
             let app = AppStateBitCrapsApp::new(config.clone()).await?;
             let app_arc = Arc::new(app);
             start_monitoring_services(app_arc.clone(), &config).await?;
+
+            // Start microservices selectively based on node role (feature-gated)
+            start_services_for_role(&config).await?;
             
             // Run the main application loop
             if let Ok(mut app) = Arc::try_unwrap(app_arc) {
@@ -53,7 +64,7 @@ async fn main() -> Result<()> {
         }
 
         Commands::Tui => {
-            info!("Starting BitCraps TUI...");
+            info!("Starting BitCraps TUI (role: {:?})...", config.role);
             let _app = AppStateBitCrapsApp::new(config.clone()).await?;
             // Create library app for TUI
             let lib_app = create_library_app(config).await?;
@@ -111,6 +122,57 @@ async fn main() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+// Role-based service startup (feature gated to avoid pulling all services into minimal builds)
+#[cfg(feature = "services")]
+async fn start_services_for_role(config: &AppConfig) -> Result<()> {
+    use bitcraps::services::{ServiceBuilder};
+    use bitcraps::services::common::discovery::StaticServiceDiscovery;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let discovery = Arc::new(StaticServiceDiscovery::new());
+    let mut builder = ServiceBuilder::new().with_service_discovery(discovery);
+
+    match config.role {
+        bitcraps::NodeRole::Validator => {
+            // Start consensus service for validators
+            let mut cc = bitcraps::services::consensus::ConsensusConfig::default();
+            if let Some(ms) = config.pbft_base_timeout_ms { cc.round_timeout = Duration::from_millis(ms); }
+            builder = builder.with_consensus(cc);
+            // Optionally run game engine locally as well for now
+            builder = builder.with_game_engine(bitcraps::services::game_engine::GameEngineConfig::default());
+        }
+        bitcraps::NodeRole::Gateway => {
+            // Start only the API gateway on gateway nodes
+            builder = builder.with_gateway(bitcraps::services::api_gateway::GatewayConfig::default());
+        }
+        bitcraps::NodeRole::Client => {
+            // Clients do not start microservices; they use SDK/UI only
+            log::info!("Client role: no microservices started");
+        }
+    }
+
+    let mut orchestrator = builder.build().await?;
+    orchestrator.start_all().await?;
+    Ok(())
+}
+
+#[cfg(not(feature = "services"))]
+async fn start_services_for_role(config: &AppConfig) -> Result<()> {
+    match config.role {
+        bitcraps::NodeRole::Validator => {
+            log::info!("Validator role selected. Microservices startup is disabled without 'services' feature.");
+        }
+        bitcraps::NodeRole::Gateway => {
+            log::info!("Gateway role selected. Microservices startup is disabled without 'services' feature.");
+        }
+        bitcraps::NodeRole::Client => {
+            log::info!("Client role: no microservices started");
+        }
+    }
     Ok(())
 }
 

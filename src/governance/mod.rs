@@ -194,7 +194,14 @@ impl GovernanceCoordinator {
     /// Create new governance coordinator
     pub async fn new(config: GovernanceConfig) -> Result<Self> {
         let dao = Dao::new(config.dao_config.clone()).await?;
-        let proposal_manager = ProposalManager::new(config.proposal_config.clone()).await?;
+        let proposals_config = proposals::ProposalConfig {
+            minimum_proposal_tokens: config.proposal_config.minimum_proposal_tokens,
+            proposal_deposit: config.proposal_config.proposal_deposit,
+            discussion_period: config.proposal_config.discussion_period,
+            voting_period: config.proposal_config.voting_period,
+            execution_delay: config.proposal_config.execution_delay,
+        };
+        let proposal_manager = ProposalManager::new(proposals_config).await?;
         let treasury_manager = TreasuryManager::new(config.treasury_config.clone()).await?;
         let delegation_manager = DelegationManager::new().await?;
         

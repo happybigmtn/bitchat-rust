@@ -9,6 +9,8 @@ use crate::mesh::MeshService;
 use prometheus::{Counter, Gauge, Histogram, Registry};
 use rand;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "monitoring")]
+use sysinfo::System;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -693,7 +695,8 @@ impl PerformanceOptimizer {
 
                 // Collect current metrics using the cloned references
                 let current_metrics = Self::collect_metrics_static(
-                    &system_info,
+                    #[cfg(feature = "monitoring")] &system_info,
+                    #[cfg(not(feature = "monitoring"))] &(),
                     &consensus_manager,
                     &transport_coordinator,
                     &mesh_service,
@@ -739,7 +742,8 @@ impl PerformanceOptimizer {
 
     /// Static version of collect_metrics for async spawned tasks
     async fn collect_metrics_static(
-        system_info: &Arc<RwLock<System>>,
+        #[cfg(feature = "monitoring")] system_info: &Arc<RwLock<System>>,
+        #[cfg(not(feature = "monitoring"))] _system_info: &(),
         consensus_manager: &Option<Arc<ConsensusGameManager>>,
         transport_coordinator: &Option<Arc<MultiTransportCoordinator>>,
         mesh_service: &Option<Arc<MeshService>>,
@@ -750,16 +754,23 @@ impl PerformanceOptimizer {
         let start_time = Instant::now();
 
         // Update system information
+        #[cfg(feature = "monitoring")]
         {
             let mut system = system_info.write().await;
             system.refresh_all();
         }
 
         // Collect CPU metrics
+        #[cfg(feature = "monitoring")]
         let cpu_metrics = Self::collect_cpu_metrics_static(system_info).await;
+        #[cfg(not(feature = "monitoring"))]
+        let cpu_metrics = CpuMetrics::default();
 
         // Collect memory metrics
+        #[cfg(feature = "monitoring")]
         let memory_metrics = Self::collect_memory_metrics_static(system_info).await;
+        #[cfg(not(feature = "monitoring"))]
+        let memory_metrics = MemoryMetrics::default();
 
         // Collect network/latency metrics
         let network_latency =
