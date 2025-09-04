@@ -1,0 +1,306 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: bitcraps-game-engine-monitor
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: game-engine
+    monitoring: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bitcraps
+      app.kubernetes.io/component: game-engine
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 15s
+    scrapeTimeout: 10s
+    honorLabels: true
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: 'go_.*'
+      action: drop  # Drop Go runtime metrics to reduce cardinality
+    - sourceLabels: [__name__]
+      regex: 'process_.*'
+      action: drop  # Drop process metrics
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod_name
+    - sourceLabels: [__meta_kubernetes_pod_ip]
+      targetLabel: pod_ip
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: kubernetes_namespace
+    - targetLabel: service
+      replacement: bitcraps-game-engine
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: bitcraps-consensus-monitor
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: consensus
+    monitoring: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bitcraps
+      app.kubernetes.io/component: consensus
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 10s  # More frequent for consensus metrics
+    scrapeTimeout: 8s
+    honorLabels: true
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: 'go_.*'
+      action: drop
+    - sourceLabels: [__name__]
+      regex: 'process_.*'
+      action: drop
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod_name
+    - sourceLabels: [__meta_kubernetes_pod_ip]
+      targetLabel: pod_ip
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: kubernetes_namespace
+    - targetLabel: service
+      replacement: bitcraps-consensus
+    - sourceLabels: [__meta_kubernetes_pod_label_statefulset_kubernetes_io_pod_name]
+      targetLabel: consensus_node_id
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: bitcraps-api-gateway-monitor
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: api-gateway
+    monitoring: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bitcraps
+      app.kubernetes.io/component: api-gateway
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 15s
+    scrapeTimeout: 10s
+    honorLabels: true
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: 'go_.*'
+      action: drop
+    - sourceLabels: [__name__]
+      regex: 'process_.*'
+      action: drop
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod_name
+    - sourceLabels: [__meta_kubernetes_pod_ip]
+      targetLabel: pod_ip
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: kubernetes_namespace
+    - targetLabel: service
+      replacement: bitcraps-api-gateway
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: bitcraps-database-monitor
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: database
+    monitoring: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bitcraps
+      app.kubernetes.io/component: database
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 15s
+    honorLabels: true
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod_name
+    - sourceLabels: [__meta_kubernetes_pod_ip]
+      targetLabel: pod_ip
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: kubernetes_namespace
+    - targetLabel: service
+      replacement: bitcraps-database
+
+---
+# PodMonitor for additional application metrics
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: bitcraps-application-monitor
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    monitoring: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bitcraps
+  podMetricsEndpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 15s
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+      action: keep
+      regex: true
+    - sourceLabels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+      action: replace
+      targetLabel: __metrics_path__
+      regex: (.+)
+    - sourceLabels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+      action: replace
+      regex: ([^:]+)(?::\d+)?;(\d+)
+      replacement: $1:$2
+      targetLabel: __address__
+    - action: labelmap
+      regex: __meta_kubernetes_pod_label_(.+)
+    - sourceLabels: [__meta_kubernetes_namespace]
+      action: replace
+      targetLabel: kubernetes_namespace
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      action: replace
+      targetLabel: kubernetes_pod_name
+
+---
+# PrometheusRule for alerting
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: bitcraps-alerts
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    monitoring: prometheus
+    prometheus: main
+    role: alert-rules
+spec:
+  groups:
+  - name: bitcraps.rules
+    rules:
+    # High-level service availability alerts
+    - alert: BitCrapsServiceDown
+      expr: up{job=~"bitcraps-.*"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        team: platform
+      annotations:
+        summary: "BitCraps service {{ $labels.job }} is down"
+        description: "Service {{ $labels.job }} has been down for more than 1 minute"
+        runbook_url: "https://runbook.bitcraps.io/service-down"
+        
+    - alert: BitCrapsHighErrorRate
+      expr: |
+        rate(bitcraps_http_requests_total{status=~"5.."}[5m]) /
+        rate(bitcraps_http_requests_total[5m]) > 0.05
+      for: 3m
+      labels:
+        severity: warning
+        team: platform
+      annotations:
+        summary: "High error rate detected"
+        description: "Error rate is {{ $value | humanizePercentage }} for {{ $labels.service }}"
+        
+    - alert: BitCrapsHighLatency
+      expr: |
+        histogram_quantile(0.95, 
+          rate(bitcraps_http_request_duration_seconds_bucket[5m])
+        ) > 2.0
+      for: 5m
+      labels:
+        severity: warning
+        team: platform
+      annotations:
+        summary: "High latency detected"
+        description: "95th percentile latency is {{ $value }}s for {{ $labels.service }}"
+        
+    # Game engine specific alerts
+    - alert: GameEngineMemoryHigh
+      expr: |
+        container_memory_usage_bytes{container="game-engine"} /
+        container_spec_memory_limit_bytes{container="game-engine"} > 0.9
+      for: 2m
+      labels:
+        severity: warning
+        team: gaming
+      annotations:
+        summary: "Game engine memory usage high"
+        description: "Memory usage is {{ $value | humanizePercentage }} on pod {{ $labels.pod }}"
+        
+    - alert: ActiveGamesHigh
+      expr: bitcraps_active_games_total > 800
+      for: 5m
+      labels:
+        severity: warning
+        team: gaming
+      annotations:
+        summary: "High number of active games"
+        description: "{{ $value }} active games, approaching capacity limits"
+        
+    # Consensus alerts  
+    - alert: ConsensusLeaderElection
+      expr: changes(bitcraps_consensus_leader_id[10m]) > 2
+      for: 0m
+      labels:
+        severity: critical
+        team: consensus
+      annotations:
+        summary: "Frequent consensus leader changes"
+        description: "Consensus leader has changed {{ $value }} times in 10 minutes"
+        
+    - alert: ConsensusNodeDown
+      expr: bitcraps_consensus_nodes_healthy < 2
+      for: 1m
+      labels:
+        severity: critical
+        team: consensus
+      annotations:
+        summary: "Consensus cluster unhealthy"
+        description: "Only {{ $value }} consensus nodes are healthy"
+        
+    # Database alerts
+    - alert: DatabaseConnectionsHigh
+      expr: |
+        bitcraps_database_connections_active /
+        bitcraps_database_connections_max > 0.8
+      for: 2m
+      labels:
+        severity: warning
+        team: database
+      annotations:
+        summary: "Database connections running low"
+        description: "{{ $value | humanizePercentage }} of database connections in use"
+        
+    - alert: DatabaseReplicationLag
+      expr: bitcraps_database_replication_lag_seconds > 30
+      for: 1m
+      labels:
+        severity: warning
+        team: database
+      annotations:
+        summary: "Database replication lag high"
+        description: "Replication lag is {{ $value }}s"

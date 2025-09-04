@@ -1,0 +1,321 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: bitcraps-database
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: database
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: kubernetes
+spec:
+  serviceName: bitcraps-database-headless
+  replicas: 1  # Single PostgreSQL instance for simplicity
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bitcraps
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bitcraps
+        app.kubernetes.io/component: database
+        app.kubernetes.io/version: "0.1.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "9187"
+    spec:
+      serviceAccountName: bitcraps-database
+      securityContext:
+        runAsNonRoot: false  # PostgreSQL container needs root initially
+        fsGroup: 999        # PostgreSQL group
+        seccompProfile:
+          type: RuntimeDefault
+      imagePullSecrets:
+        - name: bitcraps-registry-secret
+      containers:
+      - name: postgresql
+        image: postgres:15.4-alpine
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsUser: 999  # postgres user
+          runAsGroup: 999 # postgres group
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+              - ALL
+            add:
+              - CHOWN
+              - DAC_OVERRIDE
+              - FOWNER
+              - SETGID
+              - SETUID
+        ports:
+        - name: postgresql
+          containerPort: 5432
+          protocol: TCP
+        env:
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: bitcraps-app-secrets
+              key: db-name
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: bitcraps-app-secrets
+              key: db-username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: bitcraps-app-secrets
+              key: db-password
+        - name: PGDATA
+          value: "/var/lib/postgresql/data/pgdata"
+        - name: POSTGRES_INITDB_ARGS
+          value: "--auth-host=md5 --auth-local=peer"
+        volumeMounts:
+        - name: postgresql-data
+          mountPath: /var/lib/postgresql/data
+        - name: postgresql-config
+          mountPath: /etc/postgresql
+          readOnly: true
+        - name: init-scripts
+          mountPath: /docker-entrypoint-initdb.d
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+        - name: run
+          mountPath: /var/run/postgresql
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - exec pg_isready -U "$POSTGRES_USER" -h 127.0.0.1 -p 5432
+          initialDelaySeconds: 120
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - exec pg_isready -U "$POSTGRES_USER" -h 127.0.0.1 -p 5432
+          initialDelaySeconds: 30
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+          successThreshold: 1
+        startupProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - exec pg_isready -U "$POSTGRES_USER" -h 127.0.0.1 -p 5432
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+          successThreshold: 1
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+            ephemeral-storage: 1Gi
+          limits:
+            cpu: 2
+            memory: 4Gi
+            ephemeral-storage: 5Gi
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - pg_ctl stop -D "$PGDATA" -m fast
+      - name: postgres-exporter
+        image: prometheuscommunity/postgres-exporter:v0.12.1
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
+        ports:
+        - name: metrics
+          containerPort: 9187
+          protocol: TCP
+        env:
+        - name: DATA_SOURCE_NAME
+          valueFrom:
+            secretKeyRef:
+              name: bitcraps-database-secrets
+              key: postgres-exporter-url
+        - name: PG_EXPORTER_WEB_LISTEN_ADDRESS
+          value: "0.0.0.0:9187"
+        - name: PG_EXPORTER_WEB_TELEMETRY_PATH
+          value: "/metrics"
+        livenessProbe:
+          httpGet:
+            path: /metrics
+            port: metrics
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: metrics
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: postgresql-config
+        configMap:
+          name: bitcraps-postgresql-config
+          defaultMode: 0444
+      - name: init-scripts
+        configMap:
+          name: bitcraps-database-init
+          defaultMode: 0555
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: run
+        emptyDir:
+          sizeLimit: 100Mi
+      terminationGracePeriodSeconds: 60
+      restartPolicy: Always
+      dnsPolicy: ClusterFirst
+  volumeClaimTemplates:
+  - metadata:
+      name: postgresql-data
+      labels:
+        app.kubernetes.io/name: bitcraps
+        app.kubernetes.io/component: database
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: fast-ssd  # Use fast storage for database
+      resources:
+        requests:
+          storage: 100Gi
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bitcraps-database
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: database
+  annotations:
+    description: "Service account for BitCraps database"
+automountServiceAccountToken: false  # Database doesn't need K8s API access
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bitcraps-postgresql-config
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: database
+data:
+  postgresql.conf: |
+    # PostgreSQL configuration optimized for BitCraps workload
+    
+    # Connection Settings
+    listen_addresses = '*'
+    port = 5432
+    max_connections = 200
+    superuser_reserved_connections = 3
+    
+    # Memory Settings
+    shared_buffers = 1GB                    # 25% of available memory
+    effective_cache_size = 3GB              # 75% of available memory
+    maintenance_work_mem = 256MB
+    checkpoint_completion_target = 0.9
+    wal_buffers = 16MB
+    default_statistics_target = 100
+    random_page_cost = 1.1                  # SSD optimized
+    effective_io_concurrency = 200          # SSD optimized
+    
+    # WAL Settings
+    wal_level = replica
+    max_wal_senders = 3
+    max_replication_slots = 3
+    wal_keep_size = 1GB
+    
+    # Logging
+    log_destination = 'stderr'
+    logging_collector = off
+    log_min_messages = warning
+    log_min_error_statement = error
+    log_min_duration_statement = 1000       # Log queries > 1s
+    
+    # Performance
+    checkpoint_timeout = 10min
+    max_wal_size = 2GB
+    min_wal_size = 1GB
+    
+    # Security
+    ssl = off                               # TLS handled at service mesh level
+    
+  pg_hba.conf: |
+    # BitCraps PostgreSQL Client Authentication Configuration
+    
+    # Database administrative login by Unix domain socket
+    local   all             postgres                                peer
+    
+    # "local" is for Unix domain socket connections only
+    local   all             all                                     peer
+    
+    # IPv4 local connections:
+    host    all             all             127.0.0.1/32            md5
+    host    all             all             10.0.0.0/8              md5
+    host    all             all             172.16.0.0/12           md5
+    host    all             all             192.168.0.0/16          md5
+    
+    # IPv6 local connections:
+    host    all             all             ::1/128                 md5
+    
+    # Kubernetes pod network (adjust CIDR as needed)
+    host    all             all             10.244.0.0/16           md5
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bitcraps-database-secrets
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: database
+type: Opaque
+data:
+  # PostgreSQL exporter connection URL
+  # Format: postgresql://username:password@hostname:port/database?sslmode=disable
+  postgres-exporter-url: cG9zdGdyZXNxbDovL2JpdGNyYXBzOkNIQU5HRV9NRUBiaXRjcmFwcy1kYXRhYmFzZTo1NDMyL2JpdGNyYXBzP3NzbG1vZGU9ZGlzYWJsZQ==

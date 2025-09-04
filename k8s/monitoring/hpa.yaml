@@ -1,0 +1,260 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: bitcraps-game-engine-hpa
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: game-engine
+    app.kubernetes.io/version: "0.1.0"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: bitcraps-game-engine
+  minReplicas: 3
+  maxReplicas: 20
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10  # Scale down by max 10% of current replicas
+        periodSeconds: 60
+      - type: Pods
+        value: 2   # Or scale down by max 2 pods
+        periodSeconds: 60
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50  # Scale up by max 50% of current replicas
+        periodSeconds: 60
+      - type: Pods
+        value: 5   # Or scale up by max 5 pods
+        periodSeconds: 60
+      selectPolicy: Max
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: active_games_per_pod
+      target:
+        type: AverageValue
+        averageValue: "50"  # Scale when average games per pod > 50
+  - type: Object
+    object:
+      metric:
+        name: websocket_connections_per_second
+      describedObject:
+        apiVersion: v1
+        kind: Service
+        name: bitcraps-game-engine
+      target:
+        type: Value
+        value: "100"  # Scale when WS connections/sec > 100
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: bitcraps-api-gateway-hpa
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: api-gateway
+    app.kubernetes.io/version: "0.1.0"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: bitcraps-api-gateway
+  minReplicas: 2
+  maxReplicas: 15
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 20
+        periodSeconds: 60
+      - type: Pods
+        value: 1
+        periodSeconds: 60
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+      - type: Pods
+        value: 3
+        periodSeconds: 30
+      selectPolicy: Max
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Pods
+    pods:
+      metric:
+        name: http_requests_per_second_per_pod
+      target:
+        type: AverageValue
+        averageValue: "500"  # Scale when RPS per pod > 500
+
+---
+# Vertical Pod Autoscaler for automatic resource optimization
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: bitcraps-consensus-vpa
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: consensus
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: bitcraps-consensus
+  updatePolicy:
+    updateMode: "Auto"  # Automatically apply VPA recommendations
+  resourcePolicy:
+    containerPolicies:
+    - containerName: consensus
+      minAllowed:
+        cpu: 500m
+        memory: 1Gi
+      maxAllowed:
+        cpu: 8
+        memory: 16Gi
+      controlledResources: ["cpu", "memory"]
+      controlledValues: RequestsAndLimits
+
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: bitcraps-database-vpa
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: database
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: bitcraps-database
+  updatePolicy:
+    updateMode: "Initial"  # Only set recommendations on pod creation
+  resourcePolicy:
+    containerPolicies:
+    - containerName: postgresql
+      minAllowed:
+        cpu: 500m
+        memory: 1Gi
+      maxAllowed:
+        cpu: 4
+        memory: 16Gi
+      controlledResources: ["cpu", "memory"]
+      controlledValues: RequestsAndLimits
+    - containerName: postgres-exporter
+      minAllowed:
+        cpu: 50m
+        memory: 64Mi
+      maxAllowed:
+        cpu: 500m
+        memory: 512Mi
+      controlledResources: ["cpu", "memory"]
+      controlledValues: RequestsAndLimits
+
+---
+# Custom autoscaler based on business metrics
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bitcraps-custom-metrics
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: monitoring
+data:
+  custom-metrics.yaml: |
+    rules:
+    - name: bitcraps.game.metrics
+      rules:
+      - record: bitcraps:active_games_per_pod
+        expr: |
+          bitcraps_active_games_total / on () (
+            kube_deployment_status_replicas{deployment="bitcraps-game-engine"}
+          )
+      - record: bitcraps:websocket_connections_per_second
+        expr: |
+          rate(bitcraps_websocket_connections_total[1m])
+      - record: bitcraps:http_requests_per_second_per_pod
+        expr: |
+          rate(bitcraps_http_requests_total[1m]) / on () (
+            kube_deployment_status_replicas{deployment="bitcraps-api-gateway"}
+          )
+      - record: bitcraps:consensus_latency_p99
+        expr: |
+          histogram_quantile(0.99, rate(bitcraps_consensus_duration_seconds_bucket[5m]))
+      - record: bitcraps:database_connections_ratio
+        expr: |
+          bitcraps_database_connections_active / bitcraps_database_connections_max
+          
+    - name: bitcraps.alerting.rules
+      rules:
+      - alert: HighGameEngineLoad
+        expr: bitcraps:active_games_per_pod > 80
+        for: 2m
+        labels:
+          severity: warning
+          component: game-engine
+        annotations:
+          summary: "High game load detected"
+          description: "Game engine pods are handling {{ $value }} games per pod on average"
+          
+      - alert: ConsensusLatencyHigh
+        expr: bitcraps:consensus_latency_p99 > 1.0
+        for: 5m
+        labels:
+          severity: critical
+          component: consensus
+        annotations:
+          summary: "High consensus latency detected"
+          description: "99th percentile consensus latency is {{ $value }} seconds"
+          
+      - alert: DatabaseConnectionsHigh
+        expr: bitcraps:database_connections_ratio > 0.8
+        for: 3m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Database connection pool nearly exhausted"
+          description: "Database is using {{ $value | humanizePercentage }} of available connections"

@@ -1,0 +1,473 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "BitCraps CDN Monitoring",
+    "tags": ["bitcraps", "cdn", "performance"],
+    "style": "dark",
+    "timezone": "browser",
+    "editable": true,
+    "hideControls": false,
+    "graphTooltip": 1,
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"],
+      "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"]
+    },
+    "templating": {
+      "list": [
+        {
+          "name": "environment",
+          "type": "custom",
+          "options": [
+            {"text": "Production", "value": "prod"},
+            {"text": "Staging", "value": "staging"},
+            {"text": "Development", "value": "dev"}
+          ],
+          "current": {"text": "Production", "value": "prod"}
+        },
+        {
+          "name": "cdn_provider",
+          "type": "custom",
+          "options": [
+            {"text": "All", "value": "all"},
+            {"text": "CloudFront", "value": "cloudfront"},
+            {"text": "Cloudflare", "value": "cloudflare"},
+            {"text": "Fastly", "value": "fastly"}
+          ],
+          "current": {"text": "All", "value": "all"}
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Deployments",
+          "datasource": "CloudWatch",
+          "enable": true,
+          "iconColor": "green",
+          "showIn": 0
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "CDN Request Volume",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "datasource": "CloudWatch",
+        "targets": [
+          {
+            "alias": "CloudFront Requests",
+            "dimensions": {"DistributionId": "$distribution_id"},
+            "metricName": "Requests",
+            "namespace": "AWS/CloudFront",
+            "period": "300",
+            "region": "us-east-1",
+            "statistics": ["Sum"]
+          },
+          {
+            "alias": "Cloudflare Requests",
+            "dimensions": {"ZoneId": "$cloudflare_zone_id"},
+            "metricName": "Requests",
+            "namespace": "Cloudflare/Analytics",
+            "period": "300",
+            "statistics": ["Sum"]
+          }
+        ],
+        "xAxis": {"show": true},
+        "yAxes": [
+          {"label": "Requests/sec", "show": true},
+          {"show": false}
+        ],
+        "legend": {"show": true, "values": true, "current": true, "max": true},
+        "tooltip": {"shared": true, "sort": 0, "value_type": "individual"},
+        "nullPointMode": "null as zero"
+      },
+      {
+        "id": 2,
+        "title": "Cache Hit Rate",
+        "type": "stat",
+        "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0},
+        "datasource": "CloudWatch",
+        "targets": [
+          {
+            "alias": "Cache Hit Rate",
+            "dimensions": {"DistributionId": "$distribution_id"},
+            "metricName": "CacheHitRate",
+            "namespace": "AWS/CloudFront",
+            "period": "300",
+            "region": "us-east-1",
+            "statistics": ["Average"]
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 70},
+                {"color": "green", "value": 85}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Origin Latency",
+        "type": "stat",
+        "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0},
+        "datasource": "CloudWatch",
+        "targets": [
+          {
+            "alias": "Origin Latency",
+            "dimensions": {"DistributionId": "$distribution_id"},
+            "metricName": "OriginLatency",
+            "namespace": "AWS/CloudFront",
+            "period": "300",
+            "region": "us-east-1",
+            "statistics": ["Average"]
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ms",
+            "min": 0,
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": 0},
+                {"color": "yellow", "value": 1000},
+                {"color": "red", "value": 3000}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Error Rates",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+        "datasource": "CloudWatch",
+        "targets": [
+          {
+            "alias": "4xx Error Rate",
+            "dimensions": {"DistributionId": "$distribution_id"},
+            "metricName": "4xxErrorRate",
+            "namespace": "AWS/CloudFront",
+            "period": "300",
+            "region": "us-east-1",
+            "statistics": ["Average"]
+          },
+          {
+            "alias": "5xx Error Rate",
+            "dimensions": {"DistributionId": "$distribution_id"},
+            "metricName": "5xxErrorRate",
+            "namespace": "AWS/CloudFront",
+            "period": "300",
+            "region": "us-east-1",
+            "statistics": ["Average"]
+          }
+        ],
+        "yAxes": [
+          {"label": "Error Rate (%)", "show": true, "max": 10},
+          {"show": false}
+        ],
+        "alert": {
+          "conditions": [
+            {
+              "evaluator": {"params": [5], "type": "gt"},
+              "operator": {"type": "and"},
+              "query": {"params": ["A", "5m", "now"]},
+              "reducer": {"params": [], "type": "avg"},
+              "type": "query"
+            }
+          ],
+          "executionErrorState": "alerting",
+          "for": "5m",
+          "frequency": "10s",
+          "handler": 1,
+          "name": "CDN High Error Rate",
+          "noDataState": "no_data",
+          "notifications": []
+        }
+      },
+      {
+        "id": 5,
+        "title": "Bandwidth Utilization",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+        "datasource": "CloudWatch",
+        "targets": [
+          {
+            "alias": "Bytes Downloaded",
+            "dimensions": {"DistributionId": "$distribution_id"},
+            "metricName": "BytesDownloaded",
+            "namespace": "AWS/CloudFront",
+            "period": "300",
+            "region": "us-east-1",
+            "statistics": ["Sum"]
+          },
+          {
+            "alias": "Bytes Uploaded",
+            "dimensions": {"DistributionId": "$distribution_id"},
+            "metricName": "BytesUploaded",
+            "namespace": "AWS/CloudFront",
+            "period": "300",
+            "region": "us-east-1",
+            "statistics": ["Sum"]
+          }
+        ],
+        "yAxes": [
+          {"label": "Bytes/sec", "show": true},
+          {"show": false}
+        ]
+      },
+      {
+        "id": 6,
+        "title": "WASM Performance",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 16},
+        "datasource": "CloudWatch",
+        "targets": [
+          {
+            "alias": "WASM Requests",
+            "dimensions": {"DistributionId": "$wasm_distribution_id"},
+            "metricName": "Requests",
+            "namespace": "AWS/CloudFront",
+            "period": "300",
+            "region": "us-east-1",
+            "statistics": ["Sum"]
+          },
+          {
+            "alias": "WASM Cache Hit Rate",
+            "dimensions": {"DistributionId": "$wasm_distribution_id"},
+            "metricName": "CacheHitRate",
+            "namespace": "AWS/CloudFront",
+            "period": "300",
+            "region": "us-east-1",
+            "statistics": ["Average"]
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "API Performance",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 8, "x": 8, "y": 16},
+        "datasource": "CloudWatch",
+        "targets": [
+          {
+            "alias": "API Requests",
+            "dimensions": {"DistributionId": "$api_distribution_id"},
+            "metricName": "Requests",
+            "namespace": "AWS/CloudFront",
+            "period": "300",
+            "region": "us-east-1",
+            "statistics": ["Sum"]
+          },
+          {
+            "alias": "API Latency",
+            "dimensions": {"DistributionId": "$api_distribution_id"},
+            "metricName": "OriginLatency",
+            "namespace": "AWS/CloudFront",
+            "period": "300",
+            "region": "us-east-1",
+            "statistics": ["Average"]
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Game Traffic",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 8, "x": 16, "y": 16},
+        "datasource": "CloudWatch",
+        "targets": [
+          {
+            "alias": "Game Requests",
+            "dimensions": {"DistributionId": "$game_distribution_id"},
+            "metricName": "Requests",
+            "namespace": "AWS/CloudFront",
+            "period": "300",
+            "region": "us-east-1",
+            "statistics": ["Sum"]
+          },
+          {
+            "alias": "WebSocket Connections",
+            "dimensions": {"DistributionId": "$game_distribution_id"},
+            "metricName": "Requests",
+            "namespace": "AWS/CloudFront",
+            "period": "300",
+            "region": "us-east-1",
+            "statistics": ["Sum"]
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "WAF Security Metrics",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+        "datasource": "CloudWatch",
+        "targets": [
+          {
+            "alias": "Allowed Requests",
+            "dimensions": {"WebACL": "$waf_web_acl_name", "Region": "CloudFront", "Rule": "ALL"},
+            "metricName": "AllowedRequests",
+            "namespace": "AWS/WAFV2",
+            "period": "300",
+            "region": "us-east-1",
+            "statistics": ["Sum"]
+          },
+          {
+            "alias": "Blocked Requests",
+            "dimensions": {"WebACL": "$waf_web_acl_name", "Region": "CloudFront", "Rule": "ALL"},
+            "metricName": "BlockedRequests",
+            "namespace": "AWS/WAFV2",
+            "period": "300",
+            "region": "us-east-1",
+            "statistics": ["Sum"]
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Lambda@Edge Performance",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+        "datasource": "CloudWatch",
+        "targets": [
+          {
+            "alias": "API Auth Duration",
+            "dimensions": {"FunctionName": "$api_auth_lambda_name"},
+            "metricName": "Duration",
+            "namespace": "AWS/Lambda",
+            "period": "300",
+            "region": "us-east-1",
+            "statistics": ["Average"]
+          },
+          {
+            "alias": "Image Optimization Duration",
+            "dimensions": {"FunctionName": "$image_optimization_lambda_name"},
+            "metricName": "Duration",
+            "namespace": "AWS/Lambda",
+            "period": "300",
+            "region": "us-east-1",
+            "statistics": ["Average"]
+          }
+        ]
+      },
+      {
+        "id": 11,
+        "title": "Geographic Distribution",
+        "type": "worldmap",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32},
+        "datasource": "CloudWatch",
+        "targets": [
+          {
+            "alias": "Requests by Country",
+            "dimensions": {"DistributionId": "$distribution_id"},
+            "metricName": "Requests",
+            "namespace": "AWS/CloudFront",
+            "period": "300",
+            "region": "us-east-1",
+            "statistics": ["Sum"]
+          }
+        ],
+        "worldmapPanel": {
+          "circleMaxSize": 30,
+          "circleMinSize": 2,
+          "colors": ["rgba(245, 54, 54, 0.9)", "rgba(237, 129, 40, 0.89)", "rgba(50, 172, 45, 0.97)"],
+          "decimals": 0,
+          "esMetric": "Count",
+          "hideEmpty": false,
+          "hideZero": false,
+          "initialZoom": "1",
+          "locationData": "countries",
+          "mapCenter": "(0°, 0°)",
+          "mapCenterLatitude": 0,
+          "mapCenterLongitude": 0,
+          "maxDataPoints": 1,
+          "mouseWheelZoom": false,
+          "showLegend": true,
+          "stickyLabels": false,
+          "tableQueryOptions": {
+            "geohashField": "geohash",
+            "latitudeField": "latitude",
+            "longitudeField": "longitude",
+            "metricField": "metric",
+            "queryType": ""
+          },
+          "thresholds": "0,10",
+          "unitPlural": "requests",
+          "unitSingle": "request",
+          "unitSingular": "request",
+          "valueName": "total"
+        }
+      },
+      {
+        "id": 12,
+        "title": "Top Error URLs",
+        "type": "table",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+        "datasource": "CloudWatch Logs",
+        "targets": [
+          {
+            "expression": "SOURCE '/aws/cloudfront/DISTRIBUTION_ID' | fields @timestamp, c-ip, cs-method, cs-uri-stem, sc-status | filter sc-status >= 400 | stats count() by cs-uri-stem | sort count desc | limit 10",
+            "region": "us-east-1"
+          }
+        ]
+      },
+      {
+        "id": 13,
+        "title": "Top User Agents",
+        "type": "table", 
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 40},
+        "datasource": "CloudWatch Logs",
+        "targets": [
+          {
+            "expression": "SOURCE '/aws/cloudfront/DISTRIBUTION_ID' | fields @timestamp, cs-user-agent | stats count() by cs-user-agent | sort count desc | limit 10",
+            "region": "us-east-1"
+          }
+        ]
+      },
+      {
+        "id": 14,
+        "title": "Real User Monitoring",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 48},
+        "datasource": "Custom RUM",
+        "targets": [
+          {
+            "alias": "Page Load Time",
+            "metric": "page_load_time",
+            "aggregation": "avg"
+          },
+          {
+            "alias": "First Contentful Paint",
+            "metric": "first_contentful_paint",
+            "aggregation": "avg"
+          },
+          {
+            "alias": "Largest Contentful Paint",
+            "metric": "largest_contentful_paint",
+            "aggregation": "avg"
+          },
+          {
+            "alias": "WASM Load Time",
+            "metric": "wasm_load_time",
+            "aggregation": "avg"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -157,6 +157,9 @@ pub enum Error {
 
     #[error("WASM error: {0}")]
     Wasm(String),
+
+    #[error("GPU error: {0}")]
+    GpuError(String),
 }
 
 impl From<std::ffi::NulError> for Error {

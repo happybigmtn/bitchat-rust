@@ -1,0 +1,265 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitcraps-game-engine
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: game-engine
+    app.kubernetes.io/version: "0.1.0"
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: "/metrics"
+    prometheus.io/port: "9090"
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8000
+    targetPort: http
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  - name: health
+    port: 8080
+    targetPort: health
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: game-engine
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitcraps-consensus
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: consensus
+    app.kubernetes.io/version: "0.1.0"
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: "/metrics" 
+    prometheus.io/port: "9090"
+spec:
+  type: ClusterIP
+  ports:
+  - name: raft
+    port: 8001
+    targetPort: raft
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  - name: health
+    port: 8080
+    targetPort: health
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: consensus
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitcraps-consensus-headless
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: consensus
+    app.kubernetes.io/version: "0.1.0"
+spec:
+  type: ClusterIP
+  clusterIP: None  # Headless service for StatefulSet
+  ports:
+  - name: raft
+    port: 8001
+    targetPort: raft
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: consensus
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitcraps-api-gateway
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: api-gateway
+    app.kubernetes.io/version: "0.1.0"
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: "/metrics"
+    prometheus.io/port: "9090"
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  - name: health
+    port: 8081
+    targetPort: health
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: api-gateway
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitcraps-monitoring
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/version: "0.1.0"
+spec:
+  type: ClusterIP
+  ports:
+  - name: prometheus
+    port: 9090
+    targetPort: prometheus
+    protocol: TCP
+  - name: grafana
+    port: 3000
+    targetPort: grafana
+    protocol: TCP
+  - name: alertmanager
+    port: 9093
+    targetPort: alertmanager
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: monitoring
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitcraps-database
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: database
+    app.kubernetes.io/version: "0.1.0"
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: "/metrics"
+    prometheus.io/port: "9187"
+spec:
+  type: ClusterIP
+  ports:
+  - name: postgresql
+    port: 5432
+    targetPort: postgresql
+    protocol: TCP
+  - name: metrics
+    port: 9187
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: database
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitcraps-database-headless
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: database
+    app.kubernetes.io/version: "0.1.0"
+spec:
+  type: ClusterIP
+  clusterIP: None  # Headless service for StatefulSet
+  ports:
+  - name: postgresql
+    port: 5432
+    targetPort: postgresql
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: database
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitcraps-external
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: external-access
+    app.kubernetes.io/version: "0.1.0"
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  type: LoadBalancer
+  ports:
+  - name: api
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  - name: grafana
+    port: 3000
+    targetPort: 3000
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: api-gateway
+
+---
+# Service for internal mesh communication
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitcraps-mesh
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: mesh
+    app.kubernetes.io/version: "0.1.0"
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+spec:
+  type: LoadBalancer
+  loadBalancerSourceRanges:
+  - 10.0.0.0/8      # Private networks only
+  - 172.16.0.0/12
+  - 192.168.0.0/16
+  ports:
+  - name: game-tcp
+    port: 8000
+    targetPort: 8000
+    protocol: TCP
+  - name: consensus-tcp
+    port: 8001
+    targetPort: 8001
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: bitcraps

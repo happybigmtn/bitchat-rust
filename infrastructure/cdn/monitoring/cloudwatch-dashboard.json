@@ -1,0 +1,327 @@
+{
+  "widgets": [
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 0,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/CloudFront", "Requests", "DistributionId", "DISTRIBUTION_ID", "Region", "Global" ],
+          [ ".", "BytesDownloaded", ".", ".", ".", "." ],
+          [ ".", "BytesUploaded", ".", ".", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "CloudFront Traffic Overview",
+        "period": 300,
+        "stat": "Sum",
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "High Traffic Threshold",
+              "value": 10000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 0,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/CloudFront", "OriginLatency", "DistributionId", "DISTRIBUTION_ID", "Region", "Global" ],
+          [ ".", "4xxErrorRate", ".", ".", ".", "." ],
+          [ ".", "5xxErrorRate", ".", ".", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "CloudFront Performance & Errors",
+        "period": 300,
+        "stat": "Average",
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "Latency SLA (3s)",
+              "value": 3000
+            },
+            {
+              "label": "Error Rate Threshold (5%)",
+              "value": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 6,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/CloudFront", "CacheHitRate", "DistributionId", "DISTRIBUTION_ID", "Region", "Global" ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Cache Hit Rate",
+        "period": 300,
+        "stat": "Average",
+        "yAxis": {
+          "left": {
+            "min": 0,
+            "max": 100
+          }
+        },
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "Target Cache Hit Rate (85%)",
+              "value": 85
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 6,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/CloudFront", "Requests", "DistributionId", "WASM_DISTRIBUTION_ID", "Region", "Global", { "label": "WASM Requests" } ],
+          [ ".", ".", "DistributionId", "API_DISTRIBUTION_ID", ".", ".", { "label": "API Requests" } ],
+          [ ".", ".", "DistributionId", "GAME_DISTRIBUTION_ID", ".", ".", { "label": "Game Requests" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": true,
+        "region": "us-east-1",
+        "title": "Requests by Distribution",
+        "period": 300,
+        "stat": "Sum"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 6,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/CloudFront", "BytesDownloaded", "DistributionId", "DISTRIBUTION_ID", "Region", "Global" ]
+        ],
+        "view": "singleValue",
+        "region": "us-east-1",
+        "title": "Total Data Transfer (24h)",
+        "period": 86400,
+        "stat": "Sum"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 12,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/WAFV2", "AllowedRequests", "WebACL", "WAF_WEB_ACL_NAME", "Region", "CloudFront", "Rule", "ALL" ],
+          [ ".", "BlockedRequests", ".", ".", ".", ".", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "WAF Request Volume",
+        "period": 300,
+        "stat": "Sum"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 12,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/WAFV2", "BlockedRequests", "WebACL", "WAF_WEB_ACL_NAME", "Region", "CloudFront", "Rule", "RateLimitRule" ],
+          [ ".", ".", ".", ".", ".", ".", ".", "CommonRuleSetMetric" ],
+          [ ".", ".", ".", ".", ".", ".", ".", "KnownBadInputsRuleSetMetric" ],
+          [ ".", ".", ".", ".", ".", ".", ".", "BlockBadBotsMetric" ]
+        ],
+        "view": "timeSeries",
+        "stacked": true,
+        "region": "us-east-1",
+        "title": "WAF Blocks by Rule",
+        "period": 300,
+        "stat": "Sum"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 18,
+      "width": 6,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/Lambda", "Duration", "FunctionName", "API_AUTH_LAMBDA_NAME" ],
+          [ ".", "Invocations", ".", "." ],
+          [ ".", "Errors", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Lambda@Edge - API Auth",
+        "period": 300,
+        "stat": "Average"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 6,
+      "y": 18,
+      "width": 6,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/Lambda", "Duration", "FunctionName", "IMAGE_OPTIMIZATION_LAMBDA_NAME" ],
+          [ ".", "Invocations", ".", "." ],
+          [ ".", "Errors", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Lambda@Edge - Image Optimization",
+        "period": 300,
+        "stat": "Average"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 18,
+      "width": 6,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/S3", "BucketRequests", "BucketName", "CDN_ORIGIN_BUCKET_NAME", "FilterId", "EntireBucket" ],
+          [ ".", "AllRequests", ".", ".", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-west-2",
+        "title": "S3 Origin Requests",
+        "period": 300,
+        "stat": "Sum"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 18,
+      "y": 18,
+      "width": 6,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/S3", "NumberOfObjects", "BucketName", "CDN_ORIGIN_BUCKET_NAME", "StorageType", "AllStorageTypes" ],
+          [ ".", "BucketSizeBytes", ".", ".", ".", "." ]
+        ],
+        "view": "singleValue",
+        "region": "us-west-2",
+        "title": "S3 Origin Stats",
+        "period": 86400,
+        "stat": "Average"
+      }
+    },
+    {
+      "type": "log",
+      "x": 0,
+      "y": 24,
+      "width": 24,
+      "height": 6,
+      "properties": {
+        "query": "SOURCE '/aws/cloudfront/DISTRIBUTION_ID'\n| fields @timestamp, c-ip, cs-method, cs-uri-stem, sc-status, cs-referer, cs-user-agent, time-taken\n| filter sc-status >= 400\n| sort @timestamp desc\n| limit 100",
+        "region": "us-east-1",
+        "title": "Recent CDN Errors (4xx/5xx)",
+        "view": "table"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 30,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ { "expression": "m1 * 100 / (m1 + m2)", "label": "Cache Hit Rate (%)" } ],
+          [ "AWS/CloudFront", "CacheHitRate", "DistributionId", "DISTRIBUTION_ID", "Region", "Global", { "id": "m1", "visible": false } ],
+          [ ".", "CacheMissRate", ".", ".", ".", ".", { "id": "m2", "visible": false } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Calculated Cache Efficiency",
+        "period": 300,
+        "stat": "Average",
+        "yAxis": {
+          "left": {
+            "min": 0,
+            "max": 100
+          }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 30,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ { "expression": "RATE(m1)", "label": "Requests per Second" } ],
+          [ "AWS/CloudFront", "Requests", "DistributionId", "DISTRIBUTION_ID", "Region", "Global", { "id": "m1", "visible": false } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Request Rate (RPS)",
+        "period": 300,
+        "stat": "Sum"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 30,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ { "expression": "m1 * 8 / 1000000", "label": "Bandwidth (Mbps)" } ],
+          [ "AWS/CloudFront", "BytesDownloaded", "DistributionId", "DISTRIBUTION_ID", "Region", "Global", { "id": "m1", "visible": false } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Bandwidth Utilization",
+        "period": 300,
+        "stat": "Sum"
+      }
+    }
+  ]
+}

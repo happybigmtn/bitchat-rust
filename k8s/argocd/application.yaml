@@ -1,0 +1,286 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: bitcraps
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: bitcraps
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  
+  source:
+    repoURL: https://github.com/bitcraps/bitcraps-rust.git
+    targetRevision: HEAD
+    path: helm/bitcraps
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-production.yaml
+      parameters:
+        - name: app.environment
+          value: production
+        - name: gameEngine.image.tag
+          value: "0.1.0"
+        - name: consensus.image.tag  
+          value: "0.1.0"
+        - name: apiGateway.image.tag
+          value: "0.1.0"
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: bitcraps
+    
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ApplyOutOfSyncOnly=true
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+        
+  revisionHistoryLimit: 10
+  
+  info:
+    - name: 'Documentation'
+      value: 'https://docs.bitcraps.io'
+    - name: 'Dashboard'  
+      value: 'https://grafana.bitcraps.io'
+    - name: 'Support'
+      value: 'https://github.com/bitcraps/bitcraps-rust/issues'
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: bitcraps-staging
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/environment: staging
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  
+  source:
+    repoURL: https://github.com/bitcraps/bitcraps-rust.git
+    targetRevision: HEAD
+    path: helm/bitcraps
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-staging.yaml
+      parameters:
+        - name: app.environment
+          value: staging
+        - name: gameEngine.replicaCount
+          value: "1"
+        - name: consensus.replicaCount
+          value: "1"  
+        - name: apiGateway.replicaCount
+          value: "1"
+        - name: database.postgresql.primary.persistence.size
+          value: "10Gi"
+        - name: monitoring.prometheus.persistence.size
+          value: "50Gi"
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: bitcraps-staging
+    
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: bitcraps-environments
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: bitcraps-applicationset
+spec:
+  generators:
+  - clusters:
+      selector:
+        matchLabels:
+          environment: bitcraps
+  - git:
+      repoURL: https://github.com/bitcraps/bitcraps-rust.git
+      revision: HEAD
+      directories:
+      - path: k8s/environments/*
+  template:
+    metadata:
+      name: 'bitcraps-{{path.basename}}'
+      namespace: argocd
+      labels:
+        app.kubernetes.io/name: bitcraps
+        app.kubernetes.io/environment: '{{path.basename}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/bitcraps/bitcraps-rust.git
+        targetRevision: HEAD
+        path: helm/bitcraps
+        helm:
+          valueFiles:
+            - values.yaml
+            - 'values-{{path.basename}}.yaml'
+          parameters:
+            - name: app.environment
+              value: '{{path.basename}}'
+      destination:
+        server: '{{server}}'
+        namespace: 'bitcraps-{{path.basename}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - PrunePropagationPolicy=foreground
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: bitcraps
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: bitcraps-project
+spec:
+  description: BitCraps gaming platform project
+  
+  sourceRepos:
+  - 'https://github.com/bitcraps/bitcraps-rust.git'
+  - 'https://charts.bitnami.com/bitnami'
+  - 'https://prometheus-community.github.io/helm-charts'
+  - 'https://grafana.github.io/helm-charts'
+  - 'https://kubernetes.github.io/ingress-nginx'
+  - 'https://charts.jetstack.io'
+  
+  destinations:
+  - namespace: 'bitcraps*'
+    server: https://kubernetes.default.svc
+  - namespace: monitoring
+    server: https://kubernetes.default.svc
+  
+  clusterResourceWhitelist:
+  - group: ''
+    kind: Namespace
+  - group: ''
+    kind: PersistentVolume
+  - group: storage.k8s.io
+    kind: StorageClass
+  - group: rbac.authorization.k8s.io
+    kind: ClusterRole
+  - group: rbac.authorization.k8s.io
+    kind: ClusterRoleBinding
+  - group: networking.k8s.io
+    kind: NetworkPolicy
+  - group: policy
+    kind: PodSecurityPolicy
+  - group: cert-manager.io
+    kind: ClusterIssuer
+  
+  namespaceResourceWhitelist:
+  - group: ''
+    kind: ConfigMap
+  - group: ''
+    kind: Secret
+  - group: ''
+    kind: Service
+  - group: ''
+    kind: ServiceAccount
+  - group: ''
+    kind: PersistentVolumeClaim
+  - group: apps
+    kind: Deployment
+  - group: apps
+    kind: StatefulSet
+  - group: apps
+    kind: DaemonSet
+  - group: networking.k8s.io
+    kind: Ingress
+  - group: autoscaling
+    kind: HorizontalPodAutoscaler
+  - group: autoscaling.k8s.io
+    kind: VerticalPodAutoscaler
+  - group: policy
+    kind: PodDisruptionBudget
+  - group: monitoring.coreos.com
+    kind: ServiceMonitor
+  - group: monitoring.coreos.com
+    kind: PrometheusRule
+  - group: cert-manager.io
+    kind: Certificate
+  
+  roles:
+  - name: admin
+    description: Full access to BitCraps project
+    policies:
+    - p, proj:bitcraps:admin, applications, *, bitcraps/*, allow
+    - p, proj:bitcraps:admin, repositories, *, *, allow
+    - p, proj:bitcraps:admin, clusters, get, *, allow
+    groups:
+    - bitcraps:admin
+    
+  - name: developer
+    description: Developer access to BitCraps project
+    policies:
+    - p, proj:bitcraps:developer, applications, get, bitcraps/*, allow
+    - p, proj:bitcraps:developer, applications, sync, bitcraps/*, allow
+    - p, proj:bitcraps:developer, applications, action/*, bitcraps/*, allow
+    - p, proj:bitcraps:developer, repositories, get, *, allow
+    groups:
+    - bitcraps:developers
+    
+  - name: viewer
+    description: Read-only access to BitCraps project
+    policies:
+    - p, proj:bitcraps:viewer, applications, get, bitcraps/*, allow
+    - p, proj:bitcraps:viewer, repositories, get, *, allow
+    groups:
+    - bitcraps:viewers
+
+  syncWindows:
+  - kind: allow
+    schedule: '0 2 * * *'  # Allow deployments at 2 AM
+    duration: 2h
+    applications:
+    - bitcraps
+  - kind: deny
+    schedule: '0 8-18 * * MON-FRI'  # Block during business hours
+    duration: 10h
+    applications:
+    - bitcraps
+    timeZone: America/Los_Angeles

@@ -727,9 +727,26 @@ impl MeshService {
                 if let Some(event) = transport.next_event().await {
                     match event {
                         TransportEvent::DataReceived { peer_id, data } => {
-                            // Parse packet and handle
-                            let mut cursor = std::io::Cursor::new(data);
-                            if let Ok(packet) = BitchatPacket::deserialize(&mut cursor) {
+                            // Try to parse using bincode first (MVP wire format), then fall back
+                            let packet_opt: Option<BitchatPacket> = match bincode::deserialize(&data) {
+                                Ok(pkt) => Some(pkt),
+                                Err(_) => {
+                                    let mut cursor = std::io::Cursor::new(&data);
+                                    match BitchatPacket::deserialize(&mut cursor) {
+                                        Ok(pkt) => Some(pkt),
+                                        Err(e) => {
+                                            log::warn!(
+                                                "Failed to decode incoming packet: {} ({} bytes)",
+                                                e,
+                                                data.len()
+                                            );
+                                            None
+                                        }
+                                    }
+                                }
+                            };
+
+                            if let Some(packet) = packet_opt {
                                 // Handle packet processing inline
                                 Self::process_received_packet(
                                     packet,

@@ -1,0 +1,242 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bitcraps-app-config
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: config
+data:
+  # Application Configuration
+  app.toml: |
+    [app]
+    name = "bitcraps"
+    version = "0.1.0"
+    debug = false
+    max_games = 1000
+    session_timeout = "3600s"
+    mobile_mode = false
+    max_concurrent_connections = 5000
+    max_bandwidth_mbps = 1000.0
+    
+    [network]
+    port = 8000
+    prometheus_port = 9090
+    dashboard_port = 8080
+    enable_ble = false  # Disabled in K8s
+    listen_tcp = "0.0.0.0:8000"
+    pow_difficulty = 4
+    
+    [database]
+    max_connections = 100
+    connection_timeout = "30s"
+    idle_timeout = "600s"
+    max_lifetime = "3600s"
+    
+    [security]
+    enable_tls = true
+    cert_path = "/etc/certs/tls.crt"
+    key_path = "/etc/certs/tls.key"
+    ca_path = "/etc/certs/ca.crt"
+    
+    [monitoring]
+    enable_prometheus = true
+    enable_tracing = true
+    log_level = "info"
+    metrics_path = "/metrics"
+    health_path = "/health"
+    
+  # Logging Configuration
+  log4rs.yaml: |
+    refresh_rate: 30 seconds
+    appenders:
+      stdout:
+        kind: console
+        encoder:
+          kind: pattern
+          pattern: "{d(%Y-%m-%d %H:%M:%S%.3f)} [{t}] {h({l})} {M}:{L} - {m}{n}"
+      file:
+        kind: file
+        path: "/var/log/bitcraps/app.log"
+        encoder:
+          kind: pattern
+          pattern: "{d(%Y-%m-%d %H:%M:%S%.3f)} [{t}] {l} {M}:{L} - {m}{n}"
+        append: true
+    loggers:
+      bitcraps:
+        level: info
+        appenders:
+          - stdout
+          - file
+        additive: false
+    root:
+      level: warn
+      appenders:
+        - stdout
+        
+  # Prometheus Configuration
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    
+    scrape_configs:
+      - job_name: 'bitcraps'
+        static_configs:
+          - targets: ['localhost:9090']
+        metrics_path: /metrics
+        scrape_interval: 5s
+        
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+            
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bitcraps-nginx-config
+  namespace: bitcraps  
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: gateway
+data:
+  nginx.conf: |
+    events {
+        worker_connections 1024;
+    }
+    
+    http {
+        upstream bitcraps-backend {
+            least_conn;
+            server bitcraps-game-engine:8000 max_fails=3 fail_timeout=30s;
+            server bitcraps-consensus:8001 max_fails=3 fail_timeout=30s;
+            server bitcraps-api-gateway:8080 max_fails=3 fail_timeout=30s;
+        }
+        
+        upstream prometheus-backend {
+            server bitcraps-monitoring:9090;
+        }
+        
+        server {
+            listen 80;
+            server_name _;
+            
+            # Health check endpoint
+            location /health {
+                access_log off;
+                return 200 "healthy\n";
+                add_header Content-Type text/plain;
+            }
+            
+            # Metrics endpoint
+            location /metrics {
+                proxy_pass http://prometheus-backend;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+            }
+            
+            # API endpoints  
+            location /api/ {
+                proxy_pass http://bitcraps-backend;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                
+                # WebSocket support
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection "upgrade";
+                
+                # Timeouts
+                proxy_connect_timeout 60s;
+                proxy_send_timeout 60s;
+                proxy_read_timeout 60s;
+            }
+            
+            # Gaming WebSocket endpoint
+            location /ws {
+                proxy_pass http://bitcraps-backend;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection "upgrade";
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+            }
+        }
+    }
+    
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bitcraps-database-init
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: database
+data:
+  init.sql: |
+    -- Initialize BitCraps database
+    CREATE DATABASE IF NOT EXISTS bitcraps;
+    
+    -- Create application user
+    CREATE USER IF NOT EXISTS 'bitcraps'@'%' IDENTIFIED BY 'CHANGE_ME';
+    GRANT ALL PRIVILEGES ON bitcraps.* TO 'bitcraps'@'%';
+    
+    USE bitcraps;
+    
+    -- Games table
+    CREATE TABLE IF NOT EXISTS games (
+        id VARCHAR(36) PRIMARY KEY,
+        state VARCHAR(50) NOT NULL,
+        buy_in DECIMAL(20,8) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        players JSON,
+        consensus_state JSON
+    );
+    
+    -- Players table  
+    CREATE TABLE IF NOT EXISTS players (
+        id VARCHAR(36) PRIMARY KEY,
+        nickname VARCHAR(255) NOT NULL,
+        balance DECIMAL(20,8) DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    );
+    
+    -- Transactions table
+    CREATE TABLE IF NOT EXISTS transactions (
+        id VARCHAR(36) PRIMARY KEY,
+        from_player VARCHAR(36),
+        to_player VARCHAR(36), 
+        amount DECIMAL(20,8) NOT NULL,
+        transaction_type VARCHAR(50) NOT NULL,
+        game_id VARCHAR(36),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_player (from_player, to_player),
+        INDEX idx_game (game_id),
+        INDEX idx_created (created_at)
+    );
+    
+    -- Consensus log table
+    CREATE TABLE IF NOT EXISTS consensus_log (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        term BIGINT NOT NULL,
+        index_num BIGINT NOT NULL,
+        command JSON NOT NULL,
+        checksum VARCHAR(64) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY idx_term_index (term, index_num),
+        INDEX idx_created (created_at)
+    );

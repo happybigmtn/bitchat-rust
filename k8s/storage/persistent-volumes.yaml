@@ -1,0 +1,215 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bitcraps-game-data
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: game-engine
+    app.kubernetes.io/data-type: game-state
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 50Gi
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bitcraps
+      app.kubernetes.io/component: game-engine
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bitcraps-consensus-data
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: consensus
+    app.kubernetes.io/data-type: consensus-state
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 100Gi
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bitcraps
+      app.kubernetes.io/component: consensus
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bitcraps-raft-data
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: consensus
+    app.kubernetes.io/data-type: raft-log
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 200Gi  # Raft logs can grow large
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bitcraps
+      app.kubernetes.io/component: consensus
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bitcraps-prometheus-data
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/data-type: metrics
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard-ssd
+  resources:
+    requests:
+      storage: 500Gi
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bitcraps
+      app.kubernetes.io/component: monitoring
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bitcraps-grafana-data
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/data-type: dashboards
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard-ssd
+  resources:
+    requests:
+      storage: 10Gi
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bitcraps
+      app.kubernetes.io/component: monitoring
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bitcraps-alertmanager-data
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/data-type: alerts
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard-ssd
+  resources:
+    requests:
+      storage: 5Gi
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bitcraps
+      app.kubernetes.io/component: monitoring
+
+---
+# Storage Class Definitions for different performance tiers
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast-ssd
+  labels:
+    app.kubernetes.io/name: bitcraps
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+    description: "High-performance SSD storage for critical components"
+provisioner: kubernetes.io/aws-ebs
+parameters:
+  type: gp3
+  iops: "3000"
+  throughput: "125"  # MB/s
+  fsType: ext4
+  encrypted: "true"
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+allowVolumeExpansion: true
+
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: standard-ssd
+  labels:
+    app.kubernetes.io/name: bitcraps
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+    description: "Standard SSD storage for general workloads"
+provisioner: kubernetes.io/aws-ebs
+parameters:
+  type: gp3
+  iops: "3000"
+  throughput: "125"
+  fsType: ext4
+  encrypted: "true"
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: archive-storage
+  labels:
+    app.kubernetes.io/name: bitcraps
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+    description: "Cost-effective storage for archives and backups"
+provisioner: kubernetes.io/aws-ebs
+parameters:
+  type: st1  # Throughput Optimized HDD
+  fsType: ext4
+  encrypted: "true"
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+allowVolumeExpansion: true
+
+---
+# Backup PVCs for disaster recovery
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bitcraps-backup-storage
+  namespace: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/component: backup
+    app.kubernetes.io/data-type: backup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: archive-storage
+  resources:
+    requests:
+      storage: 1Ti
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bitcraps
+      app.kubernetes.io/component: backup

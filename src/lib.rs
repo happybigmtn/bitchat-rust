@@ -17,6 +17,7 @@
 //! decentralized craps casino over Bluetooth mesh networks.
 
 pub mod app; // Main application coordinator
+pub mod bridges; // Cross-chain bridge infrastructure for multi-blockchain interoperability
 pub mod cache; // Multi-tier caching system
 pub mod compliance; // Regulatory compliance and KYC/AML systems
 pub mod config;
@@ -26,9 +27,12 @@ pub mod crypto; // Cryptographic foundations
 pub mod database;
 pub mod discovery; // Peer discovery (Bluetooth, DHT)
 pub mod economics; // Advanced token economics and supply management
+pub mod edge; // Edge computing and CDN integration
 pub mod error;
 pub mod gaming; // Gaming interfaces and session management
 pub mod governance; // Decentralized autonomous organization and governance
+#[cfg(feature = "gpu")]
+pub mod gpu; // GPU acceleration for physics, crypto, and ML
 pub mod keystore; // Secure key management
 pub mod logging; // Production logging and observability
 pub mod memory_pool; // Memory pooling for performance optimization
@@ -101,6 +105,33 @@ pub use compliance::{
 pub use governance::{
     GovernanceConfig, GovernanceCoordinator, Dao, DaoMember, MembershipTier,
     Proposal, ProposalType, VotingMechanism, VotingPower,
+};
+pub use edge::{
+    EdgeRuntime, EdgeRuntimeConfig, EdgeNode, EdgeNodeId, EdgeWorkload, WorkloadType,
+    GeoLocation, EdgeCapabilities, EdgeMetrics, EdgeNodeStatus,
+    CdnManager, CdnConfig, CdnProvider, EdgeWorker,
+    EdgeOrchestrator, OrchestratorConfig, EdgeCluster, AutoScalingConfig,
+    MecManager, MecConfig, MecPlatform, NetworkSlice, QosClass,
+    EdgeCacheManager, EdgeCacheConfig, CacheTier, CacheMetrics,
+};
+pub use bridges::{
+    Bridge, BridgeConfig, BridgeTransaction, BridgeTransactionStatus, BridgeEvent,
+    ValidatorSignature, ChainId, BridgeSecurityManager, BridgeStateManager, BridgeEventMonitor,
+    BridgeStatistics, FraudDetectionRule,
+};
+pub use bridges::ethereum::{
+    EthereumBridge, EthereumBridgeConfig, EthereumTransaction, EthereumTxStatus,
+    ContractInterface, GasSettings,
+};
+pub use bridges::bitcoin::{
+    BitcoinBridge, BitcoinBridgeConfig, BitcoinNetwork, MultisigWallet, PartiallySignedTransaction,
+    LightningConfig, LightningPayment, LightningPaymentStatus, AtomicSwap, AtomicSwapStatus,
+    AtomicSwapConfig, BitcoinUTXO,
+};
+pub use bridges::universal::{
+    UniversalBridge, UniversalBridgeConfig, NetworkConfig, BridgeProtocol, IBCConfig,
+    CrossChainMessage, MessageStatus, CrossChainRoute, RouteHop, MessagingConfig,
+    LiquidityConfig, LiquidityPool, RoutingConfig, RoutingAlgorithm, BridgePlugin,
 };
 
 /// Application configuration

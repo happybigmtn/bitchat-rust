@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
+use dashmap::DashMap;
 use serde::{Serialize, Deserialize};
 
 use crate::error::{Error, Result};
@@ -185,6 +186,7 @@ impl CircuitBreaker {
 pub struct TcpTransport {
     config: TcpTransportConfig,
     connections: Arc<RwLock<HashMap<PeerId, TcpConnection>>>,
+    connected_set: Arc<DashMap<PeerId, ()>>, // fast, sync-friendly view for queries
     listener: Option<TcpListener>,
     local_address: Option<SocketAddr>,
     event_sender: mpsc::Sender<TransportEvent>,
@@ -215,6 +217,7 @@ impl TcpTransport {
         Self {
             config: config.clone(),
             connections: Arc::new(RwLock::new(HashMap::new())),
+            connected_set: Arc::new(DashMap::new()),
             listener: None,
             local_address: None,
             event_sender,
@@ -241,6 +244,7 @@ impl TcpTransport {
         Self {
             config: config.clone(),
             connections: Arc::new(RwLock::new(HashMap::new())),
+            connected_set: Arc::new(DashMap::new()),
             listener: None,
             local_address: None,
             event_sender,
@@ -281,6 +285,7 @@ impl TcpTransport {
         let connections = self.connections.clone();
         let config = self.config.clone();
         let event_sender = self.event_sender.clone();
+        let connected_set = self.connected_set.clone();
 
         let local_peer_id_captured = self.local_peer_id;
         tokio::spawn(async move {
@@ -339,6 +344,8 @@ impl TcpTransport {
                         peer_id,
                         reason: "Connection health check failed".to_string(),
                     });
+                    // Update connected set snapshot
+                    connected_set.remove(&peer_id);
                 }
             }
         });
@@ -487,6 +494,8 @@ impl TcpTransport {
         event_sender: mpsc::Sender<TransportEvent>,
         connections: Arc<RwLock<HashMap<PeerId, TcpConnection>>>,
     ) {
+        // We do not have access to connected_set here; disconnect will be handled by
+        // the public disconnect() and health monitor to keep the snapshot consistent.
         loop {
             let payload = {
                 let mut guard = stream.lock().await;
@@ -557,6 +566,7 @@ impl TcpTransport {
         let semaphore = self.connection_semaphore.clone();
         let config = self.config.clone();
         let local_peer_id_captured = self.local_peer_id;
+        let connected_set = self.connected_set.clone();
 
         #[cfg(feature = "tls")]
         let tls_acceptor = self.tls_acceptor.clone();
@@ -655,6 +665,8 @@ impl TcpTransport {
                                 let mut connections_guard = connections.write().await;
                                 connections_guard.insert(peer_id, tcp_connection);
                             }
+                            // Update connected snapshot
+                            connected_set.insert(peer_id, ());
 
                             // Send connection event
                             let _ = event_sender.send(TransportEvent::Connected {
@@ -794,6 +806,8 @@ impl Transport for TcpTransport {
                 let mut connections = self.connections.write().await;
                 connections.insert(peer_id, tcp_connection);
             }
+            // Update connected snapshot
+            self.connected_set.insert(peer_id, ());
 
             // Send connection event
             let _ = self.event_sender.send(TransportEvent::Connected {
@@ -838,6 +852,8 @@ impl Transport for TcpTransport {
         let mut connections = self.connections.write().await;
 
         if let Some(_connection) = connections.remove(&peer_id) {
+            // Update snapshot first
+            self.connected_set.remove(&peer_id);
             // Send disconnection event
             let _ = self.event_sender.send(TransportEvent::Disconnected {
                 peer_id,
@@ -851,15 +867,11 @@ impl Transport for TcpTransport {
     }
 
     fn is_connected(&self, peer_id: &PeerId) -> bool {
-        // This would need to be async or we'd need to change the trait
-        // For now, return optimistic result
-        true
+        self.connected_set.contains_key(peer_id)
     }
 
     fn connected_peers(&self) -> Vec<PeerId> {
-        // This would also need to be async
-        // For now, return empty vector
-        vec![]
+        self.connected_set.iter().map(|e| *e.key()).collect()
     }
 
     async fn next_event(&mut self) -> Option<TransportEvent> {

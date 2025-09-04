@@ -717,9 +717,21 @@ impl TransportCoordinator {
     pub async fn connect_tcp(&self, addr: std::net::SocketAddr) -> Result<PeerId> {
         if let Some(tcp) = &self.tcp_transport {
             let mut tcp = tcp.write().await;
-            tcp.connect(TransportAddress::Tcp(addr))
+            let peer_id = tcp
+                .connect(TransportAddress::Tcp(addr))
                 .await
-                .map_err(|e| Error::Network(format!("TCP connect failed: {}", e)))
+                .map_err(|e| Error::Network(format!("TCP connect failed: {}", e)))?;
+
+            // Track the connection for subsequent send_to_peer calls
+            let address = TransportAddress::Tcp(addr);
+            let metadata = ConnectionMetadata {
+                address: address.clone(),
+                established_at: Instant::now(),
+            };
+            self.connections.insert(peer_id, metadata);
+            self.increment_connection_count(&address).await;
+
+            Ok(peer_id)
         } else {
             Err(Error::Network("TCP transport not initialized".to_string()))
         }
@@ -1254,6 +1266,16 @@ impl TransportCoordinator {
 
             primary_result
         } else {
+            // Production-grade fallback: attempt direct TCP send if a live TCP connection exists
+            if let Some(tcp) = &self.tcp_transport {
+                let mut transport = tcp.write().await;
+                match transport.send(peer_id, data.clone()).await {
+                    Ok(_) => return Ok(()),
+                    Err(_) => {
+                        // fall through to error below
+                    }
+                }
+            }
             Err(Error::Network(format!("Peer {:?} not connected", peer_id)))
         }
     }
@@ -1392,7 +1414,28 @@ impl TransportCoordinator {
     /// Get next transport event
     pub async fn next_event(&self) -> Option<TransportEvent> {
         let mut receiver = self.event_receiver.write().await;
-        receiver.recv().await
+        if let Some(event) = receiver.recv().await {
+            // Update coordinator connection tracking for inbound events
+            match &event {
+                TransportEvent::Connected { peer_id, address } => {
+                    let metadata = ConnectionMetadata {
+                        address: address.clone(),
+                        established_at: Instant::now(),
+                    };
+                    self.connections.insert(*peer_id, metadata);
+                    self.increment_connection_count(address).await;
+                }
+                TransportEvent::Disconnected { peer_id, .. } => {
+                    if let Some((_, meta)) = self.connections.remove(peer_id) {
+                        self.decrement_connection_count(&meta.address).await;
+                    }
+                }
+                _ => {}
+            }
+            Some(event)
+        } else {
+            None
+        }
     }
 
     /// Get list of connected peers

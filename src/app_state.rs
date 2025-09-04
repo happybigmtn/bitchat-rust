@@ -93,6 +93,7 @@ impl BitCrapsApp {
                 let addr: SocketAddr = addr_str
                     .parse()
                     .map_err(|e| Error::Network(format!("Invalid --listen-tcp addr: {}", e)))?;
+                log::info!("TCP listening on {}", addr);
                 transport_coordinator.listen_tcp(addr).await?;
             }
 
@@ -100,7 +101,14 @@ impl BitCrapsApp {
                 let addr: SocketAddr = addr_str
                     .parse()
                     .map_err(|e| Error::Network(format!("Invalid --connect-tcp addr: {}", e)))?;
-                let _ = transport_coordinator.connect_tcp(addr).await?;
+                match transport_coordinator.connect_tcp(addr).await {
+                    Ok(observed_peer) => {
+                        log::info!("TCP connected to {} (peer {:?})", addr, observed_peer);
+                    }
+                    Err(e) => {
+                        log::error!("TCP connect to {} failed: {}", addr, e);
+                    }
+                }
             }
         }
 

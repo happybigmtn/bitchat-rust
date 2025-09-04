@@ -1,0 +1,367 @@
+name: Kubernetes Deployment
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+      image_tag:
+        description: 'Image tag to deploy'
+        required: false
+        default: 'latest'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  HELM_VERSION: '3.12.0'
+  KUBECTL_VERSION: '1.27.0'
+
+jobs:
+  validate-manifests:
+    name: Validate Kubernetes Manifests
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: ${{ env.KUBECTL_VERSION }}
+
+    - name: Setup Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: ${{ env.HELM_VERSION }}
+
+    - name: Validate Kubernetes manifests
+      run: |
+        # Validate raw Kubernetes manifests
+        echo "Validating Kubernetes manifests..."
+        for file in k8s/**/*.yaml; do
+          if [[ -f "$file" ]]; then
+            echo "Validating $file"
+            kubectl apply --dry-run=client -f "$file"
+          fi
+        done
+
+    - name: Validate Helm chart
+      run: |
+        echo "Validating Helm chart..."
+        helm lint helm/bitcraps/
+        helm template bitcraps helm/bitcraps/ --values helm/bitcraps/values.yaml \
+          --set app.environment=ci \
+          --set security.secrets.create=false \
+          > /tmp/helm-output.yaml
+        kubectl apply --dry-run=client -f /tmp/helm-output.yaml
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: validate-manifests
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run Kubesec scan
+      uses: controlplaneio/kubesec-action@v0.6.2
+      with:
+        input: k8s/deployments/
+        format: template
+        template: template/kubesec.tpl
+        output: kubesec-results.json
+
+    - name: Run Polaris
+      uses: fairwindsops/polaris/.github/actions/polaris@master
+      with:
+        config: .polaris.yaml
+        only-show-failed-tests: true
+
+    - name: Upload security scan results
+      uses: actions/upload-artifact@v4
+      with:
+        name: security-scan-results
+        path: |
+          kubesec-results.json
+          polaris-results.json
+
+  build-and-push:
+    name: Build and Push Images
+    runs-on: ubuntu-latest
+    needs: security-scan
+    if: github.event_name != 'pull_request'
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    strategy:
+      matrix:
+        service: [game-engine, consensus, api-gateway, monitoring]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix={{branch}}-
+
+    - name: Build and push Docker image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: docker/Dockerfile.${{ matrix.service }}
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        build-args: |
+          BUILD_DATE=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+          VCS_REF=${{ github.sha }}
+          VERSION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
+
+    - name: Generate SBOM
+      uses: anchore/sbom-action@v0
+      with:
+        image: ${{ steps.meta.outputs.tags }}
+        format: spdx-json
+        output-file: sbom-${{ matrix.service }}.spdx.json
+
+    - name: Upload SBOM
+      uses: actions/upload-artifact@v4
+      with:
+        name: sbom-${{ matrix.service }}
+        path: sbom-${{ matrix.service }}.spdx.json
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    environment: staging
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: ${{ env.KUBECTL_VERSION }}
+
+    - name: Setup Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: ${{ env.HELM_VERSION }}
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: Update kubeconfig
+      run: |
+        aws eks update-kubeconfig \
+          --region ${{ secrets.AWS_REGION }} \
+          --name ${{ secrets.EKS_CLUSTER_NAME_STAGING }}
+
+    - name: Create namespace if not exists
+      run: |
+        kubectl create namespace bitcraps-staging --dry-run=client -o yaml | kubectl apply -f -
+
+    - name: Deploy with Helm
+      run: |
+        helm upgrade --install bitcraps-staging helm/bitcraps/ \
+          --namespace bitcraps-staging \
+          --values helm/bitcraps/values.yaml \
+          --values helm/bitcraps/values-staging.yaml \
+          --set app.environment=staging \
+          --set gameEngine.image.tag="${{ needs.build-and-push.outputs.image-tag }}" \
+          --set consensus.image.tag="${{ needs.build-and-push.outputs.image-tag }}" \
+          --set apiGateway.image.tag="${{ needs.build-and-push.outputs.image-tag }}" \
+          --wait --timeout=10m
+
+    - name: Run smoke tests
+      run: |
+        kubectl run smoke-test \
+          --namespace bitcraps-staging \
+          --image=curlimages/curl:latest \
+          --restart=Never \
+          --rm -i --tty \
+          -- curl -f http://bitcraps-staging-api-gateway:8080/health
+
+    - name: Get deployment status
+      run: |
+        kubectl get deployments -n bitcraps-staging
+        kubectl get pods -n bitcraps-staging
+        kubectl get services -n bitcraps-staging
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build-and-push, deploy-staging]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.environment == 'production'
+    environment: production
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: ${{ env.KUBECTL_VERSION }}
+
+    - name: Setup Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: ${{ env.HELM_VERSION }}
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: Update kubeconfig
+      run: |
+        aws eks update-kubeconfig \
+          --region ${{ secrets.AWS_REGION }} \
+          --name ${{ secrets.EKS_CLUSTER_NAME_PRODUCTION }}
+
+    - name: Create namespace if not exists
+      run: |
+        kubectl create namespace bitcraps --dry-run=client -o yaml | kubectl apply -f -
+
+    - name: Pre-deployment backup
+      run: |
+        # Backup current deployment configuration
+        kubectl get all -n bitcraps -o yaml > backup-$(date +%Y%m%d-%H%M%S).yaml
+
+    - name: Deploy with Helm (Blue-Green Strategy)
+      run: |
+        # Deploy to blue environment first
+        helm upgrade --install bitcraps-blue helm/bitcraps/ \
+          --namespace bitcraps \
+          --values helm/bitcraps/values.yaml \
+          --values helm/bitcraps/values-production.yaml \
+          --set app.environment=production \
+          --set app.deployment.slot=blue \
+          --set gameEngine.image.tag="${{ github.event.inputs.image_tag || needs.build-and-push.outputs.image-tag }}" \
+          --set consensus.image.tag="${{ github.event.inputs.image_tag || needs.build-and-push.outputs.image-tag }}" \
+          --set apiGateway.image.tag="${{ github.event.inputs.image_tag || needs.build-and-push.outputs.image-tag }}" \
+          --wait --timeout=15m
+
+    - name: Run production smoke tests
+      run: |
+        # Test blue deployment
+        kubectl run production-smoke-test \
+          --namespace bitcraps \
+          --image=curlimages/curl:latest \
+          --restart=Never \
+          --rm -i --tty \
+          -- curl -f http://bitcraps-blue-api-gateway:8080/health
+
+    - name: Switch traffic to blue (Green -> Blue)
+      run: |
+        # Update service selectors to point to blue deployment
+        kubectl patch service bitcraps-api-gateway \
+          --namespace bitcraps \
+          --patch '{"spec":{"selector":{"app.kubernetes.io/deployment-slot":"blue"}}}'
+        
+        kubectl patch service bitcraps-game-engine \
+          --namespace bitcraps \
+          --patch '{"spec":{"selector":{"app.kubernetes.io/deployment-slot":"blue"}}}'
+
+    - name: Wait for traffic switch
+      run: |
+        sleep 30
+        # Verify traffic is going to blue deployment
+        for i in {1..5}; do
+          curl -f https://api.bitcraps.io/health
+          sleep 10
+        done
+
+    - name: Clean up old green deployment
+      run: |
+        # Remove old green deployment after successful switch
+        helm uninstall bitcraps-green --namespace bitcraps || true
+
+    - name: Post-deployment verification
+      run: |
+        kubectl get deployments -n bitcraps
+        kubectl get pods -n bitcraps
+        kubectl get services -n bitcraps
+        kubectl get ingress -n bitcraps
+
+  rollback:
+    name: Rollback Deployment
+    runs-on: ubuntu-latest
+    if: failure() && github.event_name != 'pull_request'
+    needs: [deploy-staging, deploy-production]
+    environment: production
+    steps:
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: ${{ env.KUBECTL_VERSION }}
+
+    - name: Setup Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: ${{ env.HELM_VERSION }}
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: Update kubeconfig
+      run: |
+        aws eks update-kubeconfig \
+          --region ${{ secrets.AWS_REGION }} \
+          --name ${{ secrets.EKS_CLUSTER_NAME_PRODUCTION }}
+
+    - name: Rollback to previous version
+      run: |
+        helm rollback bitcraps --namespace bitcraps
+        kubectl rollout status deployment/bitcraps-game-engine -n bitcraps
+        kubectl rollout status deployment/bitcraps-consensus -n bitcraps
+        kubectl rollout status deployment/bitcraps-api-gateway -n bitcraps
+
+    - name: Verify rollback
+      run: |
+        kubectl get pods -n bitcraps
+        curl -f https://api.bitcraps.io/health

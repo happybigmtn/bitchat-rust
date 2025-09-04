@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bitcraps
+  labels:
+    app.kubernetes.io/name: bitcraps
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/component: platform
+    app.kubernetes.io/managed-by: kubernetes
+    environment: production
+    security.policy/isolated: "true"
+  annotations:
+    description: "BitCraps decentralized gaming platform namespace"
+    security.policy/isolation: "strict"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: bitcraps-quota
+  namespace: bitcraps
+spec:
+  hard:
+    requests.cpu: "20"
+    requests.memory: 40Gi
+    limits.cpu: "40" 
+    limits.memory: 80Gi
+    pods: "100"
+    services: "20"
+    secrets: "50"
+    configmaps: "50"
+    persistentvolumeclaims: "10"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: bitcraps-limits
+  namespace: bitcraps
+spec:
+  limits:
+  - default:
+      cpu: "1"
+      memory: 2Gi
+    defaultRequest:
+      cpu: "100m"
+      memory: 256Mi
+    type: Container
+  - default:
+      storage: 10Gi
+    type: PersistentVolumeClaim
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bitcraps-network-policy
+  namespace: bitcraps
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: bitcraps
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 8080  # Dashboard
+    - protocol: TCP  
+      port: 9090  # Prometheus
+  egress:
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53   # DNS
+    - protocol: UDP
+      port: 53   # DNS  
+    - protocol: TCP
+      port: 443  # HTTPS
+    - protocol: TCP
+      port: 5432 # PostgreSQL
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: bitcraps

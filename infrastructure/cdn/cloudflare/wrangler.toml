@@ -1,0 +1,119 @@
+# Cloudflare Workers configuration for BitCraps CDN
+
+name = "bitcraps-cdn-worker"
+main = "workers.js"
+compatibility_date = "2024-01-15"
+compatibility_flags = ["nodejs_compat"]
+
+# Worker configuration
+[env.production]
+name = "bitcraps-cdn-worker-prod"
+route = [
+  { pattern = "bitcraps.io/*", zone_id = "your-cloudflare-zone-id" },
+  { pattern = "assets.bitcraps.io/*", zone_id = "your-cloudflare-zone-id" },
+  { pattern = "wasm.bitcraps.io/*", zone_id = "your-cloudflare-zone-id" },
+  { pattern = "game.bitcraps.io/*", zone_id = "your-cloudflare-zone-id" }
+]
+
+[env.production.vars]
+ENVIRONMENT = "production"
+DEBUG = "false"
+CACHE_TTL_STATIC = "86400"
+CACHE_TTL_WASM = "604800"
+CACHE_TTL_API = "300"
+CACHE_TTL_GAME = "60"
+RATE_LIMIT_REQUESTS = "100"
+MAX_BODY_SIZE = "10485760"
+
+[env.production.durable_objects]
+bindings = [
+  { name = "RATE_LIMITER", class_name = "RateLimiter" }
+]
+
+[env.staging]
+name = "bitcraps-cdn-worker-staging"
+route = [
+  { pattern = "staging.bitcraps.io/*", zone_id = "your-cloudflare-zone-id" },
+  { pattern = "assets-staging.bitcraps.io/*", zone_id = "your-cloudflare-zone-id" }
+]
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+DEBUG = "true"
+CACHE_TTL_STATIC = "3600"
+CACHE_TTL_WASM = "3600"
+CACHE_TTL_API = "60"
+CACHE_TTL_GAME = "30"
+RATE_LIMIT_REQUESTS = "200"
+MAX_BODY_SIZE = "10485760"
+
+[env.staging.durable_objects]
+bindings = [
+  { name = "RATE_LIMITER", class_name = "RateLimiter" }
+]
+
+# Development environment
+[env.development]
+name = "bitcraps-cdn-worker-dev"
+
+[env.development.vars]
+ENVIRONMENT = "development"
+DEBUG = "true"
+CACHE_TTL_STATIC = "0"
+CACHE_TTL_WASM = "0"
+CACHE_TTL_API = "0"
+CACHE_TTL_GAME = "0"
+RATE_LIMIT_REQUESTS = "1000"
+MAX_BODY_SIZE = "10485760"
+
+# Durable Objects
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiter"
+
+# KV namespaces for configuration and state
+[[kv_namespaces]]
+binding = "CACHE_CONFIG"
+id = "your-kv-namespace-id"
+preview_id = "your-preview-kv-namespace-id"
+
+[[kv_namespaces]]
+binding = "ANALYTICS_DATA"
+id = "your-analytics-kv-namespace-id"
+preview_id = "your-preview-analytics-kv-namespace-id"
+
+# R2 bucket bindings for asset storage
+[[r2_buckets]]
+binding = "ASSETS_BUCKET"
+bucket_name = "bitcraps-assets-prod"
+preview_bucket_name = "bitcraps-assets-dev"
+
+# Analytics Engine for monitoring
+[analytics_engine_datasets]
+binding = "ANALYTICS"
+dataset = "bitcraps_cdn_analytics"
+
+# Build configuration
+[build]
+command = "npm run build"
+cwd = "."
+watch_dir = "src"
+
+[build.upload]
+format = "modules"
+dir = "./dist"
+main = "./workers.js"
+
+# Triggers and scheduling
+[[triggers]]
+crons = ["0 */6 * * *"]  # Cache cleanup every 6 hours
+
+# Compatibility settings
+[compatibility_flags]
+nodejs_compat = true
+streams_enable_constructors = true
+
+# Limits
+[limits]
+cpu_ms = 50
+memory_mb = 128
