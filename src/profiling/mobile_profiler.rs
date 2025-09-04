@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use tokio::time::interval;
 
 use crate::error::BitCrapsError;
+#[cfg(any(feature = "android", feature = "uniffi"))]
 use crate::mobile::{
     power_management::{PowerManager, ThermalState},
     PowerMode,
@@ -11,6 +12,7 @@ use crate::mobile::{
 
 /// Mobile-specific performance profiler
 pub struct MobileProfiler {
+    #[cfg(any(feature = "android", feature = "uniffi"))]
     power_manager: Arc<PowerManager>,
     metrics: Arc<RwLock<BatteryMetrics>>,
     thermal_metrics: Arc<RwLock<ThermalMetrics>>,
@@ -20,9 +22,11 @@ pub struct MobileProfiler {
 
 impl MobileProfiler {
     pub fn new() -> Result<Self, BitCrapsError> {
+        #[cfg(any(feature = "android", feature = "uniffi"))]
         let power_manager = Arc::new(PowerManager::new(PowerMode::Balanced));
 
         Ok(Self {
+            #[cfg(any(feature = "android", feature = "uniffi"))]
             power_manager,
             metrics: Arc::new(RwLock::new(BatteryMetrics::new())),
             thermal_metrics: Arc::new(RwLock::new(ThermalMetrics::new())),
@@ -34,11 +38,13 @@ impl MobileProfiler {
     pub async fn start(&mut self) -> Result<(), BitCrapsError> {
         *self.profiling_active.write() = true;
 
-        let power_manager = Arc::clone(&self.power_manager);
-        let metrics = Arc::clone(&self.metrics);
-        let thermal_metrics = Arc::clone(&self.thermal_metrics);
-        let profiling_active = Arc::clone(&self.profiling_active);
-        let sample_interval = self.sample_interval;
+        #[cfg(any(feature = "android", feature = "uniffi"))]
+        {
+            let power_manager = Arc::clone(&self.power_manager);
+            let metrics = Arc::clone(&self.metrics);
+            let thermal_metrics = Arc::clone(&self.thermal_metrics);
+            let profiling_active = Arc::clone(&self.profiling_active);
+            let sample_interval = self.sample_interval;
 
         tokio::spawn(async move {
             let mut interval = interval(sample_interval);
@@ -96,6 +102,12 @@ impl MobileProfiler {
                 }
             }
         });
+        }
+
+        #[cfg(not(any(feature = "android", feature = "uniffi")))]
+        {
+            tracing::debug!("Mobile profiling unavailable (mobile features not enabled)");
+        }
 
         tracing::debug!("Mobile profiling started");
         Ok(())
@@ -198,10 +210,19 @@ impl MobileProfiler {
 
     /// Get current battery level
     async fn get_current_battery_level(&self) -> Result<f32, crate::error::Error> {
-        let battery_info = self.power_manager.get_battery_info().await.map_err(|_| {
-            crate::error::Error::InvalidData("Failed to get battery info".to_string())
-        })?;
-        Ok(battery_info.level.unwrap_or(0.0))
+        #[cfg(any(feature = "android", feature = "uniffi"))]
+        {
+            let battery_info = self.power_manager.get_battery_info().await.map_err(|_| {
+                crate::error::Error::InvalidData("Failed to get battery info".to_string())
+            })?;
+            Ok(battery_info.level.unwrap_or(0.0))
+        }
+        
+        #[cfg(not(any(feature = "android", feature = "uniffi")))]
+        {
+            // Return simulated battery level when mobile features are disabled
+            Ok(50.0)
+        }
     }
 
     /// Estimate power draw based on battery consumption and time

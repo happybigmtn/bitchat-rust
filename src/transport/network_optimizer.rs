@@ -18,6 +18,7 @@ use serde::{Serialize, Deserialize};
 use tracing::{info, warn, error, debug};
 
 use crate::optimization::connection_pool_optimizer::ConnectionPool;
+#[cfg(feature = "monitoring")]
 use crate::monitoring::metrics::METRICS;
 use crate::utils::LoopBudget;
 use crate::utils::task_tracker::{spawn_tracked, TaskType};
@@ -436,7 +437,10 @@ impl ProtocolOptimizer {
         stats.compression_ratio = self.calculate_compression_ratio().await;
 
         // Adjust compression based on CPU usage and bandwidth
+        #[cfg(feature = "monitoring")]
         let cpu_usage = METRICS.resources.cpu_usage_percent.load(Ordering::Relaxed) as f64;
+        #[cfg(not(feature = "monitoring"))]
+        let cpu_usage = 50.0; // Default CPU usage when monitoring is disabled
         let bandwidth_usage = self.get_bandwidth_usage().await;
 
         if cpu_usage > 80.0 && bandwidth_usage < 50.0 {

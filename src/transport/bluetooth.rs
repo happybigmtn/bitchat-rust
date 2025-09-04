@@ -1,7 +1,9 @@
 //! Complete Bluetooth LE transport implementation for BitCraps mesh networking
 
 use async_trait::async_trait;
+#[cfg(feature = "bluetooth")]
 use btleplug::api::{Central, CentralEvent, Manager as _, Peripheral as _, ScanFilter, WriteType};
+#[cfg(feature = "bluetooth")]
 use btleplug::platform::{Adapter, Manager, Peripheral, PeripheralId};
 use bytes::{Bytes, BytesMut};
 use futures::stream::StreamExt;

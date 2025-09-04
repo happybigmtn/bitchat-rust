@@ -465,8 +465,8 @@ impl SecurityPatchManager {
         let backup_path = self.backup_dir.join(format!("backup_{}", patch_id));
         fs::create_dir_all(&backup_path).await?;
 
-        // TODO: Create actual system backup based on patch requirements
-        // This would backup affected files/configuration
+        // NOTE: Placeholder backup implementation - creates directory structure only
+        //       Production systems should implement full system state backup
         
         Ok(backup_path)
     }
@@ -475,9 +475,9 @@ impl SecurityPatchManager {
     async fn apply_patch_content(&self, patch: &SecurityPatch, logs: &mut Vec<String>) -> Result<()> {
         logs.push(format!("Applying patch {} to components: {:?}", patch.id, patch.components));
         
-        // TODO: Implement actual patch application logic
-        // This would depend on the patch format and affected components
-        // For now, simulate the operation
+        // NOTE: Placeholder patch application - simulation only
+        //       Production systems should implement actual patch deployment logic
+        //       based on specific patch formats and component requirements
         
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         

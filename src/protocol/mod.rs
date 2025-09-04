@@ -59,6 +59,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::error::{Error, Result};
 
 // Re-exports for external modules
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
 pub use crate::database::GameState;
 pub use p2p_messages::ConsensusMessage as P2PMessage;
 

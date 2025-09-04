@@ -269,13 +269,13 @@ impl GpuManager {
                 devices.iter()
                     .find(|d| d.backend == GpuBackend::Cuda)
                     .or_else(|| devices.first())
-                    .unwrap()
+                    .ok_or_else(|| crate::error::Error::GpuError("No suitable GPU device found for CUDA".to_string()))?
             }
             GpuBackend::OpenCl => {
                 devices.iter()
                     .find(|d| d.backend == GpuBackend::OpenCl)
                     .or_else(|| devices.first())
-                    .unwrap()
+                    .ok_or_else(|| crate::error::Error::GpuError("No suitable GPU device found for OpenCL".to_string()))?
             }
             GpuBackend::Auto => {
                 // Prefer CUDA, fallback to OpenCL, then any available
@@ -283,7 +283,7 @@ impl GpuManager {
                     .find(|d| d.backend == GpuBackend::Cuda)
                     .or_else(|| devices.iter().find(|d| d.backend == GpuBackend::OpenCl))
                     .or_else(|| devices.first())
-                    .unwrap()
+                    .ok_or_else(|| crate::error::Error::GpuError("No suitable GPU device found".to_string()))?
             }
         };
 

@@ -583,8 +583,12 @@ impl MemoryOptimizer {
 
     /// Collect current memory statistics
     async fn collect_memory_statistics(&self) -> MemoryStatistics {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
+        use rand::{Rng, SeedableRng};
+        use rand::rngs::StdRng;
+        use std::time::SystemTime;
+        let seed = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default().as_nanos() as u64;
+        let mut rng = StdRng::seed_from_u64(seed);
         
         // In a real implementation, these would be actual memory metrics
         let total_allocated = rng.gen_range(200.0..800.0);

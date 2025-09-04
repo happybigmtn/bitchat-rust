@@ -5,6 +5,7 @@
 
 use crate::error::{Error, Result};
 use crate::protocol::{Hash256, PeerId};
+#[cfg(feature = "sqlite")]
 use rusqlite::{params, Connection, Result as SqlResult};
 use serde::{Deserialize, Serialize};
 use std::fs;

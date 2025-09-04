@@ -858,9 +858,13 @@ impl AdaptiveResourceScheduler {
         let (high_queue, normal_queue, background_queue) = self.get_queue_status().await;
         let queued_tasks = high_queue + normal_queue + background_queue;
         
-        // Create RNG after await points to ensure Send future compatibility
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
+        // Use SystemTime-seeded StdRng for Send-safe random number generation
+        use rand::{Rng, SeedableRng};
+        use rand::rngs::StdRng;
+        use std::time::SystemTime;
+        let seed = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default().as_nanos() as u64;
+        let mut rng = StdRng::seed_from_u64(seed);
         let cpu_utilization = rng.gen_range(0.2..0.9);
         let memory_utilization = rng.gen_range(0.3..0.8);
         

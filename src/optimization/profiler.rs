@@ -250,7 +250,7 @@ impl RuntimeProfiler {
             return; // Already running
         }
 
-        println!("Starting runtime profiler with config: {:?}", self.config);
+        log::info!("Starting runtime profiler with config: {:?}", self.config);
         
         if self.config.enable_cpu_profiling {
             self.start_cpu_profiling().await;
@@ -271,7 +271,7 @@ impl RuntimeProfiler {
     /// Stop profiling
     pub async fn stop(&self) {
         self.is_profiling.store(false, Ordering::Relaxed);
-        println!("Stopping runtime profiler");
+        log::info!("Stopping runtime profiler");
     }
 
     /// Time an operation
@@ -580,8 +580,12 @@ impl RuntimeProfiler {
 
     /// Collect current profile data snapshot
     async fn collect_profile_data(&self) -> ProfileData {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
+        use rand::{Rng, SeedableRng};
+        use rand::rngs::StdRng;
+        use std::time::SystemTime;
+        let seed = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default().as_nanos() as u64;
+        let mut rng = StdRng::seed_from_u64(seed);
         
         // In a real implementation, these would be actual system metrics
         ProfileData {
@@ -601,8 +605,12 @@ impl RuntimeProfiler {
 
     /// Collect CPU profile data
     async fn collect_cpu_profile(&self) -> CpuProfile {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
+        use rand::{Rng, SeedableRng};
+        use rand::rngs::StdRng;
+        use std::time::SystemTime;
+        let seed = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default().as_nanos() as u64;
+        let mut rng = StdRng::seed_from_u64(seed);
         
         let total_cpu = rng.gen_range(20.0..80.0);
         let user_cpu = total_cpu * rng.gen_range(0.6..0.8);
@@ -625,8 +633,12 @@ impl RuntimeProfiler {
 
     /// Collect I/O profile data
     async fn collect_io_profile(&self) -> IoProfile {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
+        use rand::{Rng, SeedableRng};
+        use rand::rngs::StdRng;
+        use std::time::SystemTime;
+        let seed = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default().as_nanos() as u64;
+        let mut rng = StdRng::seed_from_u64(seed);
         
         IoProfile {
             timestamp: Instant::now(),

@@ -142,6 +142,9 @@ pub enum Error {
 
     #[error("Authentication error: {0}")]
     Authentication(String),
+    
+    #[error("Authentication failed: {0}")]
+    AuthenticationFailed(String),
 
     #[error("Security error: {0}")]
     Security(String),

@@ -59,7 +59,7 @@ impl WebhookManager {
         if let Some(webhook) = self.webhooks.get(webhook_id) {
             // Send HTTP request to webhook URL
             // This would use an HTTP client like reqwest
-            println!("Sending webhook to {}: {:?}", webhook.url, payload);
+            log::info!("Sending webhook to {}: {:?}", webhook.url, payload);
             Ok(())
         } else {
             Err(IntegrationError::WebhookNotFound(webhook_id.to_string()))
@@ -86,7 +86,7 @@ impl EventBridge {
     pub async fn forward_event(&self, event: ExternalEvent) -> Result<(), IntegrationError> {
         for handler in &self.event_handlers {
             if let Err(e) = handler.handle_event(&event).await {
-                eprintln!("Event handler error: {:?}", e);
+                log::error!("Event handler error: {:?}", e);
             }
         }
         Ok(())

@@ -578,7 +578,7 @@ impl TcpTransport {
                         let permit = match semaphore.clone().try_acquire_owned() {
                             Ok(permit) => permit,
                             Err(_) => {
-                                println!("Connection limit reached, rejecting: {}", addr);
+                                log::warn!("Connection limit reached, rejecting: {}", addr);
                                 continue;
                             }
                         };
@@ -605,7 +605,7 @@ impl TcpTransport {
                                                     ConnectionStream::TlsServer(tls_stream)
                                                 }
                                                 Err(e) => {
-                                                    println!("TLS handshake failed: {}", e);
+                                                    log::error!("TLS handshake failed: {}", e);
                                                     return;
                                                 }
                                             }
@@ -626,25 +626,25 @@ impl TcpTransport {
                             let hello_bytes = match Self::read_frame(&mut connection_stream, config.max_message_size).await {
                                 Ok(b) => b,
                                 Err(e) => {
-                                    println!("Handshake read failed: {}", e);
+                                    log::error!("Handshake read failed: {}", e);
                                     return;
                                 }
                             };
                             let client_hello: Hello = match bincode::deserialize(&hello_bytes) {
                                 Ok(h) => h,
                                 Err(e) => {
-                                    println!("Invalid client hello: {}", e);
+                                    log::error!("Invalid client hello: {}", e);
                                     return;
                                 }
                             };
                             if client_hello.version != 1 {
-                                println!("Unsupported client version: {}", client_hello.version);
+                                log::warn!("Unsupported client version: {}", client_hello.version);
                                 return;
                             }
                             let server_hello = Hello { version: 1, peer_id: local_peer_id2 };
                             let out = bincode::serialize(&server_hello).expect("hello serialize");
                             if let Err(e) = Self::write_frame(&mut connection_stream, &out).await {
-                                println!("Handshake write failed: {}", e);
+                                log::error!("Handshake write failed: {}", e);
                                 return;
                             }
                             let peer_id = client_hello.peer_id;

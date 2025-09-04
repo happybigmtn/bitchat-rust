@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         max_players_per_game: 8,
         min_bet_amount: 1,
         max_bet_amount: 1000,
-        game_timeout: Duration::from_mins(30),
+        game_timeout: Duration::from_secs(30 * 60), // 30 minutes
     };
     
     let consensus_config = ConsensusConfig {

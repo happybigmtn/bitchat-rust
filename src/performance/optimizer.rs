@@ -13,6 +13,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+#[cfg(feature = "monitoring")]
 use sysinfo::{CpuExt, System, SystemExt};
 use tokio::sync::RwLock;
 // use crate::operations::monitoring::InfrastructureMonitor;
@@ -23,6 +24,7 @@ pub struct PerformanceOptimizer {
     optimization_strategies: Arc<Vec<Box<dyn OptimizationStrategy>>>,
     monitoring_interval: Duration,
     // Real metrics sources
+    #[cfg(feature = "monitoring")]
     system_info: Arc<RwLock<System>>,
     consensus_manager: Option<Arc<ConsensusGameManager>>,
     transport_coordinator: Option<Arc<MultiTransportCoordinator>>,
@@ -608,6 +610,7 @@ impl PerformanceOptimizer {
             metrics: Arc::new(RwLock::new(PerformanceMetrics::default())),
             optimization_strategies: Arc::new(strategies),
             monitoring_interval: Duration::from_secs(10),
+            #[cfg(feature = "monitoring")]
             system_info: Arc::new(RwLock::new(System::new_all())),
             consensus_manager: None,
             transport_coordinator: None,
@@ -671,6 +674,7 @@ impl PerformanceOptimizer {
         let base_interval = self.monitoring_interval;
 
         // Clone needed fields for the async task
+        #[cfg(feature = "monitoring")]
         let system_info = Arc::clone(&self.system_info);
         let consensus_manager = self.consensus_manager.clone();
         let transport_coordinator = self.transport_coordinator.clone();
@@ -793,6 +797,7 @@ impl PerformanceOptimizer {
         let start_time = Instant::now();
 
         // Update system information
+        #[cfg(feature = "monitoring")]
         {
             let mut system = self.system_info.write().await;
             system.refresh_all();
@@ -836,6 +841,7 @@ impl PerformanceOptimizer {
     }
 
     /// Static version of collect_cpu_metrics
+    #[cfg(feature = "monitoring")]
     async fn collect_cpu_metrics_static(system_info: &Arc<RwLock<System>>) -> CpuMetrics {
         let system = system_info.read().await;
 
@@ -871,10 +877,26 @@ impl PerformanceOptimizer {
 
     /// Collect real CPU metrics using sysinfo
     async fn collect_cpu_metrics(&self) -> CpuMetrics {
-        Self::collect_cpu_metrics_static(&self.system_info).await
+        #[cfg(feature = "monitoring")]
+        {
+            Self::collect_cpu_metrics_static(&self.system_info).await
+        }
+        
+        #[cfg(not(feature = "monitoring"))]
+        {
+            // Return default CPU metrics when monitoring is disabled
+            CpuMetrics {
+                usage_percent: 50.0,
+                core_count: 4,
+                frequency_mhz: 2400.0,
+                temperature: 45.0,
+                timestamp: std::time::SystemTime::now(),
+            }
+        }
     }
 
     /// Static version of collect_memory_metrics
+    #[cfg(feature = "monitoring")]
     async fn collect_memory_metrics_static(system_info: &Arc<RwLock<System>>) -> MemoryMetrics {
         let system = system_info.read().await;
 
@@ -905,7 +927,22 @@ impl PerformanceOptimizer {
 
     /// Collect real memory metrics using sysinfo
     async fn collect_memory_metrics(&self) -> MemoryMetrics {
-        Self::collect_memory_metrics_static(&self.system_info).await
+        #[cfg(feature = "monitoring")]
+        {
+            Self::collect_memory_metrics_static(&self.system_info).await
+        }
+        
+        #[cfg(not(feature = "monitoring"))]
+        {
+            // Return default memory metrics when monitoring is disabled
+            MemoryMetrics {
+                usage_percent: 60.0,
+                available_mb: 2048,
+                total_mb: 8192,
+                swap_usage_percent: 10.0,
+                timestamp: std::time::SystemTime::now(),
+            }
+        }
     }
 
     /// Static version of collect_network_metrics

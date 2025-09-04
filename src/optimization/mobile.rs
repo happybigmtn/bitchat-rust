@@ -2,18 +2,22 @@ use parking_lot::{Mutex, RwLock};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+#[cfg(feature = "monitoring")]
 use sysinfo::{System, SystemExt};
 
 use crate::error::BitCrapsError;
+#[cfg(any(feature = "android", feature = "uniffi"))]
 use crate::mobile::{power_management::PowerManager, PowerMode};
 
 /// Mobile-specific performance optimization system
 pub struct MobileOptimizer {
     /// Battery and thermal management
+    #[cfg(any(feature = "android", feature = "uniffi"))]
     power_manager: Arc<PowerManager>,
     /// CPU frequency scaling
     cpu_governor: CpuGovernor,
     /// Memory pressure management
+    #[cfg(feature = "monitoring")]
     memory_manager: MobileMemoryManager,
     /// Network optimization for mobile
     network_optimizer: MobileNetworkOptimizer,
@@ -63,11 +67,14 @@ impl Default for MobileOptimizerConfig {
 
 impl MobileOptimizer {
     pub fn new(config: MobileOptimizerConfig) -> Result<Self, BitCrapsError> {
+        #[cfg(any(feature = "android", feature = "uniffi"))]
         let power_manager = Arc::new(PowerManager::new(PowerMode::Balanced));
 
         Ok(Self {
+            #[cfg(any(feature = "android", feature = "uniffi"))]
             power_manager,
             cpu_governor: CpuGovernor::new(&config),
+            #[cfg(feature = "monitoring")]
             memory_manager: MobileMemoryManager::new(&config),
             network_optimizer: MobileNetworkOptimizer::new(&config),
             background_scheduler: BackgroundTaskScheduler::new(&config),
@@ -117,24 +124,48 @@ impl MobileOptimizer {
 
     /// Get current system performance state
     async fn get_system_state(&mut self) -> Result<SystemState, BitCrapsError> {
-        let battery_info =
-            self.power_manager.get_battery_info().await.map_err(|_| {
+        // Get battery info when mobile features are available
+        #[cfg(any(feature = "android", feature = "uniffi"))]
+        let (battery_level, is_charging, cpu_temperature, battery_temperature) = {
+            let battery_info = self.power_manager.get_battery_info().await.map_err(|_| {
                 BitCrapsError::InvalidData("Failed to get battery info".to_string())
             })?;
-        let thermal_info =
-            self.power_manager.get_thermal_info().await.map_err(|_| {
+            let thermal_info = self.power_manager.get_thermal_info().await.map_err(|_| {
                 BitCrapsError::InvalidData("Failed to get thermal info".to_string())
             })?;
-        let memory_info = self.memory_manager.get_memory_info()?;
+            (
+                battery_info.level.unwrap_or(0.0),
+                battery_info.is_charging,
+                thermal_info.cpu_temperature,
+                thermal_info.battery_temperature,
+            )
+        };
+        
+        // Default values when mobile features are not available
+        #[cfg(not(any(feature = "android", feature = "uniffi")))]
+        let (battery_level, is_charging, cpu_temperature, battery_temperature) = 
+            (50.0, false, 35.0, 30.0);
+        
+        // Get memory info when monitoring is available
+        #[cfg(feature = "monitoring")]
+        let (memory_usage, available_memory) = {
+            let memory_info = self.memory_manager.get_memory_info()?;
+            (memory_info.usage_percentage, memory_info.available_mb)
+        };
+        
+        // Default memory values when monitoring is not available
+        #[cfg(not(feature = "monitoring"))]
+        let (memory_usage, available_memory) = (50.0, 1024);
+        
         let network_info = self.network_optimizer.get_network_state().await;
 
         Ok(SystemState {
-            battery_level: battery_info.level.unwrap_or(0.0),
-            is_charging: battery_info.is_charging,
-            cpu_temperature: thermal_info.cpu_temperature,
-            battery_temperature: thermal_info.battery_temperature,
-            memory_usage: memory_info.usage_percentage,
-            available_memory: memory_info.available_mb,
+            battery_level,
+            is_charging,
+            cpu_temperature,
+            battery_temperature,
+            memory_usage,
+            available_memory,
             cpu_usage: self.get_cpu_usage(),
             network_quality: network_info.quality,
             background_tasks: self.background_scheduler.active_task_count(),
@@ -208,11 +239,21 @@ impl MobileOptimizer {
             .push("Enabled aggressive network batching".to_string());
 
         // Optimize memory usage
-        let memory_freed = self.memory_manager.aggressive_cleanup().await;
-        if memory_freed > 0 {
+        #[cfg(feature = "monitoring")]
+        {
+            let memory_freed = self.memory_manager.aggressive_cleanup().await;
+            if memory_freed > 0 {
+                report
+                    .actions_taken
+                    .push(format!("Freed {} MB of memory", memory_freed));
+            }
+        }
+        
+        #[cfg(not(feature = "monitoring"))]
+        {
             report
                 .actions_taken
-                .push(format!("Freed {} MB of memory", memory_freed));
+                .push("Memory cleanup simulated (monitoring feature disabled)".to_string());
         }
 
         // Reduce BLE advertising frequency
@@ -251,11 +292,21 @@ impl MobileOptimizer {
         }
 
         // Standard memory management
-        let memory_freed = self.memory_manager.routine_cleanup().await;
-        if memory_freed > 0 {
+        #[cfg(feature = "monitoring")]
+        {
+            let memory_freed = self.memory_manager.routine_cleanup().await;
+            if memory_freed > 0 {
+                report
+                    .actions_taken
+                    .push(format!("Routine cleanup freed {} MB", memory_freed));
+            }
+        }
+        
+        #[cfg(not(feature = "monitoring"))]
+        {
             report
                 .actions_taken
-                .push(format!("Routine cleanup freed {} MB", memory_freed));
+                .push("Routine memory cleanup simulated".to_string());
         }
 
         // Balanced network optimization
@@ -302,10 +353,20 @@ impl MobileOptimizer {
             .push("Optimized network for lowest latency".to_string());
 
         // Preemptive memory allocation
-        self.memory_manager.preemptive_allocation().await;
-        report
-            .actions_taken
-            .push("Enabled preemptive memory allocation".to_string());
+        #[cfg(feature = "monitoring")]
+        {
+            self.memory_manager.preemptive_allocation().await;
+            report
+                .actions_taken
+                .push("Enabled preemptive memory allocation".to_string());
+        }
+        
+        #[cfg(not(feature = "monitoring"))]
+        {
+            report
+                .actions_taken
+                .push("Preemptive memory allocation simulated".to_string());
+        }
 
         Ok(report)
     }
@@ -337,10 +398,20 @@ impl MobileOptimizer {
             .push(format!("Emergency pause of {} tasks", paused_tasks));
 
         // Aggressive memory cleanup
-        let memory_freed = self.memory_manager.emergency_cleanup().await;
-        report
-            .actions_taken
-            .push(format!("Emergency cleanup freed {} MB", memory_freed));
+        #[cfg(feature = "monitoring")]
+        {
+            let memory_freed = self.memory_manager.emergency_cleanup().await;
+            report
+                .actions_taken
+                .push(format!("Emergency cleanup freed {} MB", memory_freed));
+        }
+        
+        #[cfg(not(feature = "monitoring"))]
+        {
+            report
+                .actions_taken
+                .push("Emergency memory cleanup simulated".to_string());
+        }
 
         // Minimize network activity
         self.network_optimizer.minimize_network_activity().await;
@@ -383,7 +454,10 @@ impl MobileOptimizer {
         self.network_optimizer.reset_to_default().await;
 
         // Final memory cleanup
-        self.memory_manager.final_cleanup().await;
+        #[cfg(feature = "monitoring")]
+        {
+            self.memory_manager.final_cleanup().await;
+        }
 
         Ok(())
     }
@@ -439,11 +513,13 @@ impl CpuGovernor {
 }
 
 /// Mobile memory management with pressure detection
+#[cfg(feature = "monitoring")]
 pub struct MobileMemoryManager {
     config: MobileOptimizerConfig,
     system: System,
 }
 
+#[cfg(feature = "monitoring")]
 impl MobileMemoryManager {
     pub fn new(config: &MobileOptimizerConfig) -> Self {
         Self {

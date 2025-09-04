@@ -2,6 +2,7 @@ use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+#[cfg(feature = "monitoring")]
 use sysinfo::{CpuExt, System, SystemExt};
 use tokio::time::interval;
 

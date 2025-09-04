@@ -437,8 +437,13 @@ where
         }
 
         // Simple random selection (could be enhanced with actual weighting)
-        use rand::Rng;
-        let index = rand::thread_rng().gen_range(0..available.len());
+        use rand::{Rng, SeedableRng};
+        use rand::rngs::StdRng;
+        use std::time::SystemTime;
+        let seed = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default().as_nanos() as u64;
+        let mut rng = StdRng::seed_from_u64(seed);
+        let index = rng.gen_range(0..available.len());
         available.remove(index)
     }
 

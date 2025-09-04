@@ -20,6 +20,7 @@ use tokio::sync::{broadcast, RwLock};
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
+#[cfg(feature = "monitoring")]
 use crate::monitoring::metrics::METRICS;
 use crate::persistence::PersistenceManager;
 use crate::protocol::craps::CrapsGame;
@@ -1259,10 +1260,19 @@ impl GameFrameworkStats {
 
     pub async fn report_to_metrics(&self) {
         // Report gaming metrics to global monitoring
-        METRICS.gaming.total_games.store(
-            self.total_sessions_created.load(Ordering::Relaxed),
-            Ordering::Relaxed,
-        );
+        #[cfg(feature = "monitoring")]
+        {
+            METRICS.gaming.total_games.store(
+                self.total_sessions_created.load(Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
+        }
+        
+        #[cfg(not(feature = "monitoring"))]
+        {
+            // No-op when monitoring is disabled
+            tracing::debug!("Metrics reporting is disabled (monitoring feature not enabled)");
+        }
     }
 }
 
