@@ -62,9 +62,12 @@ impl RoulettePlugin {
     /// Start a new roulette spin with physics simulation
     async fn start_spin(&self, session: &mut RouletteGameSession) -> PluginResult<()> {
         // Initialize physics simulation
-        let initial_velocity = 8.0 + (self.rng.next_f64() * 4.0); // 8-12 m/s
-        let angular_velocity = 15.0 + (self.rng.next_f64() * 10.0); // 15-25 rad/s
-        let friction_coefficient = 0.05 + (self.rng.next_f64() * 0.03); // Variable friction
+        // Convert from u64 to f64 in [0,1)
+        let f64_from_u64 = |val: u64| (val as f64) / (u64::MAX as f64);
+        
+        let initial_velocity = 8.0 + (f64_from_u64(self.rng.next_u64()) * 4.0); // 8-12 m/s
+        let angular_velocity = 15.0 + (f64_from_u64(self.rng.next_u64()) * 10.0); // 15-25 rad/s
+        let friction_coefficient = 0.05 + (f64_from_u64(self.rng.next_u64()) * 0.03); // Variable friction
 
         session.physics = RoulettePhysics {
             ball_position: 0.0,

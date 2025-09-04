@@ -126,6 +126,27 @@ impl DiceRoll {
     pub fn is_hard_way(&self) -> bool {
         self.die1 == self.die2 && matches!(self.total(), 4 | 6 | 8 | 10)
     }
+
+    /// Roll dice from multiple entropy sources for fairness
+    pub fn roll_dice_from_sources(entropy_sources: &[Vec<u8>]) -> Result<Self> {
+        let mut combined_entropy = Vec::new();
+        for source in entropy_sources {
+            combined_entropy.extend_from_slice(source);
+        }
+        
+        // Use entropy to generate dice values
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        let mut hasher = DefaultHasher::new();
+        combined_entropy.hash(&mut hasher);
+        let hash_value = hasher.finish();
+        
+        let die1 = ((hash_value % 6) + 1) as u8;
+        let die2 = (((hash_value >> 8) % 6) + 1) as u8;
+        
+        Self::new(die1, die2)
+    }
 }
 
 impl std::fmt::Display for DiceRoll {

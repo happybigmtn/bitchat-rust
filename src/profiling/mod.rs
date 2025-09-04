@@ -1,11 +1,19 @@
+#[cfg(feature = "profiling")]
 pub mod cpu_profiler;
+#[cfg(feature = "profiling")]
 pub mod memory_profiler;
+#[cfg(feature = "profiling")]
 pub mod mobile_profiler;
+#[cfg(feature = "profiling")]
 pub mod network_profiler;
 
+#[cfg(feature = "profiling")]
 pub use cpu_profiler::{CpuMetrics, CpuProfile, CpuProfiler};
+#[cfg(feature = "profiling")]
 pub use memory_profiler::{AllocationTracker, MemoryMetrics, MemoryProfile, MemoryProfiler};
+#[cfg(feature = "profiling")]
 pub use mobile_profiler::{BatteryMetrics, MobileProfile, MobileProfiler, ThermalMetrics};
+#[cfg(feature = "profiling")]
 pub use network_profiler::{LatencyTracker, NetworkMetrics, NetworkProfile, NetworkProfiler};
 
 use crate::error::BitCrapsError;
@@ -14,6 +22,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Comprehensive performance profiling system
+#[cfg(feature = "profiling")]
 pub struct PerformanceProfiler {
     cpu_profiler: CpuProfiler,
     memory_profiler: MemoryProfiler,
@@ -23,6 +32,7 @@ pub struct PerformanceProfiler {
     profiling_overhead: Arc<RwLock<Duration>>,
 }
 
+#[cfg(feature = "profiling")]
 impl PerformanceProfiler {
     pub fn new() -> Result<Self, BitCrapsError> {
         Ok(Self {
@@ -271,6 +281,7 @@ impl PerformanceProfiler {
 }
 
 /// Comprehensive performance report
+#[cfg(feature = "profiling")]
 #[derive(Debug, Clone)]
 pub struct ComprehensiveReport {
     pub session_duration: Duration,
@@ -282,6 +293,7 @@ pub struct ComprehensiveReport {
     pub recommendations: Vec<OptimizationRecommendation>,
 }
 
+#[cfg(feature = "profiling")]
 impl ComprehensiveReport {
     /// Generate a summary score (0-100) for overall performance
     pub fn performance_score(&self) -> u8 {
@@ -348,6 +360,7 @@ impl ComprehensiveReport {
 }
 
 /// Point-in-time performance snapshot
+#[cfg(feature = "profiling")]
 #[derive(Debug, Clone)]
 pub struct PerformanceSnapshot {
     pub timestamp: Instant,
@@ -359,6 +372,7 @@ pub struct PerformanceSnapshot {
 }
 
 /// Optimization recommendation based on profiling data
+#[cfg(feature = "profiling")]
 #[derive(Debug, Clone)]
 pub struct OptimizationRecommendation {
     pub category: RecommendationCategory,
@@ -369,6 +383,7 @@ pub struct OptimizationRecommendation {
     pub estimated_impact: String,
 }
 
+#[cfg(feature = "profiling")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecommendationCategory {
     Cpu,
@@ -378,6 +393,7 @@ pub enum RecommendationCategory {
     Integration,
 }
 
+#[cfg(feature = "profiling")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RecommendationPriority {
     Low,

@@ -55,9 +55,20 @@ impl ConsensusAPI {
     }
 
     /// Verify a quorum certificate (placeholder until full validator key registry integration)
-    pub async fn verify_quorum_certificate(&self, _qc_bytes: &[u8]) -> SDKResult<bool> {
-        // TODO: deserialize QC and verify signatures against known validator keys
-        Ok(true)
+    pub async fn verify_quorum_certificate(&self, qc_bytes: &[u8]) -> SDKResult<bool> {
+        #[derive(serde::Deserialize)]
+        struct ServiceQC { proposal_id: [u8;32], round: u32, commit_signatures: Vec<([u8;32], Vec<u8>)> }
+        let qc: ServiceQC = bincode::deserialize(qc_bytes)
+            .map_err(|e| SDKError::SerializationError(e.to_string()))?;
+
+        // Fetch network status to obtain active validator count
+        #[derive(serde::Deserialize)]
+        struct StatusResponse { active_validators: u32 }
+        let status: StatusResponse = self.rest_client.get("consensus/status").await?;
+        let n = status.active_validators as usize;
+        if n == 0 { return Ok(false); }
+        let required = (2 * n + 2) / 3; // ceil(2n/3)
+        Ok(qc.commit_signatures.len() >= required)
     }
     
     /// Submit a new consensus proposal

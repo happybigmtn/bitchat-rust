@@ -346,10 +346,13 @@ impl EdgeOrchestrator {
             // Update cluster capacity
             self.update_cluster_capacity(cluster, &nodes).await;
             
+            // Get node_id before moving node
+            let node_id = node.id;
+            
             // Send event
             let _ = self.event_tx.send(OrchestrationEvent::NodeJoined { node });
             
-            tracing::info!("Added node {} to cluster {}", node.id, cluster_id);
+            tracing::info!("Added node {} to cluster {}", node_id, cluster_id);
             Ok(())
         } else {
             Err(Error::NotFound(format!("Cluster {} not found", cluster_id)))
@@ -642,7 +645,7 @@ impl EdgeOrchestrator {
                 // Custom weighted approach
                 let latency_score = 1.0 / (1.0 + node.metrics.network_latency_ms / 50.0);
                 let resource_score = node.priority_score();
-                let geo_score = if let Some(target_location) = workload.target_location {
+                let geo_score = if let Some(target_location) = &workload.target_location {
                     1.0f32 / (1.0f32 + (node.location.distance_km(&target_location) as f32) / 1000.0f32)
                 } else {
                     1.0f32

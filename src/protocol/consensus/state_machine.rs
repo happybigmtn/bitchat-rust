@@ -1,3 +1,5 @@
+#![cfg(feature = "consensus-state-machine")]
+
 //! Deterministic State Machine for Consensus Operations
 //!
 //! This module implements a deterministic state machine for executing consensus operations
@@ -679,7 +681,7 @@ impl DeterministicStateMachine {
         // craps rules and odds for each bet type
         
         // For now, simple win/lose logic
-        if matches!(resolution, bet_types::BetResolution::Won { .. }) {
+        if matches!(resolution, crate::protocol::bet_types::BetResolution::Won { .. }) {
             // Return bet amount plus winnings based on odds
             let multiplier = self.get_bet_multiplier(&bet.bet_type);
             let winnings = CrapTokens::new_unchecked(

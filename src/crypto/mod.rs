@@ -99,6 +99,21 @@ impl GameCrypto {
         mac.finalize().into_bytes().into()
     }
 
+    /// Generate randomness from multiple participant sources for fairness
+    pub fn generate_randomness(participants: &[crate::protocol::PeerId]) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        // Add secure entropy
+        use rand::RngCore;
+        let mut rng_bytes = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut rng_bytes);
+        hasher.update(&rng_bytes);
+        // Mix in participant identities for deterministic component
+        for participant in participants {
+            hasher.update(participant);
+        }
+        hasher.finalize().into()
+    }
+
     /// Generate cryptographically secure random bytes
     pub fn random_bytes<const N: usize>() -> [u8; N] {
         let mut bytes = [0u8; N];

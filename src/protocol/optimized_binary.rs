@@ -443,6 +443,8 @@ impl UltraCompactGameState {
             super::craps::GamePhase::Point => 1,
             super::craps::GamePhase::Ended => 2,
             super::craps::GamePhase::GameEnded => 3,
+            super::craps::GamePhase::GameOver => 4,
+            super::craps::GamePhase::Off => 5,
         };
         let point_phase = (point_val << 4) | (phase_val & 0x0F);
 

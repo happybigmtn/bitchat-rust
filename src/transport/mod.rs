@@ -661,19 +661,23 @@ impl TransportCoordinator {
     }
 
     /// Initialize Bluetooth transport
+    #[cfg(feature = "bluetooth")]
     pub async fn init_bluetooth(&mut self, local_peer_id: PeerId) -> Result<()> {
         let bluetooth = BluetoothTransport::new(local_peer_id)
             .await
             .map_err(|e| Error::Network(format!("Failed to initialize Bluetooth: {}", e)))?;
 
-        #[cfg(feature = "bluetooth")]
-        {
-            self.bluetooth = Some(Arc::new(RwLock::new(bluetooth)));
-        }
+        self.bluetooth = Some(Arc::new(RwLock::new(bluetooth)));
         Ok(())
     }
 
+    #[cfg(not(feature = "bluetooth"))]
+    pub async fn init_bluetooth(&mut self, _local_peer_id: PeerId) -> Result<()> {
+        Err(Error::Configuration("Bluetooth transport not available".to_string()))
+    }
+
     /// Initialize enhanced Bluetooth transport with both central and peripheral roles
+    #[cfg(feature = "bluetooth")]
     pub async fn init_enhanced_bluetooth(&mut self, local_peer_id: PeerId) -> Result<()> {
         log::info!("Initializing enhanced Bluetooth transport");
 
@@ -704,6 +708,11 @@ impl TransportCoordinator {
 
         log::info!("Enhanced Bluetooth transport initialized successfully");
         Ok(())
+    }
+
+    #[cfg(not(feature = "bluetooth"))]
+    pub async fn init_enhanced_bluetooth(&mut self, _local_peer_id: PeerId) -> Result<()> {
+        Err(Error::Configuration("Enhanced Bluetooth transport not available".to_string()))
     }
 
     /// Initialize TCP transport for WiFi/Internet connectivity
@@ -892,6 +901,7 @@ impl TransportCoordinator {
     #[cfg(feature = "bluetooth")]
     pub async fn start_ble_advertising(&self, config: AdvertisingConfig) -> Result<()> {
         if let Some(enhanced_bt) = self.enhanced_bluetooth() {
+            #[cfg(feature = "bluetooth")]
             let mut bt = enhanced_bt.write().await;
             bt.start_advertising(config)
                 .await
@@ -907,6 +917,7 @@ impl TransportCoordinator {
     #[cfg(feature = "bluetooth")]
     pub async fn stop_ble_advertising(&self) -> Result<()> {
         if let Some(enhanced_bt) = self.enhanced_bluetooth() {
+            #[cfg(feature = "bluetooth")]
             let mut bt = enhanced_bt.write().await;
             bt.stop_advertising()
                 .await
@@ -922,6 +933,7 @@ impl TransportCoordinator {
     #[cfg(feature = "bluetooth")]
     pub async fn start_mesh_mode(&self, config: AdvertisingConfig) -> Result<()> {
         if let Some(enhanced_bt) = self.enhanced_bluetooth() {
+            #[cfg(feature = "bluetooth")]
             let mut bt = enhanced_bt.write().await;
             bt.start_mesh_mode(config)
                 .await
@@ -952,11 +964,13 @@ impl TransportCoordinator {
         #[cfg(feature = "bluetooth")]
         {
             if let Some(enhanced_bluetooth) = self.enhanced_bluetooth() {
+            #[cfg(feature = "bluetooth")]
                 let mut bt = enhanced_bluetooth.write().await;
                 bt.listen(TransportAddress::Bluetooth("BitCraps".to_string()))
                     .await
                     .map_err(|e| Error::Network(format!("Enhanced Bluetooth listen failed: {}", e)))?;
             } else if let Some(bluetooth) = self.bluetooth() {
+            #[cfg(feature = "bluetooth")]
                 let mut bt = bluetooth.write().await;
                 bt.listen(TransportAddress::Bluetooth("BitCraps".to_string()))
                     .await
@@ -1072,12 +1086,14 @@ impl TransportCoordinator {
         match address {
             TransportAddress::Bluetooth(_) => {
                 // For Bluetooth addresses, prefer enhanced BT over legacy
+                #[cfg(feature = "bluetooth")]
                 if let Some(enhanced_bt) = self.enhanced_bluetooth() {
                     let enhanced_bt = enhanced_bt.clone();
                     let address = address.clone();
                     attempts.push((
                         "enhanced_bluetooth".to_string(),
                         Box::pin(async move {
+            #[cfg(feature = "bluetooth")]
                             let mut transport = enhanced_bt.write().await;
                             match transport.connect(address).await {
                                 Ok(_) => Ok(()),
@@ -1092,18 +1108,25 @@ impl TransportCoordinator {
                     ));
                 }
 
+                #[cfg(feature = "bluetooth")]
                 if let Some(bluetooth) = self.bluetooth(){
                     let bluetooth = bluetooth.clone();
                     let address = address.clone();
                     attempts.push((
                         "bluetooth".to_string(),
                         Box::pin(async move {
+            #[cfg(feature = "bluetooth")]
                             let mut transport = bluetooth.write().await;
                             match transport.connect(address).await {
                                 Ok(_) => Ok(()),
                                 Err(e) => Err(Error::Network(e.to_string())),
                             }
-                        }),
+                        })
+                            as std::pin::Pin<
+                                std::boxed::Box<
+                                    dyn std::future::Future<Output = Result<()>> + Send,
+                                >,
+                            >,
                     ));
                 }
             }
@@ -1120,7 +1143,12 @@ impl TransportCoordinator {
                                 Ok(_) => Ok(()),
                                 Err(e) => Err(Error::Network(e.to_string())),
                             }
-                        }),
+                        })
+                            as std::pin::Pin<
+                                std::boxed::Box<
+                                    dyn std::future::Future<Output = Result<()>> + Send,
+                                >,
+                            >,
                     ));
                 }
             }
@@ -1130,18 +1158,25 @@ impl TransportCoordinator {
             }
             TransportAddress::Mesh(_) => {
                 // For mesh addresses, try all available transports
+                #[cfg(feature = "bluetooth")]
                 if let Some(enhanced_bt) = self.enhanced_bluetooth() {
                     let enhanced_bt = enhanced_bt.clone();
                     let mesh_address = TransportAddress::Bluetooth("mesh".to_string());
                     attempts.push((
                         "enhanced_bluetooth_mesh".to_string(),
                         Box::pin(async move {
+            #[cfg(feature = "bluetooth")]
                             let mut transport = enhanced_bt.write().await;
                             match transport.connect(mesh_address).await {
                                 Ok(_) => Ok(()),
                                 Err(e) => Err(Error::Network(e.to_string())),
                             }
-                        }),
+                        })
+                            as std::pin::Pin<
+                                std::boxed::Box<
+                                    dyn std::future::Future<Output = Result<()>> + Send,
+                                >,
+                            >,
                     ));
                 }
 
@@ -1156,9 +1191,18 @@ impl TransportCoordinator {
                                 Ok(_) => Ok(()),
                                 Err(e) => Err(Error::Network(e.to_string())),
                             }
-                        }),
+                        })
+                            as std::pin::Pin<
+                                std::boxed::Box<
+                                    dyn std::future::Future<Output = Result<()>> + Send,
+                                >,
+                            >,
                     ));
                 }
+            }
+            TransportAddress::WebRtc(_) => {
+                // WebRTC transport not yet implemented
+                log::debug!("WebRTC transport requested but not implemented");
             }
         }
 
@@ -1192,6 +1236,7 @@ impl TransportCoordinator {
     ) -> Result<()> {
         match address {
             TransportAddress::Bluetooth(_) => {
+                #[cfg(feature = "bluetooth")]
                 if let Some(bluetooth) = self.bluetooth(){
                     let mut bt = bluetooth.write().await;
 
@@ -1226,6 +1271,10 @@ impl TransportCoordinator {
                         }
                     }
                 }
+                #[cfg(not(feature = "bluetooth"))]
+                {
+                    return Err(Error::Configuration("Bluetooth transport not available".to_string()));
+                }
             }
             _ => {
                 return Err(Error::Network("Unsupported transport type".to_string()));
@@ -1246,11 +1295,16 @@ impl TransportCoordinator {
             // Perform actual disconnect based on transport type
             match metadata.address {
                 TransportAddress::Bluetooth(_) => {
+                    #[cfg(feature = "bluetooth")]
                     if let Some(bluetooth) = self.bluetooth(){
                         let mut bt = bluetooth.write().await;
                         bt.disconnect(peer_id).await.map_err(|e| {
                             Error::Network(format!("Bluetooth disconnect failed: {}", e))
                         })?;
+                    }
+                    #[cfg(not(feature = "bluetooth"))]
+                    {
+                        return Err(Error::Configuration("Bluetooth transport not available".to_string()));
                     }
                 }
                 _ => {
@@ -1356,6 +1410,7 @@ impl TransportCoordinator {
         data: &[u8],
     ) -> Result<()> {
         match address {
+            #[cfg(feature = "bluetooth")]
             TransportAddress::Bluetooth(_) => {
                 // Try enhanced Bluetooth first, then fall back to regular Bluetooth
                 if let Some(enhanced_bt) = self.enhanced_bluetooth() {
@@ -1370,11 +1425,16 @@ impl TransportCoordinator {
                 }
 
                 if let Some(bluetooth) = self.bluetooth(){
+            #[cfg(feature = "bluetooth")]
                     let mut bt = bluetooth.write().await;
                     bt.send(peer_id, data.to_vec())
                         .await
                         .map_err(|e| Error::Network(format!("Bluetooth send failed: {}", e)))?;
                 }
+            }
+            #[cfg(not(feature = "bluetooth"))]
+            TransportAddress::Bluetooth(_) => {
+                return Err(Error::Configuration("Bluetooth transport not available".to_string()));
             }
             TransportAddress::Tcp(_) => {
                 if let Some(tcp) = &self.tcp_transport {
@@ -1396,6 +1456,11 @@ impl TransportCoordinator {
                     .send_with_transport_failover(peer_id, data.to_vec())
                     .await;
             }
+            TransportAddress::WebRtc(_) => {
+                return Err(Error::Network(
+                    "WebRTC transport not yet implemented".to_string(),
+                ));
+            }
         }
 
         Ok(())
@@ -1406,6 +1471,7 @@ impl TransportCoordinator {
         let mut last_error = Error::Network("No transports available".to_string());
 
         // Try enhanced Bluetooth
+        #[cfg(feature = "bluetooth")]
         if let Some(enhanced_bt) = self.enhanced_bluetooth() {
             match enhanced_bt
                 .read()
@@ -1446,7 +1512,9 @@ impl TransportCoordinator {
         }
 
         // Try regular Bluetooth as last resort
+        #[cfg(feature = "bluetooth")]
         if let Some(bluetooth) = self.bluetooth(){
+            #[cfg(feature = "bluetooth")]
             match bluetooth.write().await.send(peer_id, data).await {
                 Ok(_) => {
                     log::debug!("Successfully sent via Bluetooth to peer {:?}", peer_id);
@@ -1509,6 +1577,29 @@ impl TransportCoordinator {
     /// Get list of connected peers
     pub async fn connected_peers(&self) -> Vec<PeerId> {
         self.connections.iter().map(|entry| *entry.key()).collect()
+    }
+
+    /// Get reference to bluetooth transport if available
+    #[cfg(feature = "bluetooth")]
+    pub fn bluetooth(&self) -> Option<&Arc<RwLock<BluetoothTransport>>> {
+        self.bluetooth.as_ref()
+    }
+
+    /// Get reference to enhanced bluetooth transport if available
+    #[cfg(feature = "bluetooth")]
+    pub fn enhanced_bluetooth(&self) -> Option<&Arc<RwLock<EnhancedBluetoothTransport>>> {
+        self.enhanced_bluetooth.as_ref()
+    }
+
+    /// Stub methods for when bluetooth feature is disabled
+    #[cfg(not(feature = "bluetooth"))]
+    pub fn bluetooth(&self) -> Option<&()> {
+        None
+    }
+
+    #[cfg(not(feature = "bluetooth"))]
+    pub fn enhanced_bluetooth(&self) -> Option<&()> {
+        None
     }
 }
 

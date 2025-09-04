@@ -104,11 +104,13 @@ pub use treasury::{
 #[cfg(feature = "ui")]
 pub use ui::{Cli, Commands};
 pub use utils::{AdaptiveInterval, AdaptiveIntervalConfig};
+#[cfg(feature = "compliance")]
 pub use compliance::{
     ComplianceConfig, ComplianceLevel, ComplianceManager, ComplianceStatus, ComplianceRestriction,
     KycProvider, KycStatus, AmlMonitor, RiskScore, SanctionsScreening, SanctionsResult,
     AuditLogger, AuditEvent, ComplianceAudit,
 };
+#[cfg(feature = "governance")]
 pub use governance::{
     GovernanceConfig, GovernanceCoordinator, Dao, DaoMember, MembershipTier,
     Proposal, ProposalType, VotingMechanism, VotingPower,

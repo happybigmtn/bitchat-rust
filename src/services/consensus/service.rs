@@ -23,8 +23,12 @@ pub struct ConsensusService {
     metrics: Arc<RwLock<ConsensusMetrics>>,
     proposal_tx: broadcast::Sender<ConsensusProposal>,
     result_tx: broadcast::Sender<ConsensusResult>,
-    shutdown_tx: Option<mpsc::UnboundedSender<()>>,
+    shutdown_tx: Option<tokio::sync::broadcast::Sender<()>>,
     peer_id: PeerId,
+    /// Stored quorum certificates by proposal id (serialized)
+    quorum_certs: Arc<DashMap<TransactionId, Vec<u8>>>,
+    /// Stored quorum certificates by round sequence (u64)
+    quorum_certs_by_sequence: Arc<DashMap<u64, Vec<u8>>>,
 }
 
 impl ConsensusService {
@@ -43,13 +47,15 @@ impl ConsensusService {
             result_tx,
             shutdown_tx: None,
             peer_id,
+            quorum_certs: Arc::new(DashMap::new()),
+            quorum_certs_by_sequence: Arc::new(DashMap::new()),
         }
     }
 
     /// Get quorum certificate for a committed sequence (if integrated engine is available).
     /// For now, returns None as a placeholder until engine is wired.
-    pub async fn get_quorum_certificate(&self, _sequence: u64) -> Result<Option<Vec<u8>>> {
-        Ok(None)
+    pub async fn get_quorum_certificate(&self, sequence: u64) -> Result<Option<Vec<u8>>> {
+        Ok(self.quorum_certs_by_sequence.get(&sequence).map(|e| e.clone()))
     }
 
     /// Get quorum certificate by proposal id
@@ -59,7 +65,9 @@ impl ConsensusService {
     
     /// Start the consensus service
     pub async fn start(&mut self) -> Result<()> {
-        let (shutdown_tx, mut shutdown_rx) = mpsc::unbounded_channel();
+        let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
+        let mut shutdown_rx1 = shutdown_tx.subscribe();
+        let mut shutdown_rx2 = shutdown_tx.subscribe();
         self.shutdown_tx = Some(shutdown_tx);
         
         // Start background tasks
@@ -77,7 +85,7 @@ impl ConsensusService {
                     _ = timeout_interval.tick() => {
                         Self::check_round_timeouts(&active_rounds, &config, &metrics, &result_tx).await;
                     }
-                    _ = shutdown_rx.recv() => {
+                    _ = shutdown_rx1.recv() => {
                         break;
                     }
                 }
@@ -96,7 +104,7 @@ impl ConsensusService {
                     _ = sync_interval.tick() => {
                         Self::update_network_state(&network_state, &byzantine_detector).await;
                     }
-                    _ = shutdown_rx.recv() => {
+                    _ = shutdown_rx2.recv() => {
                         break;
                     }
                 }
@@ -209,6 +217,8 @@ impl ConsensusService {
         let voter_votes = round.votes.entry(request.vote.voter).or_insert_with(std::collections::HashMap::new);
         voter_votes.insert(request.vote.vote_type, request.vote.clone());
         
+        let round_number = round.round_number;
+        
         // Check if we have reached consensus
         if self.check_consensus_reached(&*round).await? {
             round.status = super::RoundStatus::Committed;
@@ -233,6 +243,7 @@ impl ConsensusService {
             };
             let qc_bytes = bincode::serialize(&qc).map_err(|e| Error::ConsensusError(e.to_string()))?;
             self.quorum_certs.insert(request.proposal_id, qc_bytes.clone());
+            self.quorum_certs_by_sequence.insert(round.round_number as u64, qc_bytes.clone());
 
             let result = ConsensusResult {
                 proposal_id: request.proposal_id,
@@ -253,7 +264,7 @@ impl ConsensusService {
         
         Ok(VoteResponse {
             accepted: true,
-            current_round: round.round_number,
+            current_round: round_number,
         })
     }
     
@@ -360,7 +371,7 @@ impl ConsensusService {
     fn generate_transaction_id(&self) -> TransactionId {
         use sha2::{Sha256, Digest};
         let mut hasher = Sha256::new();
-        hasher.update(&self.peer_id.as_bytes());
+        hasher.update(self.peer_id.as_ref());
         hasher.update(&SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos().to_le_bytes());
         hasher.finalize().into()
     }

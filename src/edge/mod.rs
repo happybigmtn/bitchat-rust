@@ -550,26 +550,26 @@ impl EdgeRuntime {
     }
 
     /// Select node by lowest latency
-    async fn select_by_latency(&self, nodes: &[&EdgeNode], _workload: &EdgeWorkload) -> Option<&EdgeNode> {
+    async fn select_by_latency<'a>(&self, nodes: &'a [&'a EdgeNode], _workload: &EdgeWorkload) -> Option<&'a EdgeNode> {
         nodes.iter()
             .min_by(|a, b| a.metrics.network_latency_ms.total_cmp(&b.metrics.network_latency_ms))
             .copied()
     }
 
     /// Select node by best resource availability
-    async fn select_by_resources(&self, nodes: &[&EdgeNode], _workload: &EdgeWorkload) -> Option<&EdgeNode> {
+    async fn select_by_resources<'a>(&self, nodes: &'a [&'a EdgeNode], _workload: &EdgeWorkload) -> Option<&'a EdgeNode> {
         nodes.iter()
             .max_by(|a, b| a.priority_score().total_cmp(&b.priority_score()))
             .copied()
     }
 
     /// Select node by geographic proximity
-    async fn select_by_geography(&self, nodes: &[&EdgeNode], workload: &EdgeWorkload) -> Option<&EdgeNode> {
-        if let Some(target_location) = workload.target_location {
+    async fn select_by_geography<'a>(&self, nodes: &'a [&'a EdgeNode], workload: &EdgeWorkload) -> Option<&'a EdgeNode> {
+        if let Some(target_location) = &workload.target_location {
             nodes.iter()
                 .min_by(|a, b| {
-                    let dist_a = a.location.distance_km(&target_location);
-                    let dist_b = b.location.distance_km(&target_location);
+                    let dist_a = a.location.distance_km(target_location);
+                    let dist_b = b.location.distance_km(target_location);
                     dist_a.total_cmp(&dist_b)
                 })
                 .copied()
@@ -580,7 +580,7 @@ impl EdgeRuntime {
     }
 
     /// Select node using balanced algorithm
-    async fn select_balanced(&self, nodes: &[&EdgeNode], workload: &EdgeWorkload) -> Option<&EdgeNode> {
+    async fn select_balanced<'a>(&self, nodes: &'a [&'a EdgeNode], workload: &EdgeWorkload) -> Option<&'a EdgeNode> {
         let mut best_node = None;
         let mut best_score = 0.0f32;
 
@@ -592,8 +592,8 @@ impl EdgeRuntime {
             score += latency_score * 0.3;
 
             // Geographic score (if target location specified)
-            if let Some(target_location) = workload.target_location {
-                let distance = node.location.distance_km(&target_location);
+            if let Some(target_location) = &workload.target_location {
+                let distance = node.location.distance_km(target_location);
                 let geo_score = 1.0f32 / (1.0f32 + (distance as f32) / 1000.0f32); // Normalize to ~1000km
                 score += geo_score * 0.3f32;
             } else {

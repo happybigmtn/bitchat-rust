@@ -459,7 +459,7 @@ impl ProductionSanctionsScreening {
             Some((confidence, entry, authority)) => {
                 if confidence >= 95 {
                     Ok(SanctionsResult::Match {
-                        match_entry: entry,
+                        match_entry: entry.clone(),
                         sanctions_regime: self.determine_sanctions_regime(&entry),
                         detected_at: Utc::now(),
                     })

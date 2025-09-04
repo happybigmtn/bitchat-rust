@@ -1,3 +1,5 @@
+#![cfg(feature = "governance")]
+
 //! # Decentralized Governance Framework
 //!
 //! Complete DAO (Decentralized Autonomous Organization) implementation for BitCraps protocol
@@ -200,13 +202,14 @@ impl GovernanceCoordinator {
             discussion_period: config.proposal_config.discussion_period,
             voting_period: config.proposal_config.voting_period,
             execution_delay: config.proposal_config.execution_delay,
+            max_lifetime: Duration::seconds(30 * 24 * 3600), // 30 days
         };
         let proposal_manager = ProposalManager::new(proposals_config).await?;
-        let treasury_manager = TreasuryManager::new(config.treasury_config.clone()).await?;
+        let treasury_manager = treasury_governance::TreasuryManager::new(config.treasury_config.clone()).await?;
         let delegation_manager = DelegationManager::new().await?;
         
         let emergency_governance = if config.emergency_config.enabled {
-            Some(EmergencyGovernance::new(config.emergency_config.clone()).await?)
+            Some(emergency::EmergencyGovernance::new(config.emergency_config.clone()).await?)
         } else {
             None
         };
@@ -431,7 +434,7 @@ impl GovernanceCoordinator {
 
     /// Execute treasury allocation proposal
     async fn execute_treasury_allocation(&mut self, proposal: &Proposal) -> Result<()> {
-        if let ProposalType::TreasuryAllocation { recipient, amount } = &proposal.proposal_type {
+        if let ProposalType::TreasuryAllocation { recipient, amount, purpose: _, milestones: _ } = &proposal.proposal_type {
             self.treasury_manager.allocate_funds(*recipient, *amount).await?;
         }
         Ok(())

@@ -46,7 +46,7 @@ impl RateLimitMiddleware {
                 .or_insert_with(|| TokenBucket::new(limit, self.config.window));
             
             if !bucket.try_consume() {
-                return Err(Error::RateLimitExceeded);
+                return Err(Error::RateLimitExceeded("API rate limit exceeded".to_string()));
             }
         }
         
@@ -58,7 +58,7 @@ impl RateLimitMiddleware {
                     .or_insert_with(|| TokenBucket::new(limit, self.config.window));
                 
                 if !bucket.try_consume() {
-                    return Err(Error::RateLimitExceeded);
+                    return Err(Error::RateLimitExceeded("API rate limit exceeded".to_string()));
                 }
             }
         }

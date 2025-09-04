@@ -13,6 +13,8 @@ pub enum GamePhase {
     Point,
     Ended,
     GameEnded, // Alias for compatibility
+    GameOver, // Alias for game engine compatibility
+    Off, // Game is not active/ended
 }
 
 /// Result of bet resolution

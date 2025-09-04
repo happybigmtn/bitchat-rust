@@ -453,7 +453,7 @@ impl IntelligentTransportCoordinator {
         println!("Attempting NAT traversal for peer: {:?}", peer_id);
 
         // Use dummy address for demonstration
-        let target_address = "192.168.1.100:8080".parse().unwrap();
+        let target_address: std::net::SocketAddr = "192.168.1.100:8080".parse().unwrap();
 
         #[cfg(feature = "nat-traversal")]
         match self.nat_handler.setup_nat_traversal().await {

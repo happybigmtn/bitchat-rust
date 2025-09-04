@@ -49,6 +49,17 @@ pub enum PatchSeverity {
     Low,
 }
 
+impl std::fmt::Display for PatchSeverity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PatchSeverity::Critical => write!(f, "Critical"),
+            PatchSeverity::High => write!(f, "High"),
+            PatchSeverity::Medium => write!(f, "Medium"),
+            PatchSeverity::Low => write!(f, "Low"),
+        }
+    }
+}
+
 /// Patch deployment status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PatchStatus {

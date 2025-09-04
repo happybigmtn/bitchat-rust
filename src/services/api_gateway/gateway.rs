@@ -1,3 +1,5 @@
+#![cfg(feature = "api-gateway")]
+
 //! API Gateway Implementation
 //!
 //! Main gateway service that coordinates routing, authentication, and load balancing.

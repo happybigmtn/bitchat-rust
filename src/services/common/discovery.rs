@@ -226,6 +226,7 @@ impl ConsulClient {
                 tcp: hc.tcp.as_ref().map(|tcp| tcp.address.to_string()),
                 interval: format!("{}s", hc.interval.as_secs()),
                 timeout: format!("{}s", hc.timeout.as_secs()),
+                status: "passing".to_string(),
             }),
         };
         

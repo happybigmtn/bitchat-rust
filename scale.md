@@ -1,5 +1,27 @@
 Scaling BitCraps to a Massive Global Table
 
+Progress Tracker
+
+- [x] Role separation (Validator/Gateway/Client) with CLI and startup wiring
+- [x] Validator-only consensus gating (propose/vote restrictions)
+- [x] Service-level quorum certificates (QC) on commit + retrieval APIs
+- [x] Engine-level QC storage (commit-time) and accessor
+- [x] Consensus HTTP service (status, propose, vote, QC, admin validator ops)
+- [x] Game Engine HTTP service (games list/create/state/actions, snapshot)
+- [x] SDK v2: QC fetch (proposal/sequence) + basic verifier stub
+- [x] Validator-only randomness (commit-reveal participants restricted)
+- [x] PBFT tuning plumbing (CLI/config) + applied `round_timeout` in validator role
+- [x] VRF scaffold (deterministic stub + tests)
+- [x] Bet aggregation skeleton + Merkle (tests)
+- [ ] Apply PBFT batch/pipeline overrides where engine is instantiated (validators)
+- [ ] WebSocket pub/sub broadcast + broker integration (fan-out)
+- [ ] Integrate aggregator into gateway fan-in → consensus op with Merkle root
+- [ ] Inclusion proof endpoint (per-player bet proof) + payout batch op
+- [ ] Regional gateways + sticky routing + health-aware LB
+- [ ] Randomness orchestration (validator commit-reveal timeouts/penalties) + VRF fallback
+- [ ] Observability: latency histograms, SLO dashboards, alerts
+- [ ] Admin auth/RBAC + rate-limits/micro-fees for anti-spam
+
 Overview
 
 - Goal: Evolve BitCraps from small-group PBFT to a tiered architecture that supports 100k–1M+ concurrent spectators with tens of validators, while preserving provable fairness and low end-to-end latency per round.
@@ -260,4 +282,3 @@ Getting Started Checklist
 - Create aggregator module and wire Merkle roots into consensus ops.
 - Expose snapshot + QC API; add SDK fast-sync call.
 - Add test files listed above and hook into CI.
-

@@ -300,7 +300,10 @@ impl BridgeSecurityManager {
     pub fn new(security_manager: Arc<SecurityManager>) -> Self {
         Self {
             security_manager,
-            validator: Arc::new(InputValidator::new()),
+            validator: Arc::new(InputValidator::new(Default::default()).unwrap_or_else(|_| {
+                // TODO: Handle InputValidator initialization error gracefully
+                panic!("Failed to create InputValidator")
+            })),
             fraud_detection_rules: Arc::new(RwLock::new(HashMap::new())),
             security_events: Arc::new(RwLock::new(Vec::new())),
         }
@@ -559,7 +562,8 @@ impl BridgeStateManager {
                         // Clean old events (keep last 1000)
                         let mut events_guard = events.write().await;
                         if events_guard.len() > 1000 {
-                            events_guard.drain(0..events_guard.len() - 1000);
+                            let len = events_guard.len();
+                            events_guard.drain(0..len - 1000);
                         }
                         drop(events_guard);
                     }
@@ -614,32 +618,28 @@ impl BridgeEventMonitor {
             let state_manager = Arc::clone(&self.state_manager);
             let security_manager = Arc::clone(&self.security_manager);
 
-            let handle = spawn_tracked(
-                &format!("bridge_monitor_{:?}", chain_id),
-                TaskType::Network,
-                async move {
-                    let mut monitor_interval = interval(Duration::from_secs(10));
+            let handle = tokio::spawn(async move {
+                let mut monitor_interval = interval(Duration::from_secs(10));
 
-                    loop {
-                        tokio::select! {
-                            _ = monitor_interval.tick() => {
-                                // Monitor pending transactions for this chain
-                                let pending_txs = state_manager
-                                    .get_transactions_by_status(BridgeTransactionStatus::Initiated)
-                                    .await;
+                loop {
+                    tokio::select! {
+                        _ = monitor_interval.tick() => {
+                            // Monitor pending transactions for this chain
+                            let pending_txs = state_manager
+                                .get_transactions_by_status(BridgeTransactionStatus::Initiated)
+                                .await;
 
-                                for tx in pending_txs {
-                                    if tx.source_chain == chain_id || tx.target_chain == chain_id {
-                                        if let Err(e) = Self::monitor_transaction(&bridge, &tx, &state_manager).await {
-                                            log::warn!("Failed to monitor transaction {:?}: {}", tx.tx_id, e);
-                                        }
+                            for tx in pending_txs {
+                                if tx.source_chain == chain_id || tx.target_chain == chain_id {
+                                    if let Err(e) = Self::monitor_transaction(&bridge, &tx, &state_manager).await {
+                                        log::warn!("Failed to monitor transaction {:?}: {}", tx.tx_id, e);
                                     }
                                 }
                             }
                         }
                     }
                 }
-            );
+            });
 
             self.monitoring_tasks.push(handle);
         }

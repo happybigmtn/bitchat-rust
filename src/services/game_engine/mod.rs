@@ -7,6 +7,7 @@ pub mod api;
 pub mod engine;
 pub mod service;
 pub mod types;
+pub mod http;
 
 pub use service::GameEngineService;
 pub use types::*;
@@ -88,7 +89,7 @@ impl GameEngine for CrapsGameEngine {
         }
         
         let game_id = [0u8; 16];
-        let game = CrapsGame::new(players);
+        let game = CrapsGame::new(game_id, Default::default());
         Ok((game_id, game))
     }
     
@@ -105,7 +106,18 @@ impl GameEngine for CrapsGameEngine {
                     return Err(Error::GameError("Invalid bet amount".to_string()));
                 }
                 
-                state.place_bet(*player_id, bet_type, amount)?;
+                let bet = crate::protocol::Bet {
+                    id: [0u8; 16], // TODO: Generate proper bet ID
+                    player: *player_id,
+                    game_id: *game_id,
+                    bet_type,
+                    amount: amount.into(),
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                };
+                state.place_bet(*player_id, bet)?;
                 Ok(GameActionResult::BetPlaced {
                     player: *player_id,
                     bet_type,
@@ -128,7 +140,7 @@ impl GameEngine for CrapsGameEngine {
                 let winnings = state.cash_out(*player_id)?;
                 Ok(GameActionResult::CashOut {
                     player: *player_id,
-                    amount: winnings,
+                    amount: winnings.into(),
                 })
             }
         }

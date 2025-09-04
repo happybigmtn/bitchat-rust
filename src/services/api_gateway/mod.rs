@@ -9,6 +9,7 @@ pub mod routing;
 pub mod load_balancer;
 pub mod circuit_breaker;
 
+#[cfg(feature = "api-gateway")]
 pub use gateway::ApiGateway;
 
 use crate::error::{Error, Result};

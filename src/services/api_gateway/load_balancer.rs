@@ -90,8 +90,8 @@ impl LoadBalancer {
         let health_check_interval = self.service_discovery_config.health_check_interval;
         
         for mut entry in self.service_instances.iter_mut() {
-            let service_name = entry.key();
-            let last_check = self.last_health_check.get(service_name)
+            let service_name = entry.key().clone();
+            let last_check = self.last_health_check.get(&service_name)
                 .map(|instant| *instant.value())
                 .unwrap_or(Instant::now() - health_check_interval);
             
@@ -101,7 +101,7 @@ impl LoadBalancer {
                     instance.health_status = self.check_instance_health(instance).await;
                 }
                 
-                self.last_health_check.insert(service_name.clone(), Instant::now());
+                self.last_health_check.insert(service_name, Instant::now());
             }
         }
     }
@@ -126,7 +126,7 @@ impl LoadBalancer {
     async fn get_healthy_instances(&self, service_name: &str) -> Option<Vec<ServiceInstance>> {
         let instances = self.service_instances.get(service_name)?;
         let healthy: Vec<ServiceInstance> = instances.iter()
-            .filter(|instance| instance.health_status.is_healthy())
+            .filter(|instance| matches!(instance.health_status, HealthStatus::Healthy))
             .cloned()
             .collect();
         

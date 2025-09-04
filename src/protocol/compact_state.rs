@@ -180,6 +180,8 @@ impl CompactGameState {
             GamePhase::Point => 1,
             GamePhase::Ended => 2,
             GamePhase::GameEnded => 3,
+            GamePhase::GameOver => 4,
+            GamePhase::Off => 5,
         };
         let point_phase = (point_val << 4) | phase_val;
 
@@ -465,6 +467,8 @@ impl StateDelta {
                     GamePhase::Point => 1,
                     GamePhase::Ended => 2,
                     GamePhase::GameEnded => 3,
+                    GamePhase::GameOver => 4,
+                    GamePhase::Off => 5,
                 };
                 buf.put_u8(phase_byte);
             }
@@ -633,6 +637,8 @@ impl StateCompressor {
                     GamePhase::Point => 1,
                     GamePhase::Ended => 2,
                     GamePhase::GameEnded => 3,
+                    GamePhase::GameOver => 4,
+                    GamePhase::Off => 5,
                 };
                 state.point_phase = (point_val << 4) | phase_val;
             }

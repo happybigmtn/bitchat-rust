@@ -329,6 +329,53 @@ impl CrapsGame {
         self.player_bets.remove(player);
     }
 
+    /// Check if a player can place a bet in the current game phase
+    pub fn can_place_bet(&self, player_id: PeerId) -> bool {
+        // Can place bets if game is active and player is participating
+        self.is_active() && self.participants.contains(&player_id)
+    }
+
+    /// Check if a player can roll dice (must be the shooter in an active game)
+    pub fn can_roll_dice(&self, player_id: PeerId) -> bool {
+        self.is_active() && self.shooter == player_id
+    }
+
+    /// Check if a player can cash out (has active bets)
+    pub fn can_cash_out(&self, player_id: PeerId) -> bool {
+        self.player_bets.get(&player_id)
+            .map(|bets| !bets.is_empty())
+            .unwrap_or(false)
+    }
+
+    /// Roll dice and return the result
+    pub fn roll_dice(&mut self) -> Result<DiceRoll, crate::error::Error> {
+        use crate::crypto::GameCrypto;
+        
+        // Generate entropy from multiple sources for fairness
+        let entropy_sources = vec![
+            GameCrypto::generate_randomness(&self.participants).to_vec(),
+        ];
+        
+        let roll = DiceRoll::roll_dice_from_sources(&entropy_sources)?;
+        
+        // Add to roll history
+        self.roll_history.push(roll);
+        
+        Ok(roll)
+    }
+
+    /// Cash out a player's bets (return total amount wagered)
+    pub fn cash_out(&mut self, player_id: PeerId) -> Result<CrapTokens, crate::error::Error> {
+        if let Some(bets) = self.player_bets.remove(&player_id) {
+            let total = bets.values()
+                .map(|bet| bet.amount.0)
+                .sum::<u64>();
+            Ok(CrapTokens::new_unchecked(total))
+        } else {
+            Err(crate::error::Error::InvalidBet("No active bets for player".to_string()))
+        }
+    }
+
     /// Get game statistics
     pub fn get_stats(&self) -> GameStats {
         GameStats {

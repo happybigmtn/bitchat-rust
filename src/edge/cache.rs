@@ -813,13 +813,14 @@ impl EdgeCacheManager {
         }
 
         // Remove evicted entries
+        let eviction_count = entries_to_evict.len();
         for key in entries_to_evict {
             cache.remove(&key);
         }
 
         // Update metrics
         let mut metrics = self.metrics.write().await;
-        metrics.evictions += entries_to_evict.len() as u64;
+        metrics.evictions += eviction_count as u64;
 
         Ok(())
     }

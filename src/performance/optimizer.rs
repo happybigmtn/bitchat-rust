@@ -91,7 +91,7 @@ pub struct ConsensusMetrics {
 }
 
 /// Memory usage metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MemoryMetrics {
     pub heap_allocated_mb: f64,
     pub heap_used_mb: f64,
@@ -105,7 +105,7 @@ pub struct MemoryMetrics {
 }
 
 /// CPU usage metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CpuMetrics {
     pub utilization_percent: f64,
     pub system_time_percent: f64,
@@ -897,11 +897,14 @@ impl PerformanceOptimizer {
         {
             // Return default CPU metrics when monitoring is disabled
             CpuMetrics {
-                usage_percent: 50.0,
+                utilization_percent: 50.0,
+                system_time_percent: 25.0,
+                user_time_percent: 25.0,
+                thread_count: 4,
                 core_count: 4,
-                frequency_mhz: 2400.0,
-                temperature: 45.0,
-                timestamp: std::time::SystemTime::now(),
+                frequency_mhz: 2400,
+                per_core_usage: vec![50.0; 4],
+                load_average: (1.0, 1.0, 1.0),
             }
         }
     }
@@ -947,11 +950,14 @@ impl PerformanceOptimizer {
         {
             // Return default memory metrics when monitoring is disabled
             MemoryMetrics {
-                usage_percent: 60.0,
-                available_mb: 2048,
-                total_mb: 8192,
-                swap_usage_percent: 10.0,
-                timestamp: std::time::SystemTime::now(),
+                heap_allocated_mb: 1024.0,
+                heap_used_mb: 600.0,
+                cache_size_mb: 256.0,
+                buffer_pool_size_mb: 128.0,
+                total_memory_gb: 8.0,
+                available_memory_gb: 5.0,
+                swap_used_mb: 100.0,
+                virtual_memory_mb: 2048.0,
             }
         }
     }

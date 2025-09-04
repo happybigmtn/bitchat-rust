@@ -36,7 +36,7 @@ pub struct HsmKeystore {
 
 /// Abstract HSM provider interface for different hardware types
 #[async_trait::async_trait]
-pub trait HsmProvider: Send + Sync {
+pub trait HsmProvider: Send + Sync + std::fmt::Debug {
     /// Initialize connection to HSM
     async fn initialize(&self) -> Result<()>;
     

@@ -8,6 +8,7 @@ pub mod common;
 pub mod consensus;
 pub mod game_engine;
 
+#[cfg(feature = "api-gateway")]
 pub use api_gateway::ApiGateway;
 pub use consensus::ConsensusService;
 pub use game_engine::GameEngineService;
@@ -22,6 +23,7 @@ use tokio::sync::RwLock;
 pub struct ServiceOrchestrator {
     services: Arc<RwLock<Vec<Box<dyn MicroService>>>>,
     service_discovery: Arc<dyn ServiceDiscovery>,
+    #[cfg(feature = "api-gateway")]
     gateway: Option<ApiGateway>,
 }
 
@@ -61,6 +63,7 @@ impl ServiceOrchestrator {
         Self {
             services: Arc::new(RwLock::new(Vec::new())),
             service_discovery,
+            #[cfg(feature = "api-gateway")]
             gateway: None,
         }
     }
@@ -79,8 +82,12 @@ impl ServiceOrchestrator {
     }
     
     /// Set up the API gateway
+    #[cfg(feature = "api-gateway")]
     pub fn with_gateway(&mut self, gateway: ApiGateway) -> &mut Self {
-        self.gateway = Some(gateway);
+        #[cfg(feature = "api-gateway")]
+        {
+            self.gateway = Some(gateway);
+        }
         self
     }
     
@@ -95,6 +102,7 @@ impl ServiceOrchestrator {
         drop(services);
         
         // Start gateway last
+        #[cfg(feature = "api-gateway")]
         if let Some(gateway) = &mut self.gateway {
             log::info!("Starting API Gateway");
             gateway.start().await?;
@@ -107,6 +115,7 @@ impl ServiceOrchestrator {
     /// Stop all services
     pub async fn stop_all(&mut self) -> Result<()> {
         // Stop gateway first
+        #[cfg(feature = "api-gateway")]
         if let Some(gateway) = &mut self.gateway {
             log::info!("Stopping API Gateway");
             gateway.stop().await?;
@@ -140,6 +149,7 @@ impl ServiceOrchestrator {
         }
         
         // Check gateway health
+        #[cfg(feature = "api-gateway")]
         if let Some(_gateway) = &self.gateway {
             // Gateway health would be checked here
             health_status.insert("api-gateway".to_string(), ServiceHealth::Healthy);
@@ -158,6 +168,7 @@ impl ServiceOrchestrator {
 pub struct ServiceBuilder {
     game_engine_config: Option<game_engine::GameEngineConfig>,
     consensus_config: Option<consensus::ConsensusConfig>,
+    #[cfg(feature = "api-gateway")]
     gateway_config: Option<api_gateway::GatewayConfig>,
     service_discovery: Option<Arc<dyn ServiceDiscovery>>,
 }
@@ -167,6 +178,7 @@ impl ServiceBuilder {
         Self {
             game_engine_config: None,
             consensus_config: None,
+            #[cfg(feature = "api-gateway")]
             gateway_config: None,
             service_discovery: None,
         }
@@ -182,6 +194,7 @@ impl ServiceBuilder {
         self
     }
     
+    #[cfg(feature = "api-gateway")]
     pub fn with_gateway(mut self, config: api_gateway::GatewayConfig) -> Self {
         self.gateway_config = Some(config);
         self
@@ -211,6 +224,7 @@ impl ServiceBuilder {
         }
         
         // Set up gateway if configured
+        #[cfg(feature = "api-gateway")]
         if let Some(config) = self.gateway_config {
             let gateway = ApiGateway::new(config);
             orchestrator.with_gateway(gateway);
@@ -228,7 +242,7 @@ impl Default for ServiceBuilder {
 
 /// Wrapper for GameEngineService to implement MicroService trait
 pub struct GameEngineServiceWrapper {
-    service: game_engine::GameEngineService,
+    service: std::sync::Arc<tokio::sync::RwLock<game_engine::GameEngineService>>,
     address: SocketAddr,
 }
 
@@ -236,7 +250,7 @@ impl GameEngineServiceWrapper {
     pub fn new(config: game_engine::GameEngineConfig) -> Self {
         let address = "127.0.0.1:8081".parse().unwrap(); // Default address
         let service = game_engine::GameEngineService::new(config);
-        
+        let service = std::sync::Arc::new(tokio::sync::RwLock::new(service));
         Self { service, address }
     }
 }
@@ -252,15 +266,22 @@ impl MicroService for GameEngineServiceWrapper {
     }
     
     async fn start(&mut self) -> Result<()> {
-        self.service.start().await
+        use crate::services::game_engine::http::start_http;
+        {
+            let mut svc = self.service.write().await;
+            svc.start().await?;
+        }
+        start_http(self.service.clone(), self.address).await?;
+        Ok(())
     }
     
     async fn stop(&mut self) -> Result<()> {
-        self.service.stop().await
+        let mut svc = self.service.write().await;
+        svc.stop().await
     }
     
     async fn health_check(&self) -> Result<ServiceHealth> {
-        match self.service.health_check().await {
+        match self.service.read().await.health_check().await {
             Ok(_) => Ok(ServiceHealth::Healthy),
             Err(_) => Ok(ServiceHealth::Unhealthy),
         }
@@ -375,13 +396,17 @@ pub async fn create_default_setup() -> Result<ServiceOrchestrator> {
     
     let discovery = Arc::new(StaticServiceDiscovery::new());
     
-    ServiceBuilder::new()
+    let mut builder = ServiceBuilder::new()
         .with_service_discovery(discovery)
         .with_game_engine(game_engine::GameEngineConfig::default())
-        .with_consensus(consensus::ConsensusConfig::default())
-        .with_gateway(api_gateway::GatewayConfig::default())
-        .build()
-        .await
+        .with_consensus(consensus::ConsensusConfig::default());
+        
+    #[cfg(feature = "api-gateway")]
+    {
+        builder = builder.with_gateway(api_gateway::GatewayConfig::default());
+    }
+    
+    builder.build().await
 }
 
 #[cfg(test)]

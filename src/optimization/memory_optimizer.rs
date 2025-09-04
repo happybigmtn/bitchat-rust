@@ -535,14 +535,14 @@ impl MemoryOptimizer {
         self.create_memory_pool(
             "small_buffers".to_string(),
             self.config.small_pool_size,
-            || Vec::with_capacity(1024),
+            || Vec::<String>::with_capacity(1024),
         ).await;
         
         // Medium buffer pool (for larger data structures)
         self.create_memory_pool(
             "medium_buffers".to_string(),
             self.config.medium_pool_size,
-            || Vec::with_capacity(64 * 1024),
+            || Vec::<u8>::with_capacity(64 * 1024),
         ).await;
         
         // Connection object pool

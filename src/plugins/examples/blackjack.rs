@@ -123,6 +123,7 @@ impl BlackjackPlugin {
 
         // Deal card
         let card = self.deal_card(session).await?;
+        let card_number = card.to_number(); // Get card number before moving
         player.hand.push(card);
 
         let hand_value = self.calculate_hand_value(&player.hand);
@@ -133,16 +134,16 @@ impl BlackjackPlugin {
             info!("Player {} busted with {}", player_id, hand_value);
             
             Ok(GameActionResult::CardDealt { 
-                card: card.to_number() 
+                card: card_number 
             })
         } else if hand_value == 21 {
             player.state = BlackjackPlayerState::Standing;
             Ok(GameActionResult::CardDealt { 
-                card: card.to_number() 
+                card: card_number 
             })
         } else {
             Ok(GameActionResult::CardDealt { 
-                card: card.to_number() 
+                card: card_number 
             })
         }
     }

@@ -1,3 +1,5 @@
+#![cfg(feature = "optimization")]
+
 //! Connection Pool Optimizer for BitCraps
 //!
 //! Provides intelligent connection pool management with adaptive sizing,

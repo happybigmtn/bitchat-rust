@@ -1,3 +1,5 @@
+#![cfg(feature = "plugins")]
+
 //! Plugin System for BitCraps Casino Games
 //!
 //! This module provides a comprehensive plugin architecture for extending

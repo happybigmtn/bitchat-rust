@@ -1,3 +1,5 @@
+#![cfg(feature = "pbft")]
+
 //! Optimized Practical Byzantine Fault Tolerance (PBFT) Implementation
 //!
 //! This module implements an optimized PBFT consensus algorithm with:

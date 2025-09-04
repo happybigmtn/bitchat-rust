@@ -586,6 +586,7 @@ impl TcpTransport {
                         let connections = connections.clone();
                         let event_sender = event_sender.clone();
                         let config = config.clone();
+                        let connected_set = connected_set.clone();
 
                         #[cfg(feature = "tls")]
                         let tls_acceptor = tls_acceptor.clone();

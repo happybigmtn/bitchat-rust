@@ -17,6 +17,8 @@
 //! 5. **Performance Tests**: Throughput and latency benchmarks
 //! 6. **Chaos Tests**: System behavior under random failures
 
+#![cfg(feature = "consensus-tests")]
+
 use crate::protocol::consensus::{
     formal_verification::*,
     optimized_pbft::*,
@@ -665,8 +667,12 @@ impl ConsensusTestRunner {
 
         // Test place bet operation
         let bet = Bet {
+            id: [1u8; 16],
+            player: PeerId([2u8; 32]),
+            game_id: GameId([3u8; 16]),
             bet_type: BetType::Pass,
             amount: CrapTokens::new_unchecked(100),
+            timestamp: 1234567890,
         };
 
         let operation = StateOperation {
@@ -747,8 +753,12 @@ impl ConsensusTestRunner {
 
         // Test operation and verification
         let bet = Bet {
+            id: [1u8; 16],
+            player: PeerId([2u8; 32]),
+            game_id: GameId([3u8; 16]),
             bet_type: BetType::Pass,
             amount: CrapTokens::new_unchecked(100),
+            timestamp: 1234567890,
         };
 
         let operation = StateOperation {

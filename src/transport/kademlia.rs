@@ -627,10 +627,10 @@ impl KademliaNode {
         #[cfg(feature = "nat-traversal")]
         let public_addr = self.network_handler.public_address.read().await;
         #[cfg(not(feature = "nat-traversal"))]
-        let public_addr = None;
+        let public_addr: Option<SocketAddr> = None;
         println!(
             "Kademlia node started on {} (public: {:?})",
-            self.local_address, *public_addr
+            self.local_address, public_addr
         );
         Ok(())
     }
@@ -1055,13 +1055,18 @@ impl KademliaNode {
         message: KademliaMessage,
     ) -> Result<KademliaResponse, Box<dyn std::error::Error>> {
         // Try reliable transport first for better NAT traversal and retransmission
-        match self.send_reliable(address, message.clone()).await {
-            Ok(response) => Ok(response),
-            Err(_) => {
-                // Fallback to original UDP-only method
-                self.send_message_udp_only(address, message).await
+        #[cfg(feature = "nat-traversal")]
+        {
+            match self.send_reliable(address, message.clone()).await {
+                Ok(response) => return Ok(response),
+                Err(_) => {
+                    // Fallback to UDP
+                }
             }
         }
+        
+        // Fallback to original UDP-only method
+        self.send_message_udp_only(address, message).await
     }
 
     /// Original UDP-only message sending (kept as fallback)
@@ -1128,7 +1133,7 @@ impl KademliaNode {
         #[cfg(feature = "nat-traversal")]
         let udp_socket = self.network_handler.udp_socket.clone();
         #[cfg(not(feature = "nat-traversal"))]
-        let udp_socket = tokio::net::UdpSocket::bind(self.local_address).await?;
+        let udp_socket = Arc::new(tokio::net::UdpSocket::bind(self.local_address).await?);
         let routing_table = self.routing_table.clone();
         let storage = self.storage.clone();
         let pending_queries = self.pending_queries.clone();

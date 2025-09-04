@@ -1,3 +1,5 @@
+#![cfg(feature = "network-optimization")]
+
 //! Production Network Optimization for BitCraps
 //!
 //! This module provides advanced network optimization features for production deployment:

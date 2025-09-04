@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 use serde::{Deserialize, Serialize};
-use tracing::{field, Span};
+use tracing::{field, Span, Instrument};
 
 /// Unique correlation identifier for request tracing
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -441,9 +441,8 @@ impl CorrelationMiddleware {
         // Start tracking
         self.manager.start_request(context.clone()).await?;
         
-        // Create tracing span
-        let span = tracing::info_span!("request_processing")
-            .with_request_context(&context);
+        // Create tracing span  
+        let span = tracing::info_span!("request_processing");
         
         let result = async move {
             let result = handler(context.clone()).await;
@@ -459,7 +458,7 @@ impl CorrelationMiddleware {
             }
             
             result
-        }.instrument(span).await;
+        }.instrument(span.clone()).await;
         
         result
     }

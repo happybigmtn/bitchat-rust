@@ -168,7 +168,8 @@ impl VotingMechanism for LinearVoting {
     }
 
     fn tally_votes(&self, proposal_id: &str) -> Result<VotingResult> {
-        let votes = self.votes.get(proposal_id).unwrap_or(&vec![]);
+        let empty_votes = vec![];
+        let votes = self.votes.get(proposal_id).unwrap_or(&empty_votes);
         
         let mut support_votes = CrapTokens::zero();
         let mut oppose_votes = CrapTokens::zero();
@@ -295,7 +296,8 @@ impl VotingMechanism for QuadraticVoting {
     }
 
     fn tally_votes(&self, proposal_id: &str) -> Result<VotingResult> {
-        let votes = self.votes.get(proposal_id).unwrap_or(&vec![]);
+        let empty_votes = vec![];
+        let votes = self.votes.get(proposal_id).unwrap_or(&empty_votes);
         
         let mut support_votes = CrapTokens::zero();
         let mut oppose_votes = CrapTokens::zero();

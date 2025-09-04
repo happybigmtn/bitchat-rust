@@ -1,3 +1,5 @@
+#![cfg(feature = "compliance")]
+
 //! # Compliance Framework
 //! 
 //! Comprehensive compliance and regulatory framework for BitCraps protocol.
@@ -178,6 +180,7 @@ impl ComplianceManager {
             alert_thresholds: audit::AlertThresholds {
                 high_severity_per_hour: 100,
                 critical_per_day: 10,
+                pattern_detection: true,
             },
         }).await?;
         let reporter = ComplianceReporter::new().await?;

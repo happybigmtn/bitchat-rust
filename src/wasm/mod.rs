@@ -1,3 +1,5 @@
+#![cfg(feature = "wasm")]
+
 //! WebAssembly runtime integration for BitCraps
 //!
 //! This module provides WebAssembly support for extending BitCraps functionality including:
