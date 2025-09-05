@@ -10,6 +10,8 @@ use super::LoadBalancingStrategy;
 use super::middleware::{AuthMiddleware, RateLimitMiddleware};
 use super::routing::Router;
 use super::*;
+mod broker;
+use broker::{InMemoryBroker, SharedBroker};
 use crate::error::{Error, Result};
 use axum::{
     body::Body,
@@ -41,6 +43,7 @@ pub struct ApiGateway {
     metrics: Arc<RwLock<GatewayMetrics>>,
     request_counter: Arc<AtomicU64>,
     shutdown_tx: Option<tokio::sync::mpsc::UnboundedSender<()>>,
+    broker: SharedBroker,
 }
 
 impl ApiGateway {
@@ -56,7 +59,7 @@ impl ApiGateway {
         let auth_middleware = Arc::new(AuthMiddleware::new(config.auth.clone()));
         let metrics = Arc::new(RwLock::new(GatewayMetrics::default()));
         let request_counter = Arc::new(AtomicU64::new(0));
-        
+        let broker = Arc::new(InMemoryBroker::new());
         Self {
             config,
             router,
@@ -67,6 +70,7 @@ impl ApiGateway {
             metrics,
             request_counter,
             shutdown_tx: None,
+            broker,
         }
     }
     
@@ -131,7 +135,7 @@ impl ApiGateway {
         
         // Build Axum router
         let app_router = self.build_router().await;
-        
+
         // Start HTTP server
         let listener = tokio::net::TcpListener::bind(&self.config.listen_addr).await?;
         log::info!("API Gateway listening on {}", self.config.listen_addr);
@@ -142,7 +146,7 @@ impl ApiGateway {
         )
         .await
         .map_err(|e| Error::NetworkError(e.to_string()))?;
-        
+
         Ok(())
     }
     
@@ -275,6 +279,7 @@ impl ApiGateway {
             metrics: self.metrics.clone(),
             request_counter: self.request_counter.clone(),
             config: self.config.clone(),
+            broker: self.broker.clone(),
         };
         
         AxumRouter::new()
@@ -283,6 +288,8 @@ impl ApiGateway {
             // Direct aggregation + proof routes handled in gateway
             .route("/api/v1/games/:id/bets", axum::routing::post(post_bet_handler))
             .route("/api/v1/games/:id/proofs", axum::routing::get(get_proofs_handler))
+            .route("/api/v1/games/:id/payouts", axum::routing::post(post_payouts_handler))
+            .route("/subscribe", get(ws_gateway_subscribe))
             .route("/api/*path", any(proxy_handler))
             .route("/*path", any(proxy_handler))
             .layer(
@@ -348,6 +355,7 @@ struct GatewayState {
     metrics: Arc<RwLock<GatewayMetrics>>,
     request_counter: Arc<AtomicU64>,
     config: GatewayConfig,
+    broker: SharedBroker,
 }
 
 /// Health check endpoint
@@ -543,6 +551,17 @@ async fn post_bet_handler(
     let round = crate::services::api_gateway::aggregate::current_round(gid);
     crate::services::api_gateway::aggregate::add_bet(gid, round, player, bt, crate::protocol::craps::CrapTokens(body.amount));
 
+    // Publish event to broker
+    let evt = serde_json::json!({
+        "type": "bet_accepted",
+        "game_id": id,
+        "player_id_hex": body.player_id_hex,
+        "bet_type": body.bet_type,
+        "amount": body.amount,
+        "round": round,
+    });
+    state.broker.publish(&format!("game:{}:events", id), evt.to_string());
+
     let resp = serde_json::json!({"accepted": true, "round": round});
     (StatusCode::OK, axum::Json(GatewayResponse::success(resp, uuid::Uuid::new_v4().to_string(), Some("api-gateway".into())))).into_response()
 }
@@ -576,6 +595,88 @@ fn parse_bet_type_min(s: &str) -> Option<crate::protocol::craps::BetType> {
         "dontcome" | "dont-come" | "don't-come" => Some(BetType::DontCome),
         "field" => Some(BetType::Field),
         _ => None,
+    }
+}
+
+use axum::extract::ws::{WebSocket, WebSocketUpgrade, Message};
+use futures_util::{SinkExt, StreamExt};
+use axum::extract::Query as AxumQuery;
+#[derive(serde::Deserialize)]
+struct SubQuery { topic: String }
+
+async fn ws_gateway_subscribe(
+    State(state): State<GatewayState>,
+    AxumQuery(q): AxumQuery<SubQuery>,
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_gateway_ws(socket, state, q.topic))
+}
+
+#[derive(serde::Deserialize)]
+struct PayoutItem { player_id_hex: String, amount: u64 }
+
+#[derive(serde::Deserialize)]
+struct PayoutsBody { payouts: Vec<PayoutItem>, reason: Option<String>, round: Option<u64> }
+
+async fn post_payouts_handler(
+    State(state): State<GatewayState>,
+    Path(id): Path<String>,
+    Json(body): Json<PayoutsBody>,
+) -> impl IntoResponse {
+    // Build consensus proposal for batch payouts
+    let payload = serde_json::json!({
+        "round": body.round,
+        "reason": body.reason,
+        "payouts": body.payouts,
+    });
+    let data_vec = serde_json::to_vec(&payload).unwrap_or_default();
+
+    // game_id as [u8;16] array
+    let gid_arr = if let Ok(bytes) = hex::decode(&id) { if bytes.len()==16 { let mut id=[0u8;16]; id.copy_from_slice(&bytes); id } else { [0u8;16] } } else { [0u8;16] };
+    let req = serde_json::json!({
+        "game_id": gid_arr,
+        "proposal_type": { "GameAction": { "action": "payouts" } },
+        "data": data_vec,
+    });
+
+    // Send to consensus service
+    if let Some(instance) = state.load_balancer.get_instance("consensus").await {
+        let client = reqwest::Client::new();
+        let url = format!("http://{}/api/v1/consensus/propose", instance.endpoint.address);
+        match client.post(&url).json(&req).send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                // Publish notification
+                state.broker.publish(&format!("game:{}:events", id), serde_json::json!({
+                    "type": "payouts_submitted",
+                    "status": status.as_u16(),
+                }).to_string());
+                return (StatusCode::OK, axum::Json(serde_json::json!({"status": status.as_u16(), "resp": text }))).into_response();
+            }
+            Err(e) => {
+                return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"error": e.to_string()}))).into_response();
+            }
+        }
+    }
+    (StatusCode::SERVICE_UNAVAILABLE, axum::Json(serde_json::json!({"error": "No consensus service"}))).into_response()
+}
+
+async fn handle_gateway_ws(mut socket: WebSocket, state: GatewayState, topic: String) {
+    // Send hello
+    let _ = socket.send(Message::Text(format!("{{\"type\":\"hello\",\"topic\":\"{}\"}}", topic))).await;
+
+    let mut rx = state.broker.subscribe(&topic);
+    loop {
+        tokio::select! {
+            Ok(msg) = rx.recv() => {
+                if socket.send(Message::Text(msg)).await.is_err() { break; }
+            }
+            Some(Ok(Message::Close(_))) = socket.recv() => { break; }
+            Some(Ok(Message::Ping(data))) = socket.recv() => { let _ = socket.send(Message::Pong(data)).await; }
+            Some(Ok(_)) = socket.recv() => { /* ignore */ }
+            else => break,
+        }
     }
 }
 
