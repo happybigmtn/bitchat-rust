@@ -11,7 +11,7 @@ use dashmap::DashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{RwLock, mpsc, broadcast};
 use tokio::time::interval;
 use uuid::Uuid;
 
@@ -22,6 +22,7 @@ pub struct GameEngineService {
     sessions: Arc<DashMap<GameId, Arc<RwLock<GameSessionData>>>>,
     stats: Arc<GameServiceStats>,
     shutdown_tx: Option<mpsc::UnboundedSender<()>>,
+    event_tx: broadcast::Sender<GameEvent>,
 }
 
 /// Internal session data
@@ -75,6 +76,7 @@ impl GameEngineService {
         let engine = Arc::new(CrapsGameEngine::new(config.clone()));
         let sessions = Arc::new(DashMap::new());
         let stats = Arc::new(GameServiceStats::new());
+        let (event_tx, _rx) = broadcast::channel(1024);
         
         Self {
             config,
@@ -82,6 +84,7 @@ impl GameEngineService {
             sessions,
             stats,
             shutdown_tx: None,
+            event_tx,
         }
     }
     
@@ -145,6 +148,8 @@ impl GameEngineService {
         self.stats.total_games.fetch_add(1, Ordering::Relaxed);
         self.stats.active_games.fetch_add(1, Ordering::Relaxed);
         self.stats.total_players.fetch_add(session_info.players.len() as u64, Ordering::Relaxed);
+        // Broadcast event
+        let _ = self.event_tx.send(GameEvent::GameCreated { game_id, players: session_info.players.clone(), phase: session_info.phase });
         
         Ok(CreateGameResponse {
             game_id,
@@ -189,6 +194,19 @@ impl GameEngineService {
                 self.stats.total_volume.fetch_add(*amount, Ordering::Relaxed);
             },
             _ => {}
+        }
+
+        // Broadcast corresponding event
+        match &result {
+            GameActionResult::BetPlaced { player, bet_type, amount } => {
+                let _ = self.event_tx.send(GameEvent::BetPlaced { game_id: request.game_id, player: *player, bet_type: *bet_type, amount: *amount });
+            }
+            GameActionResult::DiceRolled { roller, roll, new_phase } => {
+                let _ = self.event_tx.send(GameEvent::DiceRolled { game_id: request.game_id, roller: *roller, roll: *roll, new_phase: *new_phase });
+            }
+            GameActionResult::CashOut { player, amount } => {
+                let _ = self.event_tx.send(GameEvent::CashOut { game_id: request.game_id, player: *player, amount: *amount });
+            }
         }
         
         Ok(ProcessActionResponse {
@@ -287,6 +305,11 @@ impl GameEngineService {
                 log::info!("Cleaned up inactive game: {:?}", game_id);
             }
         }
+    }
+
+    /// Subscribe to broadcasted game events
+    pub fn subscribe_events(&self) -> broadcast::Receiver<GameEvent> {
+        self.event_tx.subscribe()
     }
 }
 

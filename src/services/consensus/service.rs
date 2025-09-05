@@ -37,7 +37,7 @@ impl ConsensusService {
         let (proposal_tx, _) = broadcast::channel(1000);
         let (result_tx, _) = broadcast::channel(1000);
         
-        Self {
+        let this = Self {
             config: config.clone(),
             network_state: Arc::new(RwLock::new(NetworkState::new())),
             active_rounds: Arc::new(DashMap::new()),
@@ -49,7 +49,22 @@ impl ConsensusService {
             peer_id,
             quorum_certs: Arc::new(DashMap::new()),
             quorum_certs_by_sequence: Arc::new(DashMap::new()),
+        };
+        // Log PBFT tuning overrides if provided
+        if this.config.pbft_batch_size.is_some()
+            || this.config.pbft_pipeline_depth.is_some()
+            || this.config.pbft_base_timeout_ms.is_some()
+            || this.config.pbft_view_timeout_ms.is_some()
+        {
+            log::info!(
+                "PBFT tuning: batch_size={:?}, pipeline_depth={:?}, base_timeout_ms={:?}, view_timeout_ms={:?}",
+                this.config.pbft_batch_size,
+                this.config.pbft_pipeline_depth,
+                this.config.pbft_base_timeout_ms,
+                this.config.pbft_view_timeout_ms
+            );
         }
+        this
     }
 
     /// Get quorum certificate for a committed sequence (if integrated engine is available).

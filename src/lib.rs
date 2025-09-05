@@ -151,6 +151,7 @@ pub enum NodeRole {
     Client,
 }
 
+#[derive(Clone)]
 pub struct AppConfig {
     pub data_dir: String,
     pub nickname: Option<String>,

@@ -52,6 +52,46 @@ fn compute_merkle_root(contributors: &[Contributor]) -> Hash256 {
     leaves[0]
 }
 
+/// Compute a Merkle branch (sibling hashes up the tree) for a given leaf index.
+fn compute_merkle_branch(contributors: &[Contributor], mut index: usize) -> Vec<[u8;32]> {
+    use sha2::{Digest, Sha256};
+    if contributors.is_empty() || index >= contributors.len() { return Vec::new(); }
+
+    // Build initial leaves
+    let mut level: Vec<[u8;32]> = contributors.iter().map(|c| {
+        let mut h = Sha256::new();
+        h.update(&c.player);
+        h.update(c.amount.0.to_le_bytes());
+        h.finalize().into()
+    }).collect();
+
+    let mut branch: Vec<[u8;32]> = Vec::new();
+    while level.len() > 1 {
+        let is_right = index % 2 == 1;
+        let sibling_index = if is_right { index - 1 } else { index + 1 };
+        if sibling_index < level.len() {
+            branch.push(level[sibling_index]);
+        }
+
+        // Build next level
+        let mut next: Vec<[u8;32]> = Vec::with_capacity((level.len() + 1) / 2);
+        for chunk in level.chunks(2) {
+            let combined = if chunk.len() == 2 {
+                let mut h = Sha256::new();
+                h.update(&chunk[0]);
+                h.update(&chunk[1]);
+                h.finalize().into()
+            } else {
+                chunk[0]
+            };
+            next.push(combined);
+        }
+        level = next;
+        index /= 2;
+    }
+    branch
+}
+
 /// Aggregate a list of (player, bet_type, amount) into groups of identical bet_type
 pub fn aggregate_bets(bets: Vec<(PeerId, BetType, CrapTokens)>) -> Vec<AggregatedBet> {
     use std::collections::HashMap;
@@ -88,3 +128,15 @@ mod tests {
     }
 }
 
+/// Public helper to compute inclusion branch and root for a specific bet entry
+pub fn inclusion_proof(
+    contributors: &[Contributor],
+    player: &PeerId,
+    amount: CrapTokens,
+) -> Option<(Vec<[u8;32]>, [u8;32])> {
+    // Locate index of leaf
+    let idx = contributors.iter().position(|c| &c.player == player && c.amount.0 == amount.0)?;
+    let branch = compute_merkle_branch(contributors, idx);
+    let root = compute_merkle_root(contributors);
+    Some((branch, root))
+}

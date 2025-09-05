@@ -545,14 +545,271 @@ impl ConsensusPersistence {
         })
     }
 
-    pub fn store_consensus_state(&self, _round_id: u64, _state: &[u8]) -> Result<()> { Ok(()) }
-    pub fn load_consensus_state(&self, _round_id: u64) -> Result<Option<Vec<u8>>> { Ok(None) }
-    pub fn load_latest_state(&self) -> Result<Option<(u64, Vec<u8>)>> { Ok(None) }
-    pub fn store_vote(&self, _round_id: u64, _peer_id: PeerId, _vote_data: &[u8], _signature: [u8; 64]) -> Result<()> { Ok(()) }
-    pub fn get_votes(&self, _round_id: u64) -> Result<Vec<(PeerId, Vec<u8>, [u8; 64])>> { Ok(Vec::new()) }
-    pub fn create_checkpoint(&self, _round_id: u64) -> Result<()> { Ok(()) }
-    pub fn load_latest_checkpoint(&self) -> Result<Option<ConsensusCheckpoint>> { Ok(None) }
-    pub fn recover(&self) -> Result<()> { Ok(()) }
+    /// SECURITY FIX: Implement file-based persistence when SQLite is disabled
+    pub fn store_consensus_state(&self, round_id: u64, state_hash: Hash256, state: &[u8]) -> Result<()> {
+        let state_file = self._storage_path.join(format!("state_{}.bin", round_id));
+        
+        // Create state entry
+        let entry = StateEntry {
+            round_id,
+            state_hash,
+            state_data: state.to_vec(),
+            timestamp: current_timestamp(),
+        };
+        
+        // Write to file
+        let serialized = bincode::serialize(&entry)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        std::fs::write(&state_file, serialized)
+            .map_err(|e| Error::IoError(e.to_string()))?;
+            
+        // Write to WAL
+        let wal_entry = WalEntry {
+            sequence: self.next_sequence(),
+            operation: ConsensusOperation::StateUpdate {
+                round_id,
+                state: state.to_vec(),
+            },
+            timestamp: current_timestamp(),
+            hash: state_hash,
+        };
+        
+        let mut wal = self.wal.lock().unwrap();
+        wal.append(wal_entry)?;
+        
+        Ok(())
+    }
+    
+    pub fn load_consensus_state(&self, round_id: u64) -> Result<Option<Vec<u8>>> {
+        let state_file = self._storage_path.join(format!("state_{}.bin", round_id));
+        
+        if !state_file.exists() {
+            return Ok(None);
+        }
+        
+        let data = std::fs::read(&state_file)
+            .map_err(|e| Error::IoError(e.to_string()))?;
+            
+        let entry: StateEntry = bincode::deserialize(&data)
+            .map_err(|e| Error::DeserializationError(e.to_string()))?;
+            
+        Ok(Some(entry.state_data))
+    }
+    
+    pub fn load_latest_state(&self) -> Result<Option<(u64, Vec<u8>)>> {
+        // Find latest state file
+        let entries = std::fs::read_dir(&self._storage_path)
+            .map_err(|e| Error::IoError(e.to_string()))?;
+            
+        let mut latest_round = 0;
+        for entry in entries {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name.starts_with("state_") && name.ends_with(".bin") {
+                        let round_str = &name[6..name.len()-4];
+                        if let Ok(round) = round_str.parse::<u64>() {
+                            latest_round = latest_round.max(round);
+                        }
+                    }
+                }
+            }
+        }
+        
+        if latest_round == 0 {
+            return Ok(None);
+        }
+        
+        self.load_consensus_state(latest_round)
+            .map(|state| state.map(|s| (latest_round, s)))
+    }
+    
+    pub fn store_vote(&self, round_id: u64, peer_id: PeerId, vote_data: &[u8], signature: [u8; 64]) -> Result<()> {
+        let vote_file = self._storage_path.join(format!("votes_{}.bin", round_id));
+        
+        // Load existing votes
+        let mut votes = if vote_file.exists() {
+            let data = std::fs::read(&vote_file)
+                .map_err(|e| Error::IoError(e.to_string()))?;
+            bincode::deserialize::<Vec<VoteEntry>>(&data)
+                .unwrap_or_else(|_| Vec::new())
+        } else {
+            Vec::new()
+        };
+        
+        // Add new vote
+        votes.push(VoteEntry {
+            peer_id,
+            vote_data: vote_data.to_vec(),
+            signature: signature.to_vec(),
+            timestamp: current_timestamp(),
+        });
+        
+        // Write back
+        let serialized = bincode::serialize(&votes)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        std::fs::write(&vote_file, serialized)
+            .map_err(|e| Error::IoError(e.to_string()))?;
+            
+        // Write to WAL
+        let wal_entry = WalEntry {
+            sequence: self.next_sequence(),
+            operation: ConsensusOperation::VoteReceived {
+                round_id,
+                voter: peer_id,
+                vote: vote_data.to_vec(),
+            },
+            timestamp: current_timestamp(),
+            hash: crate::crypto::GameCrypto::hash(vote_data),
+        };
+        
+        let mut wal = self.wal.lock().unwrap();
+        wal.append(wal_entry)?;
+        
+        Ok(())
+    }
+    
+    pub fn get_votes(&self, round_id: u64) -> Result<Vec<(PeerId, Vec<u8>, [u8; 64])>> {
+        let vote_file = self._storage_path.join(format!("votes_{}.bin", round_id));
+        
+        if !vote_file.exists() {
+            return Ok(Vec::new());
+        }
+        
+        let data = std::fs::read(&vote_file)
+            .map_err(|e| Error::IoError(e.to_string()))?;
+            
+        let votes: Vec<VoteEntry> = bincode::deserialize(&data)
+            .map_err(|e| Error::DeserializationError(e.to_string()))?;
+            
+        Ok(votes.into_iter()
+            .filter_map(|v| {
+                if v.signature.len() == 64 {
+                    let mut sig = [0u8; 64];
+                    sig.copy_from_slice(&v.signature);
+                    Some((v.peer_id, v.vote_data, sig))
+                } else {
+                    None // Skip invalid signatures
+                }
+            })
+            .collect())
+    }
+    
+    pub fn create_checkpoint(&self, round_id: u64) -> Result<()> {
+        let state_data = self.load_consensus_state(round_id)?
+            .ok_or_else(|| Error::InvalidState("No state to checkpoint".into()))?;
+            
+        let checkpoint = ConsensusCheckpoint {
+            round_id,
+            state_hash: crate::crypto::GameCrypto::hash(&state_data),
+            participant_signatures: Vec::new(),
+            timestamp: current_timestamp(),
+            game_state: state_data,
+            version: CONSENSUS_DB_VERSION,
+        };
+        
+        let checkpoint_file = self._storage_path.join(format!("checkpoint_{}.bin", round_id / CHECKPOINT_INTERVAL));
+        let serialized = bincode::serialize(&checkpoint)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+            
+        std::fs::write(&checkpoint_file, serialized)
+            .map_err(|e| Error::IoError(e.to_string()))?;
+            
+        // Prune old files
+        self.prune_old_files(round_id)?;
+        
+        Ok(())
+    }
+    
+    pub fn load_latest_checkpoint(&self) -> Result<Option<ConsensusCheckpoint>> {
+        // Find latest checkpoint file
+        let entries = std::fs::read_dir(&self._storage_path)
+            .map_err(|e| Error::IoError(e.to_string()))?;
+            
+        let mut latest_checkpoint = 0;
+        for entry in entries {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name.starts_with("checkpoint_") && name.ends_with(".bin") {
+                        let checkpoint_str = &name[11..name.len()-4];
+                        if let Ok(checkpoint) = checkpoint_str.parse::<u64>() {
+                            latest_checkpoint = latest_checkpoint.max(checkpoint);
+                        }
+                    }
+                }
+            }
+        }
+        
+        if latest_checkpoint == 0 {
+            return Ok(None);
+        }
+        
+        let checkpoint_file = self._storage_path.join(format!("checkpoint_{}.bin", latest_checkpoint));
+        let data = std::fs::read(&checkpoint_file)
+            .map_err(|e| Error::IoError(e.to_string()))?;
+            
+        let checkpoint: ConsensusCheckpoint = bincode::deserialize(&data)
+            .map_err(|e| Error::DeserializationError(e.to_string()))?;
+            
+        Ok(Some(checkpoint))
+    }
+    
+    pub fn recover(&self) -> Result<()> {
+        // Recover from WAL
+        let wal = self.wal.lock().unwrap();
+        let entries = wal.read_all()?;
+        
+        for entry in entries {
+            match entry.operation {
+                ConsensusOperation::StateUpdate { round_id, state } => {
+                    self.store_consensus_state(round_id, entry.hash, &state)?;
+                }
+                ConsensusOperation::VoteReceived { round_id, voter, vote } => {
+                    let signature = [0u8; 64]; // Would be extracted from vote data
+                    self.store_vote(round_id, voter, &vote, signature)?;
+                }
+                _ => {}
+            }
+        }
+        
+        Ok(())
+    }
+    
+    fn prune_old_files(&self, checkpoint_round: u64) -> Result<()> {
+        let cutoff = checkpoint_round.saturating_sub(CHECKPOINT_INTERVAL * 2);
+        
+        let entries = std::fs::read_dir(&self._storage_path)
+            .map_err(|e| Error::IoError(e.to_string()))?;
+            
+        for entry in entries {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    // Remove old state files
+                    if name.starts_with("state_") && name.ends_with(".bin") {
+                        let round_str = &name[6..name.len()-4];
+                        if let Ok(round) = round_str.parse::<u64>() {
+                            if round < cutoff {
+                                let _ = std::fs::remove_file(&path);
+                            }
+                        }
+                    }
+                    // Remove old vote files
+                    if name.starts_with("votes_") && name.ends_with(".bin") {
+                        let round_str = &name[6..name.len()-4];
+                        if let Ok(round) = round_str.parse::<u64>() {
+                            if round < cutoff {
+                                let _ = std::fs::remove_file(&path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
 }
 
 /// Write-ahead log implementation
@@ -656,6 +913,24 @@ fn current_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+/// State entry for file-based storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StateEntry {
+    pub round_id: u64,
+    pub state_hash: Hash256,
+    pub state_data: Vec<u8>,
+    pub timestamp: u64,
+}
+
+/// Vote entry for file-based storage  
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct VoteEntry {
+    pub peer_id: PeerId,
+    pub vote_data: Vec<u8>,
+    pub signature: Vec<u8>, // Changed to Vec<u8> for serde compatibility
+    pub timestamp: u64,
 }
 
 #[cfg(test)]

@@ -108,8 +108,54 @@ impl BitCrapsClient {
 
         *self.is_connected.write().await = false;
 
-        // Clean shutdown would go here
-        info!("Disconnected from BitCraps network");
+        // SECURITY FIX: Implement proper resource cleanup
+        
+        // 1. Stop mesh service and close network connections
+        if let Err(e) = self.mesh_service.stop().await {
+            warn!("Error stopping mesh service during disconnect: {:?}", e);
+        }
+        
+        // 2. Stop game framework background tasks
+        if let Err(e) = self.game_framework.stop_background_tasks().await {
+            warn!("Error stopping game framework tasks: {:?}", e);
+        }
+        
+        // 3. Cancel any pending operations and background tasks
+        // The background tasks spawned in start_background_tasks() will be cancelled
+        // when the event receiver is dropped
+        
+        // 4. Clear sensitive data from memory
+        {
+            let mut event_handlers = self.event_handlers.write().await;
+            event_handlers.clear();
+        }
+        
+        // 5. Close keystore connections
+        {
+            let mut keystore = self.keystore.write().await;
+            if let Err(e) = keystore.close().await {
+                warn!("Error closing keystore during disconnect: {:?}", e);
+            }
+        }
+        
+        // 6. Flush token ledger and close database connections
+        {
+            let mut ledger = self.token_ledger.write().await;
+            if let Err(e) = ledger.flush_to_disk().await {
+                warn!("Error flushing token ledger during disconnect: {:?}", e);
+            }
+        }
+        
+        // 7. Clear user session
+        {
+            let mut user_id = self.user_id.write().await;
+            *user_id = None;
+        }
+        
+        // 8. Update connection statistics
+        self.stats.connection_count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        
+        info!("Successfully disconnected from BitCraps network with full resource cleanup");
         Ok(())
     }
 

@@ -1,6 +1,9 @@
 use log::info;
 
 use bitcraps::{AppConfig, Error, Result};
+
+#[cfg(feature = "bluetooth")]
+use bitcraps::BluetoothDiscovery;
 use std::sync::Arc;
 
 // Import new modules
@@ -141,6 +144,10 @@ async fn start_services_for_role(config: &AppConfig) -> Result<()> {
             // Start consensus service for validators
             let mut cc = bitcraps::services::consensus::ConsensusConfig::default();
             if let Some(ms) = config.pbft_base_timeout_ms { cc.round_timeout = Duration::from_millis(ms); }
+            cc.pbft_batch_size = config.pbft_batch_size;
+            cc.pbft_pipeline_depth = config.pbft_pipeline_depth;
+            cc.pbft_base_timeout_ms = config.pbft_base_timeout_ms;
+            cc.pbft_view_timeout_ms = config.pbft_view_timeout_ms;
             builder = builder.with_consensus(cc);
             // Optionally run game engine locally as well for now
             builder = builder.with_game_engine(bitcraps::services::game_engine::GameEngineConfig::default());
@@ -218,7 +225,7 @@ async fn create_library_app(config: AppConfig) -> Result<bitcraps::BitCrapsApp> 
 }
 
 /// Start all monitoring services (Prometheus, Dashboard, Metrics Integration)
-#[cfg(not(feature = "mvp"))]
+#[cfg(all(not(feature = "mvp"), feature = "monitoring"))]
 async fn start_monitoring_services(_app_state: Arc<AppStateBitCrapsApp>, config: &AppConfig) -> Result<()> {
     use bitcraps::monitoring::{
         PrometheusServer, PrometheusConfig, start_dashboard_server, start_metrics_integration,
@@ -230,8 +237,12 @@ async fn start_monitoring_services(_app_state: Arc<AppStateBitCrapsApp>, config:
     
     // Start Prometheus server on port 9090
     let prometheus_port = config.prometheus_port.unwrap_or(9090);
+    let bind_addr = format!("0.0.0.0:{}", prometheus_port)
+        .parse::<SocketAddr>()
+        .map_err(|e| Error::Protocol(format!("Invalid prometheus address: {}", e)))?;
+        
     let prometheus_config = PrometheusConfig {
-        bind_address: format!("0.0.0.0:{}", prometheus_port).parse::<SocketAddr>().unwrap(),
+        bind_address: bind_addr,
         collection_interval_seconds: 5,
         enable_detailed_labels: true,
         global_labels: vec![("service".to_string(), "bitcraps".to_string())],
@@ -273,20 +284,21 @@ async fn start_monitoring_services(_app_state: Arc<AppStateBitCrapsApp>, config:
 }
 
 // MVP: monitoring services are disabled/no-op
-#[cfg(feature = "mvp")]
-async fn start_monitoring_services(_app: Arc<BitCrapsApp>, _config: &AppConfig) -> Result<()> {
+#[cfg(any(feature = "mvp", not(feature = "monitoring")))]
+async fn start_monitoring_services(_app_state: Arc<AppStateBitCrapsApp>, _config: &AppConfig) -> Result<()> {
+    log::info!("Monitoring services disabled (mvp mode or monitoring feature not enabled)");
     Ok(())
 }
 
 // Wrapper to run TUI with correct types per build feature
-#[cfg(not(feature = "mvp"))]
+#[cfg(all(not(feature = "mvp"), feature = "ui"))]
 async fn run_tui_wrapper(app: bitcraps::BitCrapsApp) -> Result<()> {
     bitcraps::ui::tui::run_integrated_tui(app).await.map_err(|e| Error::Protocol(format!("TUI failed: {}", e)))
 }
 
-#[cfg(feature = "mvp")]
+#[cfg(any(feature = "mvp", not(feature = "ui")))]
 async fn run_tui_wrapper(_app: bitcraps::BitCrapsApp) -> Result<()> {
-    log::warn!("TUI is disabled under MVP builds.");
+    log::warn!("TUI is disabled (MVP mode or ui feature not enabled)");
     Ok(())
 }
 

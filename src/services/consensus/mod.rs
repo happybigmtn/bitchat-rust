@@ -32,6 +32,14 @@ pub struct ConsensusConfig {
     pub min_validators: usize,
     /// Consensus algorithm variant
     pub algorithm: ConsensusAlgorithm,
+    /// PBFT tuning: optional batch size override
+    pub pbft_batch_size: Option<usize>,
+    /// PBFT tuning: optional pipeline depth override
+    pub pbft_pipeline_depth: Option<usize>,
+    /// PBFT tuning: optional base timeout (ms)
+    pub pbft_base_timeout_ms: Option<u64>,
+    /// PBFT tuning: optional view change timeout (ms)
+    pub pbft_view_timeout_ms: Option<u64>,
 }
 
 /// Supported consensus algorithms
@@ -50,6 +58,10 @@ impl Default for ConsensusConfig {
             max_rounds: 10,
             min_validators: 3,
             algorithm: ConsensusAlgorithm::PBFT,
+            pbft_batch_size: None,
+            pbft_pipeline_depth: None,
+            pbft_base_timeout_ms: None,
+            pbft_view_timeout_ms: None,
         }
     }
 }

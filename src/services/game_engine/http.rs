@@ -3,6 +3,7 @@
 use super::service::GameEngineService;
 use super::types::*;
 use axum::{routing::{get, post}, Router, extract::{State, Path}, Json};
+use axum::extract::ws::{WebSocket, WebSocketUpgrade, Message};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::RwLock;
 
@@ -16,6 +17,7 @@ pub async fn start_http(service: Arc<RwLock<GameEngineService>>, addr: SocketAdd
         .route("/api/v1/games", get(list_games).post(create_game))
         .route("/api/v1/games/:id", get(get_game_state))
         .route("/api/v1/games/:id/actions", post(process_action))
+        .route("/api/v1/games/:id/subscribe", get(ws_subscribe))
         .route("/api/v1/games/:id/snapshot", get(get_snapshot))
         .with_state(state);
 
@@ -68,3 +70,49 @@ fn parse_game_id_hex(s: &str) -> crate::protocol::GameId {
     [0u8;16]
 }
 
+async fn ws_subscribe(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ws: WebSocketUpgrade,
+) -> axum::response::Response {
+    let gid = parse_game_id_hex(&id);
+    ws.on_upgrade(move |socket| handle_ws(socket, state, gid))
+}
+
+async fn handle_ws(mut socket: WebSocket, state: AppState, game_id: crate::protocol::GameId) {
+    use futures_util::StreamExt;
+    let rx = state.service.read().await.subscribe_events();
+    tokio::pin!(rx);
+
+    let _ = socket
+        .send(Message::Text("{\"type\":\"hello\",\"service\":\"game\"}".into()))
+        .await;
+
+    loop {
+        tokio::select! {
+            Ok(event) = rx.recv() => {
+                // Filter by game id
+                let matches = match &event {
+                    super::types::GameEvent::GameCreated{ game_id: gid, .. } => gid == &game_id,
+                    super::types::GameEvent::BetPlaced{ game_id: gid, .. } => gid == &game_id,
+                    super::types::GameEvent::DiceRolled{ game_id: gid, .. } => gid == &game_id,
+                    super::types::GameEvent::CashOut{ game_id: gid, .. } => gid == &game_id,
+                    super::types::GameEvent::Snapshot{ game_id: gid, .. } => gid == &game_id,
+                };
+                if matches {
+                    if let Ok(txt) = serde_json::to_string(&event) {
+                        if socket.send(Message::Text(txt)).await.is_err() { break; }
+                    }
+                }
+            }
+            Some(Ok(msg)) = socket.recv() => {
+                match msg {
+                    Message::Ping(data) => { let _ = socket.send(Message::Pong(data)).await; }
+                    Message::Close(_) => { break; }
+                    _ => {}
+                }
+            }
+            else => { break; }
+        }
+    }
+}

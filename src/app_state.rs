@@ -9,10 +9,13 @@ use std::time::Duration;
 use tokio::time::{interval, sleep};
 
 use bitcraps::{
-    AppConfig, BitchatIdentity, BluetoothDiscovery, CrapTokens, Error, GameId, GameRuntime,
+    AppConfig, BitchatIdentity, CrapTokens, Error, GameId, GameRuntime,
     MeshService, PeerId, PersistenceManager, ProofOfRelay, Result,
     SessionManager as BitchatSessionManager, TokenLedger, TransportCoordinator, TREASURY_ADDRESS,
 };
+
+#[cfg(feature = "bluetooth")]
+use bitcraps::BluetoothDiscovery;
 use bitcraps::transport::tcp_transport::TcpTransportConfig;
 
 use bitcraps::gaming::{ConsensusGameConfig, ConsensusGameManager};
@@ -40,7 +43,10 @@ pub struct BitCrapsApp {
     pub session_manager: Arc<BitchatSessionManager>,
     pub ledger: Arc<TokenLedger>,
     pub game_runtime: Arc<GameRuntime>,
-    pub _discovery: Option<Arc<BluetoothDiscovery>>, 
+    #[cfg(feature = "bluetooth")]
+    pub _discovery: Option<Arc<BluetoothDiscovery>>,
+    #[cfg(not(feature = "bluetooth"))]
+    pub _discovery: Option<Arc<()>>, // Placeholder when bluetooth is disabled 
     pub _persistence: Arc<PersistenceManager>,
     pub proof_of_relay: Arc<ProofOfRelay>,
     pub config: AppConfig,
@@ -128,6 +134,7 @@ impl BitCrapsApp {
 
         // Step 6: Setup discovery
         // Optional BLE discovery
+        #[cfg(feature = "bluetooth")]
         let discovery = if config.enable_ble {
             println!("🔍 Starting BLE peer discovery...");
             Some(
@@ -137,6 +144,14 @@ impl BitCrapsApp {
                         .map_err(|e| Error::Network(e.to_string()))?,
                 ),
             )
+        } else {
+            None
+        };
+        
+        #[cfg(not(feature = "bluetooth"))]
+        let discovery = if config.enable_ble {
+            println!("⚠️ BLE requested but bluetooth feature disabled, skipping BLE discovery");
+            None
         } else {
             None
         };

@@ -116,6 +116,24 @@ struct GameVerificationCache {
     verified_at: Instant,
 }
 
+/// Background service health status
+#[derive(Debug, Clone, PartialEq)]
+enum ServiceHealth {
+    Starting,
+    Running,
+    Failed(String),
+    Stopped,
+}
+
+/// Background service tracking
+#[derive(Debug)]
+struct BackgroundService {
+    name: String,
+    handle: tokio::task::JoinHandle<()>,
+    health: Arc<parking_lot::RwLock<ServiceHealth>>,
+    start_time: Instant,
+}
+
 /// Consensus-based game manager
 pub struct ConsensusGameManager {
     // Core components
@@ -139,6 +157,9 @@ pub struct ConsensusGameManager {
     // Event handling - bounded channel with backpressure
     game_events: mpsc::Sender<GameEvent>,
     event_receiver: Arc<Mutex<mpsc::Receiver<GameEvent>>>,
+
+    // Background service management
+    background_services: Arc<Mutex<Vec<BackgroundService>>>,
 
     // Statistics - atomic counters for performance
     total_games_created: Arc<AtomicUsize>,
@@ -240,6 +261,7 @@ impl ConsensusGameManager {
             verification_cache: Arc::new(DashMap::new()),
             game_events,
             event_receiver: Arc::new(Mutex::new(event_receiver)),
+            background_services: Arc::new(Mutex::new(Vec::new())),
             total_games_created: Arc::new(AtomicUsize::new(0)),
             total_games_completed: Arc::new(AtomicUsize::new(0)),
             total_operations_processed: Arc::new(AtomicUsize::new(0)),
@@ -251,17 +273,82 @@ impl ConsensusGameManager {
         }
     }
 
-    /// Start the consensus game manager
+    /// Start the consensus game manager with proper error checking
     pub async fn start(&self) -> Result<()> {
         log::info!("Starting consensus game manager");
 
-        // Start background tasks
-        self.start_game_maintenance().await;
-        self.start_state_synchronization().await;
-        self.start_operation_timeout_handler().await;
-        self.start_event_processor().await;
+        // Start background tasks with health monitoring
+        let services = vec![
+            ("game_maintenance", self.start_game_maintenance().await?),
+            ("state_synchronization", self.start_state_synchronization().await?),
+            ("operation_timeout_handler", self.start_operation_timeout_handler().await?),
+            ("event_processor", self.start_event_processor().await?),
+        ];
+
+        // Register all services and verify they're running
+        {
+            let mut bg_services = self.background_services.lock().await;
+            for (name, service) in services {
+                bg_services.push(service);
+                log::info!("✅ Started background service: {}", name);
+            }
+        }
+
+        // Wait a short time and verify all services are running
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        self.verify_services_health().await?;
+
+        log::info!("✅ Consensus game manager started successfully with {} services", 4);
+        Ok(())
+    }
+
+    /// Verify that all background services are healthy
+    async fn verify_services_health(&self) -> Result<()> {
+        let services = self.background_services.lock().await;
+        let mut failed_services = Vec::new();
+
+        for service in services.iter() {
+            let health = service.health.read();
+            match &*health {
+                ServiceHealth::Failed(error) => {
+                    failed_services.push(format!("{}: {}", service.name, error));
+                }
+                ServiceHealth::Starting => {
+                    // Give services more time if they're still starting
+                    if service.start_time.elapsed() > Duration::from_secs(5) {
+                        failed_services.push(format!("{}: startup timeout", service.name));
+                    }
+                }
+                ServiceHealth::Stopped => {
+                    failed_services.push(format!("{}: unexpectedly stopped", service.name));
+                }
+                ServiceHealth::Running => {
+                    // Service is healthy
+                    log::debug!("Service {} is running normally", service.name);
+                }
+            }
+        }
+
+        if !failed_services.is_empty() {
+            return Err(Error::GameLogic(format!(
+                "Background services failed to start: {}",
+                failed_services.join(", ")
+            )));
+        }
 
         Ok(())
+    }
+
+    /// Get the health status of all background services
+    pub async fn get_service_health(&self) -> Vec<(String, ServiceHealth)> {
+        let services = self.background_services.lock().await;
+        services
+            .iter()
+            .map(|service| {
+                let health = service.health.read();
+                (service.name.clone(), health.clone())
+            })
+            .collect()
     }
 
     /// Create a new game session
@@ -779,18 +866,34 @@ impl ConsensusGameManager {
         Ok(())
     }
 
-    /// Start game maintenance task
-    async fn start_game_maintenance(&self) {
+    /// Start game maintenance task with health monitoring
+    async fn start_game_maintenance(&self) -> Result<BackgroundService> {
         let active_games = Arc::clone(&self.active_games);
         let consensus_bridges = Arc::clone(&self.consensus_bridges);
         let consensus_handler = Arc::clone(&self.consensus_handler);
         let total_completed = Arc::clone(&self.total_games_completed);
 
-        tokio::spawn(async move {
+        let health = Arc::new(parking_lot::RwLock::new(ServiceHealth::Starting));
+        let health_clone = Arc::clone(&health);
+
+        let handle = tokio::spawn(async move {
             let mut maintenance_interval = interval(Duration::from_secs(60));
+            
+            // Mark as running after successful initialization
+            *health_clone.write() = ServiceHealth::Running;
+            log::debug!("Game maintenance service initialized");
 
             loop {
-                maintenance_interval.tick().await;
+                match tokio::time::timeout(Duration::from_secs(65), maintenance_interval.tick()).await {
+                    Ok(_) => {
+                        // Maintenance tick successful
+                    }
+                    Err(_) => {
+                        log::error!("Game maintenance interval timeout");
+                        *health_clone.write() = ServiceHealth::Failed("Maintenance interval timeout".to_string());
+                        return;
+                    }
+                }
 
                 // Clean up inactive games - lock-free operations
                 let cutoff = Instant::now() - Duration::from_secs(3600); // 1 hour timeout
@@ -832,19 +935,42 @@ impl ConsensusGameManager {
                 );
             }
         });
+
+        Ok(BackgroundService {
+            name: "game_maintenance".to_string(),
+            handle,
+            health,
+            start_time: Instant::now(),
+        })
     }
 
-    /// Start state synchronization task
-    async fn start_state_synchronization(&self) {
+    /// Start state synchronization task with health monitoring
+    async fn start_state_synchronization(&self) -> Result<BackgroundService> {
         let active_games = Arc::clone(&self.active_games);
         let consensus_bridges = Arc::clone(&self.consensus_bridges);
         let sync_interval = self.config.state_sync_interval;
 
-        tokio::spawn(async move {
+        let health = Arc::new(parking_lot::RwLock::new(ServiceHealth::Starting));
+        let health_clone = Arc::clone(&health);
+
+        let handle = tokio::spawn(async move {
             let mut sync_interval = interval(sync_interval);
+            
+            // Mark as running after successful initialization
+            *health_clone.write() = ServiceHealth::Running;
+            log::debug!("State synchronization service initialized");
 
             loop {
-                sync_interval.tick().await;
+                match tokio::time::timeout(sync_interval.period() + Duration::from_secs(5), sync_interval.tick()).await {
+                    Ok(_) => {
+                        // Sync tick successful
+                    }
+                    Err(_) => {
+                        log::error!("State synchronization interval timeout");
+                        *health_clone.write() = ServiceHealth::Failed("Sync interval timeout".to_string());
+                        return;
+                    }
+                }
 
                 // Sync state for all active games - parallel processing
                 let sync_tasks: Vec<_> = active_games
@@ -870,20 +996,43 @@ impl ConsensusGameManager {
                 }
             }
         });
+
+        Ok(BackgroundService {
+            name: "state_synchronization".to_string(),
+            handle,
+            health,
+            start_time: Instant::now(),
+        })
     }
 
-    /// Start operation timeout handler
-    async fn start_operation_timeout_handler(&self) {
+    /// Start operation timeout handler with health monitoring
+    async fn start_operation_timeout_handler(&self) -> Result<BackgroundService> {
         let pending_operations = Arc::clone(&self.pending_operations);
         let game_events = self.game_events.clone(); // mpsc::Sender needs clone
         let consensus_failures = Arc::clone(&self.total_consensus_failures);
         let timeout = self.config.consensus_timeout;
 
-        tokio::spawn(async move {
+        let health = Arc::new(parking_lot::RwLock::new(ServiceHealth::Starting));
+        let health_clone = Arc::clone(&health);
+
+        let handle = tokio::spawn(async move {
             let mut timeout_interval = interval(Duration::from_secs(10));
+            
+            // Mark as running after successful initialization
+            *health_clone.write() = ServiceHealth::Running;
+            log::debug!("Operation timeout handler service initialized");
 
             loop {
-                timeout_interval.tick().await;
+                match tokio::time::timeout(Duration::from_secs(15), timeout_interval.tick()).await {
+                    Ok(_) => {
+                        // Timeout tick successful
+                    }
+                    Err(_) => {
+                        log::error!("Operation timeout handler interval timeout");
+                        *health_clone.write() = ServiceHealth::Failed("Timeout handler interval timeout".to_string());
+                        return;
+                    }
+                }
 
                 let mut expired_operations = Vec::new();
                 let mut failed_count = 0;
@@ -918,14 +1067,28 @@ impl ConsensusGameManager {
                 }
             }
         });
+
+        Ok(BackgroundService {
+            name: "operation_timeout_handler".to_string(),
+            handle,
+            health,
+            start_time: Instant::now(),
+        })
     }
 
-    /// Start event processor
-    async fn start_event_processor(&self) {
+    /// Start event processor with health monitoring
+    async fn start_event_processor(&self) -> Result<BackgroundService> {
         let event_receiver = self.event_receiver.clone();
 
-        tokio::spawn(async move {
+        let health = Arc::new(parking_lot::RwLock::new(ServiceHealth::Starting));
+        let health_clone = Arc::clone(&health);
+
+        let handle = tokio::spawn(async move {
             let mut receiver = event_receiver.lock().await;
+            
+            // Mark as running after successful initialization
+            *health_clone.write() = ServiceHealth::Running;
+            log::debug!("Event processor service initialized");
 
             while let Some(event) = receiver.recv().await {
                 // Process game events
@@ -950,7 +1113,17 @@ impl ConsensusGameManager {
                     }
                 }
             }
+            
+            // If we exit the event loop, mark as stopped
+            *health_clone.write() = ServiceHealth::Stopped;
         });
+
+        Ok(BackgroundService {
+            name: "event_processor".to_string(),
+            handle,
+            health,
+            start_time: Instant::now(),
+        })
     }
 
     /// Generate unique game ID

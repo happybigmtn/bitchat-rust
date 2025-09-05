@@ -3,6 +3,7 @@
 use super::service::ConsensusService;
 use super::types::*;
 use axum::{routing::{get, post}, Router, extract::{State, Query}, Json};
+use axum::extract::ws::{WebSocket, WebSocketUpgrade, Message};
 use serde::Deserialize;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -30,6 +31,7 @@ pub async fn start_http(service: Arc<RwLock<ConsensusService>>, addr: SocketAddr
         .route("/api/v1/consensus/propose", post(post_propose))
         .route("/api/v1/consensus/vote", post(post_vote))
         .route("/api/v1/consensus/qc", get(get_qc))
+        .route("/api/v1/consensus/subscribe", get(ws_subscribe))
         .route("/api/v1/consensus/admin/add-validator", post(post_add_validator))
         .route("/api/v1/consensus/admin/remove-validator", post(post_remove_validator))
         .with_state(state);
@@ -110,4 +112,54 @@ async fn post_remove_validator(State(state): State<AppState>, Json(body): Json<A
     let resp = state.service.read().await.update_validator(UpdateValidatorRequest{ peer_id: peer, action: super::ValidatorUpdateAction::Remove, stake: None }).await
         .unwrap_or(UpdateValidatorResponse{ success:false, active_validators:0 });
     Json(resp)
+}
+
+async fn ws_subscribe(
+    State(state): State<AppState>,
+    ws: WebSocketUpgrade,
+) -> axum::response::Response {
+    ws.on_upgrade(move |socket| handle_ws(socket, state))
+}
+
+async fn handle_ws(mut socket: WebSocket, state: AppState) {
+    use futures_util::StreamExt;
+
+    // Subscribe to proposals and results
+    let mut proposals_rx = state.service.read().await.subscribe_proposals();
+    let mut results_rx = state.service.read().await.subscribe_results();
+
+    // Send a hello message
+    let _ = socket
+        .send(Message::Text("{\"type\":\"hello\",\"service\":\"consensus\"}".into()))
+        .await;
+
+    loop {
+        tokio::select! {
+            Ok(prop) = proposals_rx.recv() => {
+                if let Ok(txt) = serde_json::to_string(&serde_json::json!({
+                    "type": "proposal",
+                    "proposal": prop,
+                })) {
+                    if socket.send(Message::Text(txt)).await.is_err() { break; }
+                }
+            }
+            Ok(res) = results_rx.recv() => {
+                if let Ok(txt) = serde_json::to_string(&serde_json::json!({
+                    "type": "result",
+                    "result": res,
+                })) {
+                    if socket.send(Message::Text(txt)).await.is_err() { break; }
+                }
+            }
+            // Read and ignore incoming pings/pongs/texts to keep connection alive
+            Some(Ok(msg)) = socket.recv() => {
+                match msg {
+                    Message::Ping(data) => { let _ = socket.send(Message::Pong(data)).await; }
+                    Message::Close(_) => { break; }
+                    _ => {}
+                }
+            }
+            else => { break; }
+        }
+    }
 }

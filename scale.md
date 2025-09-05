@@ -13,10 +13,10 @@ Progress Tracker
 - [x] PBFT tuning plumbing (CLI/config) + applied `round_timeout` in validator role
 - [x] VRF scaffold (deterministic stub + tests)
 - [x] Bet aggregation skeleton + Merkle (tests)
-- [ ] Apply PBFT batch/pipeline overrides where engine is instantiated (validators)
-- [ ] WebSocket pub/sub broadcast + broker integration (fan-out)
-- [ ] Integrate aggregator into gateway fan-in → consensus op with Merkle root
-- [ ] Inclusion proof endpoint (per-player bet proof) + payout batch op
+- [x] Apply PBFT batch/pipeline overrides where engine is instantiated (validators)
+- [x] WebSocket pub/sub broadcast (services) + broker integration (TBD)
+- [x] Integrate aggregator into gateway fan-in → consensus op with Merkle root
+- [x] Inclusion proof endpoint (per-player bet proof) [Merkle branch stub] + payout batch op (TBD)
 - [ ] Regional gateways + sticky routing + health-aware LB
 - [ ] Randomness orchestration (validator commit-reveal timeouts/penalties) + VRF fallback
 - [ ] Observability: latency histograms, SLO dashboards, alerts

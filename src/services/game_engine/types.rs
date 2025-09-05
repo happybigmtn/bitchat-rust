@@ -7,6 +7,16 @@ use crate::protocol::{GameId, PeerId};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Broadcastable game events for subscribers
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GameEvent {
+    GameCreated { game_id: GameId, players: Vec<PeerId>, phase: GamePhase },
+    BetPlaced { game_id: GameId, player: PeerId, bet_type: BetType, amount: u64 },
+    DiceRolled { game_id: GameId, roller: PeerId, roll: DiceRoll, new_phase: GamePhase },
+    CashOut { game_id: GameId, player: PeerId, amount: u64 },
+    Snapshot { game_id: GameId, phase: GamePhase },
+}
+
 /// Game actions that players can perform
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GameAction {

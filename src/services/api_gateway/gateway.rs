@@ -85,12 +85,48 @@ impl ApiGateway {
         tokio::spawn(async move {
             Self::run_health_checker(load_balancer, health_check_interval, shutdown_rx).await;
         });
-        
+
         // Start metrics collector
         let metrics = self.metrics.clone();
         let request_counter = self.request_counter.clone();
         tokio::spawn(async move {
             Self::update_metrics(metrics, request_counter).await;
+        });
+
+        // Start aggregator flush loop (fan-in to consensus)
+        let lb_for_flush = self.load_balancer.clone();
+        tokio::spawn(async move {
+            let client = reqwest::Client::new();
+            let mut tick = tokio::time::interval(Duration::from_millis(500));
+            loop {
+                tick.tick().await;
+                let games = crate::services::api_gateway::aggregate::list_games();
+                for game_id in games {
+                    let round = crate::services::api_gateway::aggregate::current_round(game_id);
+                    let groups = crate::services::api_gateway::aggregate::aggregated_groups(game_id, round);
+                    if groups.is_empty() { continue; }
+
+                    // Build propose request to consensus service
+                    // Build JSON request compatible with consensus service
+                    let payload = serde_json::json!({ "round": round, "groups": groups });
+                    let data_vec = serde_json::to_vec(&payload).unwrap_or_default();
+                    let req = serde_json::json!({
+                        "game_id": game_id.to_vec(),
+                        "proposal_type": { "GameAction": { "action": "aggregate_bets" } },
+                        "data": data_vec,
+                    });
+
+                    if let Some(instance) = lb_for_flush.get_instance("consensus").await {
+                        let url = format!("http://{}/api/v1/consensus/propose", instance.endpoint.address);
+                        let resp = client.post(&url).json(&req).send().await;
+                        if resp.is_ok() {
+                            // Clear this round and advance
+                            crate::services::api_gateway::aggregate::clear_round(game_id, round);
+                            let _ = crate::services::api_gateway::aggregate::advance_round(game_id);
+                        }
+                    }
+                }
+            }
         });
         
         // Build Axum router
@@ -244,6 +280,9 @@ impl ApiGateway {
         AxumRouter::new()
             .route("/health", get(health_handler))
             .route("/metrics", get(metrics_handler))
+            // Direct aggregation + proof routes handled in gateway
+            .route("/api/v1/games/:id/bets", axum::routing::post(post_bet_handler))
+            .route("/api/v1/games/:id/proofs", axum::routing::get(get_proofs_handler))
             .route("/api/*path", any(proxy_handler))
             .route("/*path", any(proxy_handler))
             .layer(
@@ -473,6 +512,70 @@ async fn proxy_handler(
                 context.request_id,
             )),
         ).into_response()),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct BetReqBody { player_id_hex: String, bet_type: String, amount: u64 }
+
+async fn post_bet_handler(
+    State(state): State<GatewayState>,
+    Path(id): Path<String>,
+    Json(body): Json<BetReqBody>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> impl IntoResponse {
+    // Basic auth/rate-limit already handled by middleware stack above
+
+    // Parse game id
+    let gid = {
+        if let Ok(bytes) = hex::decode(&id) { if bytes.len()==16 { let mut id=[0u8;16]; id.copy_from_slice(&bytes); id } else { [0u8;16] } } else { [0u8;16] }
+    };
+    // Parse player id
+    let mut player = [0u8;32];
+    if let Ok(bytes) = hex::decode(&body.player_id_hex) { if bytes.len()==32 { player.copy_from_slice(&bytes); } }
+    // Parse bet type (minimal mapping)
+    let bt = parse_bet_type_min(&body.bet_type);
+    // Reject invalid
+    if bt.is_none() || body.amount == 0 { return (StatusCode::BAD_REQUEST, axum::Json(GatewayResponse::<serde_json::Value>::error("invalid bet".into(), uuid::Uuid::new_v4().to_string()))).into_response(); }
+    let bt = bt.unwrap();
+
+    // Add to aggregator with current round
+    let round = crate::services::api_gateway::aggregate::current_round(gid);
+    crate::services::api_gateway::aggregate::add_bet(gid, round, player, bt, crate::protocol::craps::CrapTokens(body.amount));
+
+    let resp = serde_json::json!({"accepted": true, "round": round});
+    (StatusCode::OK, axum::Json(GatewayResponse::success(resp, uuid::Uuid::new_v4().to_string(), Some("api-gateway".into())))).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct ProofsQuery { player_id_hex: String, bet_type: String, amount: u64, round: Option<u64> }
+
+async fn get_proofs_handler(
+    Path(id): Path<String>,
+    Query(q): Query<ProofsQuery>,
+    State(_state): State<GatewayState>,
+) -> impl IntoResponse {
+    let gid = {
+        if let Ok(bytes) = hex::decode(&id) { if bytes.len()==16 { let mut id=[0u8;16]; id.copy_from_slice(&bytes); id } else { [0u8;16] } } else { [0u8;16] }
+    };
+    let mut player = [0u8;32];
+    if let Ok(bytes) = hex::decode(&q.player_id_hex) { if bytes.len()==32 { player.copy_from_slice(&bytes); } }
+    let bt = match parse_bet_type_min(&q.bet_type) { Some(b) => b, None => return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"error":"invalid bet_type"}))).into_response() };
+    let round = q.round.unwrap_or_else(|| crate::services::api_gateway::aggregate::current_round(gid));
+    let proof = crate::services::api_gateway::aggregate::merkle_proof(gid, round, player, bt, crate::protocol::craps::CrapTokens(q.amount));
+    let resp = serde_json::json!({"round": round, "proof": proof.map(|(branch, root)| { serde_json::json!({"branch": branch, "root": hex::encode(root)}) })});
+    (StatusCode::OK, axum::Json(resp)).into_response()
+}
+
+fn parse_bet_type_min(s: &str) -> Option<crate::protocol::craps::BetType> {
+    use crate::protocol::craps::BetType;
+    match s.to_lowercase().as_str() {
+        "pass" | "passline" => Some(BetType::Pass),
+        "dontpass" | "dont-pass" | "don't-pass" => Some(BetType::DontPass),
+        "come" => Some(BetType::Come),
+        "dontcome" | "dont-come" | "don't-come" => Some(BetType::DontCome),
+        "field" => Some(BetType::Field),
+        _ => None,
     }
 }
 
