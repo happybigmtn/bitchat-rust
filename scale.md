@@ -284,3 +284,89 @@ Getting Started Checklist
 - Create aggregator module and wire Merkle roots into consensus ops.
 - Expose snapshot + QC API; add SDK fast-sync call.
 - Add test files listed above and hook into CI.
+
+Deep Dives and Implementation Details
+
+Randomness Orchestration (Commit‑Reveal + VRF Fallback)
+
+- Protocol states: `Pending -> Committed(SeedsCollected) -> Revealed(>2/3) -> Finalized` with timers.
+- Timers: `reveal_window_ms` and `reveal_grace_ms` in `app_config.rs`; validator leader schedules via `ConsensusService::start_round_timers(round_id)`.
+- Evidence: `MissingReveal { round_id, validator_id, view, sig_bundle }` stored in `commit_reveal/evidence.rs`; publish on `/admin/consensus/evidence`.
+- Fallback: if `<2/3` reveals after grace, leader supplies `VRFOutput { alpha, pi, pk }` from `src/crypto/vrf.rs`; put into commit bundle with label `randomness_source = VRF`.
+- Client verify: SDK v2 adds `verify_commit_reveal_bundle()` and `verify_vrf(alpha, pi, pk)`; surface result in UI via `RandomnessVerification { source, ok }`.
+- New API:
+  - Validators: `POST /admin/rounds/{round}/reseed` (testnets only), `GET /rounds/{round}/randomness` (returns proof bundle).
+  - SDK: `get_randomness(round_id)` returns union `CommitRevealBundle | VRFBundle`.
+- Metrics: `randomness_reveals_total{state}`, `randomness_source_total{source="commit_reveal|vrf"}`, `randomness_time_to_final_ms` histogram.
+- Config (defaults): `reveal_window_ms=1200`, `reveal_grace_ms=400`, `vrf_enabled=true`.
+
+Regional Gateways, Sticky Routing, and Health‑Aware LB
+
+- Discovery: gateways register `GatewayInfo { id, region, weight, ws_topics_supported, capacity_score }` to `ApiGateway` via `POST /admin/gateways/register` with signed token.
+- Sticky routing: client region inferred by GeoIP or JWT `region` claim; LB uses IP‑hash or `client_id` for stickiness, with a jump‑hash ring to avoid remapping on membership changes.
+- Health model: passive error rates + active health pings (`/healthz`) produce `health_score`; exponential backoff and circuit‑breaker open/half‑open/closed states per target.
+- Failover: if `health_score<threshold` or region down, rehash to next region by proximity list. Drain connections gracefully with `Connection-Drain: true` header and WS close reason codes.
+- WS scaling: topic sharding by `game_id % N`; per‑topic backpressure queues; optional Redis/NATS adapter behind feature flag `gateway-broker-redis`.
+- New modules:
+  - `src/services/api_gateway/load_balancer.rs` (hashing, weights, circuit breaker)
+  - `src/services/api_gateway/geo.rs` (GeoIP/JWT region extraction)
+  - `src/mesh/gateway_registry.rs` (in‑mem + pluggable store)
+- Metrics: `lb_pick_total{reason}`, `lb_circuit_state{state}`, `ws_topic_backlog{shard}`, `gateway_health_score` gauge per target.
+- Config: `regions=["iad","sfo","fra","sin"]`, `lb.sticky_key="client_id"`, `lb.circuit.error_rate_threshold=0.03`, `lb.circuit.min_requests=200`, `lb.active_probe_interval_ms=1000`.
+
+Observability and SLOs
+
+- Tracing: propagate `traceparent` across gateway → consensus → engine; set sampler to `ParentOrElse(TraceIdRatio=0.05)` in non‑prod, `0.01` in prod.
+- Metrics inventory (Prometheus):
+  - `bet_ingress_latency_ms` histogram `{region, route}` (ingress→commit)
+  - `commit_broadcast_latency_ms` histogram `{region}` (commit→WS)
+  - `consensus_view_changes_total` counter `{reason}`
+  - `qc_size_bytes` histogram and `qc_signers_total` gauge
+  - `snapshot_bytes` histogram and `fast_sync_latency_ms` histogram
+- Dashboards: add panels for p50/p90/p99 latency, error budgets, fan‑out queue depths, and validator health rollup. Store JSON in `grafana/dashboards/bitcraps_*.json`.
+- Alerts (examples):
+  - `P99_Bet_Ingress_Latency_Too_High`: p99 > 2000ms for 5m
+  - `Consensus_View_Change_Spike`: rate(view_changes) > 0.2/s for 2m
+  - `WS_Backlog_Growing`: backlog > 50k for 3m
+
+Admin Auth, RBAC, and Fees
+
+- Roles: `Admin`, `Operator`, `Support`, `ReadOnly`. JWT/OIDC integration optional; fallback to HMAC API keys hashed at rest.
+- Enforcement points: all `/admin/*` routes, validator membership changes, fee policy updates, gateway registration, and snapshot pruning.
+- RBAC map in `app_config.rs`: `role -> allowed_actions[]`; hot‑reload from configmap/ENV; deny‑by‑default.
+- Audit logs: append‑only structured logs `admin_audit.log` with `actor, action, target, success, trace_id` and periodic checksum; emit to metrics `admin_actions_total{action,success}`.
+- Micro‑fees: `economics/policy.rs` supports tiered fees by congestion and promo codes; gateways can override for trusted peers with signed policy blob.
+- Rate limits: token bucket per `ip`, `user_id`, and `route` with sliding‑window fallback; admin overrides per role.
+- APIs: `POST /admin/fees/policy`, `GET /admin/audit`, `POST /admin/gateways/register`, `POST /admin/validators/{id}/(add|remove)`.
+
+Configuration Additions (Draft)
+
+- `role`: `Validator|Gateway|Client`
+- `regions`: list of region codes; `region_self`: current region code
+- `lb.*`: sticky key, circuit breaker thresholds, probe intervals
+- `randomness.*`: `reveal_window_ms`, `reveal_grace_ms`, `vrf_enabled`
+- `observability.*`: `trace_ratio`, metrics enable flags
+- `rbac.*`: roles, actions, key set, OIDC settings
+- `economics.*`: base_fee_per_bet, surge_params, trusted_gateway_allowlist
+- `snapshot.*`: interval, retention, store backend (fs|s3), s3 bucket/keys
+
+Operational Runbooks
+
+- Regional failover: mark region unhealthy via admin, confirm LB drains, monitor `lb_circuit_state` and WS backlog; verify traffic migrates within SLA.
+- Validator replacement: add new validator, wait for QC signers to include, then remove failing one; ensure commit‑reveal quorum preserved during rotation.
+- Hot parameter changes: update `batch_size`, `pipeline_depth`, `reveal_window_ms`; verify via metrics panels and canary validators before global rollout.
+- Snapshot recovery: restore latest snapshot + QC, replay deltas; verify state hash matches QC; announce maintenance window if needed.
+
+Open Questions
+
+- Should fee policy be consensus‑governed or operator‑set per region?
+- What is the minimum viable VRF scheme for first release (curve, proof format)?
+- Do we require Redis/NATS for WS sharding in v1, or keep in‑memory broker only?
+- How aggressively to prune checkpoints vs. keeping longer history for audits?
+
+Timeline (Indicative)
+
+- Week 1–2: M3 (randomness orchestration), finalize metrics baselines.
+- Week 3–4: M9 (regional routing + LB) and RBAC scaffolding.
+- Week 5: Observability dashboards + alerts; DR runbook and snapshot S3 backend.
+- Week 6: Hardening, mixed‑load canaries, polish and documentation.

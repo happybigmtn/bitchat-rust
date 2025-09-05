@@ -137,6 +137,7 @@ prometheus = "0.14.0"
 reqwest = { version = "0.12.23", features = ["json"] }
 url = "2.5"
 tokio-tungstenite = { version = "0.21", optional = true }
+async-nats = { version = "0.35", optional = true }
 
 # Compliance and governance dependencies
 edit-distance = "2.1"  # For fuzzy string matching in sanctions screening
@@ -525,3 +526,9 @@ required-features = ["legacy-examples"]
 [profile.dev]
 opt-level = 0
 debug = true
+# Broker backends
+broker-nats = ["dep:async-nats"]
+broker-redis = []
+
+# Optional WS client support
+ws-client = ["dep:tokio-tungstenite"]

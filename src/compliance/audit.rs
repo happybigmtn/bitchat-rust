@@ -296,7 +296,8 @@ pub struct AuditAlert {
 impl AuditLogger {
     /// Create new audit logger
     pub async fn new(config: AuditConfig) -> Result<Self> {
-        let signing_keypair = SigningKey::generate(&mut rand::thread_rng());
+        use rand::rngs::OsRng;
+        let signing_keypair = SigningKey::generate(&mut OsRng);
         let verifying_key = signing_keypair.verifying_key();
         
         let stats = AuditStats {

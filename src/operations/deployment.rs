@@ -259,13 +259,34 @@ impl DeploymentManager {
     async fn execute_step(step: &DeploymentStep, execution: &DeploymentExecution) -> Result<(), DeploymentError> {
         match &step.step_type {
             DeploymentStepType::Command { command, args, working_dir } => {
+                // Validate command to prevent injection attacks
+                if !is_safe_command(command) {
+                    return Err(DeploymentError::ExecutionFailed(
+                        format!("Unsafe command rejected: {}", command)
+                    ));
+                }
+
                 let mut cmd = Command::new(command);
 
                 if let Some(args) = args {
+                    // Validate arguments
+                    for arg in args {
+                        if contains_shell_metacharacters(arg) {
+                            return Err(DeploymentError::ExecutionFailed(
+                                format!("Unsafe argument rejected: {}", arg)
+                            ));
+                        }
+                    }
                     cmd.args(args);
                 }
 
                 if let Some(dir) = working_dir {
+                    // Validate working directory
+                    if !is_safe_path(dir) {
+                        return Err(DeploymentError::ExecutionFailed(
+                            format!("Unsafe working directory: {}", dir)
+                        ));
+                    }
                     cmd.current_dir(dir);
                 }
 
@@ -646,4 +667,51 @@ mod tests {
         let json = serde_json::to_string(&status).unwrap();
         assert!(json.contains("Running"));
     }
+}
+
+/// Validate that a command is safe to execute
+fn is_safe_command(command: &str) -> bool {
+    // Allowlist of safe commands
+    const SAFE_COMMANDS: &[&str] = &[
+        "cargo", "rustc", "docker", "kubectl", "git", "npm", "yarn", "pnpm",
+        "make", "cmake", "gradle", "mvn", "go", "python", "python3", "pip",
+        "node", "deno", "bun", "systemctl", "service", "terraform", "ansible"
+    ];
+    
+    // Check if command is in the allowlist
+    let cmd_name = command.split('/').last().unwrap_or(command);
+    SAFE_COMMANDS.contains(&cmd_name)
+}
+
+/// Check if a string contains shell metacharacters that could be dangerous
+fn contains_shell_metacharacters(s: &str) -> bool {
+    // Dangerous characters that could lead to command injection
+    const DANGEROUS_CHARS: &[char] = &[
+        ';', '&', '|', '`', '$', '(', ')', '<', '>', '\n', '\r',
+        '*', '?', '[', ']', '{', '}', '!', '~', '\'', '"', '\\'
+    ];
+    
+    s.chars().any(|c| DANGEROUS_CHARS.contains(&c))
+}
+
+/// Validate that a path is safe to use
+fn is_safe_path(path: &str) -> bool {
+    // Prevent directory traversal attacks
+    if path.contains("..") {
+        return false;
+    }
+    
+    // Prevent absolute paths to sensitive directories
+    const FORBIDDEN_PREFIXES: &[&str] = &[
+        "/etc", "/sys", "/proc", "/dev", "/boot", 
+        "/root", "/var/log", "/usr/bin", "/usr/sbin"
+    ];
+    
+    for prefix in FORBIDDEN_PREFIXES {
+        if path.starts_with(prefix) {
+            return false;
+        }
+    }
+    
+    true
 }

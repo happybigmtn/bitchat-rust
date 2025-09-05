@@ -3,7 +3,8 @@ use crate::crypto::encryption::Encryption;
 fn main() {
     let keypair = Encryption::generate_keypair();
     println!("Generated keypair - public: {:?}", hex::encode(keypair.public_key));
-    println!("Generated keypair - private: {:?}", hex::encode(keypair.private_key));
+    // SECURITY: Never log private keys in production
+    // println!("Generated keypair - private: {:?}", hex::encode(keypair.private_key));
     
     let message = b"Hello, World!";
     println!("Original message: {:?}", message);

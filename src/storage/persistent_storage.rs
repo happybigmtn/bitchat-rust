@@ -508,7 +508,8 @@ impl DatabasePool {
 
         // Increase cache size for better performance (negative value = KB of RAM)
         let cache_size = -(config.cache_size_mb as i32 * 1024);
-        conn.execute(&format!("PRAGMA cache_size={}", cache_size), [])
+        // Use parameterized statement to avoid SQL injection
+        conn.pragma_update(None, "cache_size", cache_size)
             .map_err(|e| StorageError::DatabaseError(format!("Failed to set cache size: {}", e)))?;
 
         // Enable foreign keys for referential integrity

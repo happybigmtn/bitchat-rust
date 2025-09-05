@@ -11,7 +11,7 @@ use super::middleware::{AuthMiddleware, RateLimitMiddleware};
 use super::routing::Router;
 use super::*;
 mod broker;
-use broker::{InMemoryBroker, SharedBroker};
+use broker::{InMemoryBroker, SharedBroker, Broker};
 use crate::error::{Error, Result};
 use axum::{
     body::Body,
@@ -59,7 +59,26 @@ impl ApiGateway {
         let auth_middleware = Arc::new(AuthMiddleware::new(config.auth.clone()));
         let metrics = Arc::new(RwLock::new(GatewayMetrics::default()));
         let request_counter = Arc::new(AtomicU64::new(0));
-        let broker = Arc::new(InMemoryBroker::new());
+        let broker: SharedBroker = match config.broker.method {
+            #[cfg(feature = "broker-nats")]
+            super::BrokerMethod::Nats => {
+                let url = config.broker.url.clone().unwrap_or_else(|| "nats://127.0.0.1:4222".to_string());
+                match crate::services::api_gateway::broker_nats::NatsBroker::connect(&url) {
+                    // we are in sync fn; connect is async; so we cannot await here.
+                    // For now, fall back to in-memory and log.
+                    _ => {
+                        log::warn!("NATS broker selected but async init not supported in sync constructor; falling back to in-memory");
+                        Arc::new(InMemoryBroker::new()) as SharedBroker
+                    }
+                }
+            }
+            #[cfg(feature = "broker-redis")]
+            super::BrokerMethod::Redis => {
+                log::warn!("Redis broker selected but not implemented yet; falling back to in-memory");
+                Arc::new(InMemoryBroker::new()) as SharedBroker
+            }
+            _ => Arc::new(InMemoryBroker::new()) as SharedBroker,
+        };
         Self {
             config,
             router,
@@ -132,6 +151,34 @@ impl ApiGateway {
                 }
             }
         });
+
+        // Subscribe to consensus WS and re-publish to gateway broker (optional, behind ws-client)
+        #[cfg(feature = "ws-client")]
+        {
+            let lb2 = self.load_balancer.clone();
+            let broker = self.broker.clone();
+            tokio::spawn(async move {
+                use tokio_tungstenite::connect_async;
+                use url::Url;
+                let mut tick = tokio::time::interval(Duration::from_secs(5));
+                loop {
+                    tick.tick().await;
+                    if let Some(instance) = lb2.get_instance("consensus").await {
+                        let ws_url = format!("ws://{}/api/v1/consensus/subscribe", instance.endpoint.address);
+                        if let Ok((ws_stream, _)) = connect_async(Url::parse(&ws_url).unwrap()) .await {
+                            let (mut write, mut read) = ws_stream.split();
+                            while let Some(msg) = read.next().await {
+                                if let Ok(msg) = msg {
+                                    if msg.is_text() {
+                                        broker.publish("consensus:events", msg.to_text().unwrap_or_default().to_string());
+                                    }
+                                } else { break; }
+                            }
+                        }
+                    }
+                }
+            });
+        }
         
         // Build Axum router
         let app_router = self.build_router().await;

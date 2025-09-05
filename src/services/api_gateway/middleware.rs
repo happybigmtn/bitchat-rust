@@ -246,7 +246,7 @@ mod tests {
         
         let config = AuthConfig {
             enabled: true,
-            jwt_secret: "secret".to_string(),
+            jwt_secret: "test-secret-for-unit-tests".to_string(), // OK for tests
             token_expiration: Duration::from_secs(3600),
             api_keys,
         };

@@ -369,6 +369,40 @@ impl SessionManager {
         Ok(plaintext)
     }
 
+    /// Regenerate session ID to prevent session fixation attacks
+    /// This should be called after successful authentication
+    pub async fn regenerate_session_id(&self, old_session_id: &SessionId) -> Result<SessionId> {
+        let mut sessions = self.sessions.write().await;
+        
+        // Get the old session
+        let mut session = sessions
+            .remove(old_session_id)
+            .ok_or_else(|| Error::Protocol("Session not found for regeneration".to_string()))?;
+        
+        // Generate new session ID
+        let new_session_id = BitchatSession::generate_session_id();
+        let old_id = session.session_id;
+        session.session_id = new_session_id;
+        
+        // Rotate encryption key for additional security
+        session.encryption_key = BitchatSession::derive_encryption_key(
+            &session.local_keypair, 
+            &session.peer_id
+        );
+        session.nonce_counter = 0; // Reset nonce counter with new key
+        
+        // Insert with new ID
+        sessions.insert(new_session_id, session);
+        
+        // Send renewal event
+        let _ = self.event_sender.send(SessionEvent::SessionRenewed {
+            old_session_id: old_id,
+            new_session_id,
+        });
+        
+        Ok(new_session_id)
+    }
+
     /// Check all sessions for expiry
     pub async fn check_session_health(&self) {
         let mut sessions = self.sessions.write().await;

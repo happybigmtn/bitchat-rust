@@ -710,7 +710,8 @@ impl ProductionAmlMonitor {
     /// Add differential privacy noise to statistics
     fn add_privacy_noise(&self, stats: &mut TransactionStats) {
         use rand::Rng;
-        let mut rng = rand::thread_rng();
+        use rand::rngs::OsRng;
+        let mut rng = OsRng;
         
         // Add Laplacian noise for differential privacy
         let sensitivity = 1.0;

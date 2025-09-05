@@ -2,6 +2,12 @@ use dashmap::DashMap;
 use tokio::sync::broadcast;
 use std::sync::Arc;
 
+/// Broker interface for pub/sub fan-out.
+pub trait Broker: Send + Sync {
+    fn publish(&self, topic: &str, payload: String);
+    fn subscribe(&self, topic: &str) -> broadcast::Receiver<String>;
+}
+
 /// Simple in-memory pub/sub broker based on broadcast channels per topic.
 #[derive(Default)]
 pub struct InMemoryBroker {
@@ -10,9 +16,10 @@ pub struct InMemoryBroker {
 
 impl InMemoryBroker {
     pub fn new() -> Self { Self { topics: DashMap::new() } }
+}
 
-    /// Publish a message to a topic.
-    pub fn publish(&self, topic: &str, payload: String) {
+impl Broker for InMemoryBroker {
+    fn publish(&self, topic: &str, payload: String) {
         if let Some(sender) = self.topics.get(topic) {
             let _ = sender.send(payload);
             return;
@@ -22,8 +29,7 @@ impl InMemoryBroker {
         self.topics.insert(topic.to_string(), tx);
     }
 
-    /// Subscribe to a topic, returning a broadcast receiver.
-    pub fn subscribe(&self, topic: &str) -> broadcast::Receiver<String> {
+    fn subscribe(&self, topic: &str) -> broadcast::Receiver<String> {
         if let Some(sender) = self.topics.get(topic) {
             return sender.subscribe();
         }
@@ -33,5 +39,4 @@ impl InMemoryBroker {
     }
 }
 
-pub type SharedBroker = Arc<InMemoryBroker>;
-
+pub type SharedBroker = Arc<dyn Broker + Send + Sync>;

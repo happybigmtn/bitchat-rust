@@ -177,7 +177,8 @@ impl LoadBalancer {
     
     fn random_selection(&self, instances: &[ServiceInstance]) -> Option<ServiceInstance> {
         use rand::Rng;
-        let index = rand::thread_rng().gen_range(0..instances.len());
+        use rand::rngs::OsRng;
+        let index = OsRng.gen_range(0..instances.len());
         instances.get(index).cloned()
     }
     

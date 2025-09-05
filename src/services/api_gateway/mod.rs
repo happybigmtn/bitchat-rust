@@ -34,6 +34,8 @@ pub struct GatewayConfig {
     pub service_discovery: ServiceDiscoveryConfig,
     /// Circuit breaker configuration
     pub circuit_breaker: CircuitBreakerConfig,
+    /// Broker configuration for fan-out
+    pub broker: BrokerConfig,
 }
 
 impl Default for GatewayConfig {
@@ -45,6 +47,7 @@ impl Default for GatewayConfig {
             auth: AuthConfig::default(),
             service_discovery: ServiceDiscoveryConfig::default(),
             circuit_breaker: CircuitBreakerConfig::default(),
+            broker: BrokerConfig::default(),
         }
     }
 }
@@ -93,7 +96,18 @@ impl Default for AuthConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            jwt_secret: "default-secret".to_string(),
+            jwt_secret: std::env::var("JWT_SECRET")
+                .unwrap_or_else(|_| {
+                    // Generate a random secret if not provided
+                    use rand::Rng;
+                    use rand::rngs::OsRng;
+                    let mut rng = OsRng;
+                    let secret: String = (0..32)
+                        .map(|_| rng.sample(rand::distributions::Alphanumeric) as char)
+                        .collect();
+                    log::warn!("JWT_SECRET not set, using randomly generated secret. Set JWT_SECRET environment variable in production!");
+                    secret
+                }),
             token_expiration: Duration::from_secs(24 * 3600), // 24 hours
             api_keys: HashMap::new(),
         }
@@ -195,6 +209,29 @@ impl Default for CircuitBreakerConfig {
             success_threshold: 3,
         }
     }
+}
+
+/// Broker configuration
+#[derive(Debug, Clone)]
+pub struct BrokerConfig {
+    pub method: BrokerMethod,
+    pub url: Option<String>,
+}
+
+impl Default for BrokerConfig {
+    fn default() -> Self {
+        Self { method: BrokerMethod::InMemory, url: None }
+    }
+}
+
+/// Broker methods
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrokerMethod {
+    InMemory,
+    #[cfg(feature = "broker-nats")]
+    Nats,
+    #[cfg(feature = "broker-redis")]
+    Redis,
 }
 
 /// Service route configuration
