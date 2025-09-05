@@ -79,6 +79,40 @@ impl LoadBalancer {
             self.get_instance(service_name).await
         }
     }
+
+    /// Get instance preferring a region, falling back to all
+    pub async fn get_instance_for_client_with_region(
+        &self,
+        service_name: &str,
+        client_ip: std::net::IpAddr,
+        preferred_region: Option<&str>,
+    ) -> Option<ServiceInstance> {
+        let mut instances = self.get_healthy_instances(service_name).await?;
+        if instances.is_empty() { return None; }
+        if let Some(region) = preferred_region {
+            let mut region_matches: Vec<ServiceInstance> = instances
+                .iter()
+                .filter(|i| i.endpoint.region.as_deref() == Some(region))
+                .cloned()
+                .collect();
+            if !region_matches.is_empty() {
+                // Use same selection strategy within region subset
+                return if matches!(self.strategy, LoadBalancingStrategy::IPHash) {
+                    self.ip_hash_selection(&region_matches, client_ip)
+                } else if matches!(self.strategy, LoadBalancingStrategy::WeightedRoundRobin) {
+                    self.weighted_round_robin_selection(service_name, &region_matches)
+                } else if matches!(self.strategy, LoadBalancingStrategy::LeastConnections) {
+                    self.least_connections_selection(&region_matches)
+                } else if matches!(self.strategy, LoadBalancingStrategy::Random) {
+                    self.random_selection(&region_matches)
+                } else {
+                    self.round_robin_selection(service_name, &region_matches)
+                };
+            }
+        }
+        // Fallback to normal selection
+        self.get_instance_for_client(service_name, client_ip).await
+    }
     
     /// Update service instances (called by service discovery)
     pub async fn update_service_instances(&self, service_name: String, instances: Vec<ServiceInstance>) {
@@ -279,11 +313,13 @@ mod tests {
                 address: "127.0.0.1:8080".parse().unwrap(),
                 weight: 100,
                 health_check_path: None,
+                region: Some("iad".into()),
             },
             ServiceEndpoint {
                 address: "127.0.0.1:8081".parse().unwrap(),
                 weight: 100,
                 health_check_path: None,
+                region: Some("sfo".into()),
             },
         ]);
         
@@ -393,5 +429,43 @@ mod tests {
             instance2.unwrap().endpoint.address,
             instance3.unwrap().endpoint.address
         );
+    }
+
+    #[tokio::test]
+    async fn test_region_preference() {
+        let mut static_services = std::collections::HashMap::new();
+        static_services.insert("test".to_string(), vec![
+            ServiceEndpoint {
+                address: "127.0.0.1:8080".parse().unwrap(),
+                weight: 100,
+                health_check_path: None,
+                region: Some("iad".into()),
+            },
+            ServiceEndpoint {
+                address: "127.0.0.1:8081".parse().unwrap(),
+                weight: 100,
+                health_check_path: None,
+                region: Some("sfo".into()),
+            },
+        ]);
+
+        let config = ServiceDiscoveryConfig {
+            method: ServiceDiscoveryMethod::Static,
+            consul: None,
+            static_services,
+            health_check_interval: Duration::from_secs(30),
+        };
+
+        let lb = LoadBalancer::new(LoadBalancingStrategy::RoundRobin, config);
+        // Mark both instances as healthy
+        {
+            if let Some(mut vec) = lb.service_instances.get_mut("test") {
+                for inst in vec.iter_mut() { inst.health_status = HealthStatus::Healthy; }
+            }
+        }
+        let ip: std::net::IpAddr = "203.0.113.9".parse().unwrap();
+        let inst = lb.get_instance_for_client_with_region("test", ip, Some("iad")).await;
+        assert!(inst.is_some());
+        assert_eq!(inst.unwrap().endpoint.address, "127.0.0.1:8080".parse().unwrap());
     }
 }

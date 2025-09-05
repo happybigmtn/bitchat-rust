@@ -181,9 +181,7 @@ impl AuthMiddleware {
     }
     
     fn validate_jwt(&self, _token: &str) -> Result<JwtClaims> {
-        // NOTE: JWT validation is intentionally disabled for security
-        //       All authentication attempts will fail until proper JWT
-        //       validation library integration is implemented
+        // Stubbed out to avoid external dependency; always fail until JWT is wired
         Err(Error::AuthenticationFailed("JWT validation not implemented".to_string()))
     }
 }

@@ -41,10 +41,15 @@ async fn main() -> Result<()> {
         connect_tcp: cli.connect_tcp.clone(),
         enable_ble: !cli.no_ble,
         role,
+        region_self: cli.region_self.clone(),
+        regions: if !cli.regions.is_empty() { cli.regions.clone() } else { vec![] },
         pbft_batch_size: cli.pbft_batch_size,
         pbft_pipeline_depth: cli.pbft_pipeline_depth,
         pbft_base_timeout_ms: cli.pbft_base_timeout_ms,
         pbft_view_timeout_ms: cli.pbft_view_timeout_ms,
+        randomness_reveal_window_ms: cli.reveal_window_ms,
+        randomness_reveal_grace_ms: cli.reveal_grace_ms,
+        observability_trace_ratio: cli.trace_ratio,
         ..AppConfig::default()
     };
 

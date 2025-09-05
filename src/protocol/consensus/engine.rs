@@ -483,8 +483,9 @@ impl ConsensusEngine {
             return Err(Error::InvalidState("Game ID mismatch".to_string()));
         }
 
-        // Update current state
-        self.current_state = Arc::new(state.clone());
+        // Capture fields needed after move, then update current state
+        let new_sequence = state.sequence_number;
+        self.current_state = Arc::new(state);
 
         // Clear pending proposals as they may be outdated
         self.pending_proposals.clear();
@@ -493,10 +494,7 @@ impl ConsensusEngine {
         self.consensus_metrics.rounds_completed += 1;
 
         // Log the sync
-        log::info!(
-            "Synced consensus state to sequence {}",
-            state.sequence_number
-        );
+        log::info!("Synced consensus state to sequence {}", new_sequence);
 
         Ok(())
     }

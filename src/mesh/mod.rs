@@ -17,6 +17,7 @@ pub mod consensus_message_handler;
 pub mod deduplication;
 pub mod game_session;
 pub mod gateway;
+pub mod gateway_registry;
 pub mod kademlia_dht;
 pub mod message_queue;
 pub mod resilience;

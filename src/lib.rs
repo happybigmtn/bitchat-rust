@@ -160,6 +160,10 @@ pub struct AppConfig {
     pub enable_treasury: bool,
     /// Node role for tiered architecture
     pub role: NodeRole,
+    /// Region of this node (e.g., "iad")
+    pub region_self: Option<String>,
+    /// Known regions for routing
+    pub regions: Vec<String>,
     /// PBFT tuning: optional batch size override
     pub pbft_batch_size: Option<usize>,
     /// PBFT tuning: optional pipeline depth override
@@ -168,6 +172,10 @@ pub struct AppConfig {
     pub pbft_base_timeout_ms: Option<u64>,
     /// PBFT tuning: optional view change timeout (ms)
     pub pbft_view_timeout_ms: Option<u64>,
+    /// Randomness reveal window (ms)
+    pub randomness_reveal_window_ms: Option<u64>,
+    /// Randomness grace window (ms)
+    pub randomness_reveal_grace_ms: Option<u64>,
     // MVP networking options
     pub listen_tcp: Option<String>,
     pub connect_tcp: Vec<String>,
@@ -175,6 +183,8 @@ pub struct AppConfig {
     // Monitoring options
     pub prometheus_port: Option<u16>,
     pub dashboard_port: Option<u16>,
+    /// Observability: trace sampling ratio
+    pub observability_trace_ratio: Option<f64>,
 }
 
 impl Default for AppConfig {
@@ -186,15 +196,20 @@ impl Default for AppConfig {
             enable_treasury: true,
             nickname: None,
             role: NodeRole::Client,
+            region_self: None,
+            regions: Vec::new(),
             pbft_batch_size: None,
             pbft_pipeline_depth: None,
             pbft_base_timeout_ms: None,
             pbft_view_timeout_ms: None,
+            randomness_reveal_window_ms: None,
+            randomness_reveal_grace_ms: None,
             listen_tcp: None,
             connect_tcp: Vec::new(),
             enable_ble: false,
             prometheus_port: Some(9090),
             dashboard_port: Some(8080),
+            observability_trace_ratio: None,
         }
     }
 }

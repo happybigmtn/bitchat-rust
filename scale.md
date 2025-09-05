@@ -24,6 +24,13 @@ Progress Tracker
 - [ ] Observability: latency histograms, SLO dashboards, alerts
 - [ ] Admin auth/RBAC + rate-limits/micro-fees for anti-spam
 
+Immediate Next Tasks (Priority)
+
+- [ ] Randomness orchestration: timers, evidence, SDK verify, API surface
+- [ ] Regional LB scaffolding: registry, geo extraction, sticky hash ring
+- [ ] Observability slices: trace ratio wiring, key histograms, dashboards
+- [ ] Admin RBAC scaffolding: roles map, audit log file, admin endpoints
+
 Overview
 
 - Goal: Evolve BitCraps from small-group PBFT to a tiered architecture that supports 100k–1M+ concurrent spectators with tens of validators, while preserving provable fairness and low end-to-end latency per round.

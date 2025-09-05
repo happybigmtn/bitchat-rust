@@ -916,9 +916,13 @@ impl ConsensusGameManager {
                         // Remove consensus bridge
                         if consensus_bridges.remove(&game_id).is_some() {
                             let handler = consensus_handler.clone();
-                            tokio::spawn(async move {
-                                handler.unregister_consensus_bridge(&game_id).await;
-                            });
+                            crate::utils::task_tracker::spawn_tracked(
+                                format!("unregister_consensus_{}", hex::encode(game_id)),
+                                crate::utils::task_tracker::TaskType::Consensus,
+                                async move {
+                                    handler.unregister_consensus_bridge(&game_id).await;
+                                }
+                            ).await;
                         }
                     }
                 }

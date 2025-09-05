@@ -10,6 +10,8 @@ use super::LoadBalancingStrategy;
 use super::middleware::{AuthMiddleware, RateLimitMiddleware};
 use super::routing::Router;
 use super::*;
+use crate::services::api_gateway::geo::{region_from_ip, region_from_jwt_claim};
+use crate::mesh::gateway_registry::{GatewayRegistry, GatewayInfo};
 mod broker;
 use broker::{InMemoryBroker, SharedBroker, Broker};
 use crate::error::{Error, Result};
@@ -44,16 +46,15 @@ pub struct ApiGateway {
     request_counter: Arc<AtomicU64>,
     shutdown_tx: Option<tokio::sync::mpsc::UnboundedSender<()>>,
     broker: SharedBroker,
+    registry: Arc<RwLock<GatewayRegistry>>,
 }
 
 impl ApiGateway {
     /// Create a new API gateway
     pub fn new(config: GatewayConfig) -> Self {
         let router = Arc::new(Router::new());
-        let load_balancer = Arc::new(LoadBalancer::new(
-            LoadBalancingStrategy::WeightedRoundRobin,
-            config.service_discovery.clone(),
-        ));
+        let lb_strategy = config.lb_strategy;
+        let load_balancer = Arc::new(LoadBalancer::new(lb_strategy, config.service_discovery.clone()));
         let circuit_breakers = Arc::new(DashMap::new());
         let rate_limiter = Arc::new(RateLimitMiddleware::new(config.rate_limit.clone()));
         let auth_middleware = Arc::new(AuthMiddleware::new(config.auth.clone()));
@@ -90,6 +91,7 @@ impl ApiGateway {
             request_counter,
             shutdown_tx: None,
             broker,
+            registry: Arc::new(RwLock::new(GatewayRegistry::new())),
         }
     }
     
@@ -327,6 +329,7 @@ impl ApiGateway {
             request_counter: self.request_counter.clone(),
             config: self.config.clone(),
             broker: self.broker.clone(),
+            registry: self.registry.clone(),
         };
         
         AxumRouter::new()
@@ -337,6 +340,9 @@ impl ApiGateway {
             .route("/api/v1/games/:id/proofs", axum::routing::get(get_proofs_handler))
             .route("/api/v1/games/:id/payouts", axum::routing::post(post_payouts_handler))
             .route("/subscribe", get(ws_gateway_subscribe))
+            // Admin endpoints for gateway registry
+            .route("/admin/gateways/register", axum::routing::post(admin_register_gateway))
+            .route("/admin/gateways", axum::routing::get(admin_list_gateways))
             .route("/api/*path", any(proxy_handler))
             .route("/*path", any(proxy_handler))
             .layer(
@@ -403,6 +409,7 @@ struct GatewayState {
     request_counter: Arc<AtomicU64>,
     config: GatewayConfig,
     broker: SharedBroker,
+    registry: Arc<RwLock<GatewayRegistry>>,
 }
 
 /// Health check endpoint
@@ -426,6 +433,64 @@ async fn health_handler(State(state): State<GatewayState>) -> impl IntoResponse 
 async fn metrics_handler(State(state): State<GatewayState>) -> impl IntoResponse {
     let metrics = state.metrics.read().await.clone();
     (StatusCode::OK, axum::Json(metrics))
+}
+
+#[derive(serde::Deserialize)]
+struct RegisterGatewayReq {
+    id: String,
+    region: String,
+    #[serde(default = "default_weight")] weight: u32,
+    #[serde(default = "default_capacity")] capacity_score: u32,
+    #[serde(default)] ws_topics_supported: Vec<String>,
+}
+
+fn default_weight() -> u32 { 100 }
+fn default_capacity() -> u32 { 100 }
+
+/// Admin: register or update a gateway in the registry
+async fn admin_register_gateway(
+    State(state): State<GatewayState>,
+    axum::extract::Json(req): axum::extract::Json<RegisterGatewayReq>,
+) -> impl IntoResponse {
+    let mut reg = state.registry.write().await;
+    let mut info = GatewayInfo::new(req.id, req.region);
+    info.weight = req.weight;
+    info.capacity_score = req.capacity_score;
+    info.ws_topics_supported = req.ws_topics_supported;
+    reg.register(info);
+    (StatusCode::OK, axum::Json(serde_json::json!({"ok": true})))
+}
+
+/// Admin: list gateways in registry (optionally by region)
+async fn admin_list_gateways(
+    State(state): State<GatewayState>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let reg = state.registry.read().await;
+    if let Some(region) = q.get("region") {
+        let list = reg.list_by_region(region);
+        return (StatusCode::OK, axum::Json(serde_json::json!({"region": region, "gateways": list.into_iter().map(|g| serde_json::json!({
+            "id": g.id,
+            "region": g.region,
+            "weight": g.weight,
+            "capacity_score": g.capacity_score,
+            "healthy": g.healthy,
+        })).collect::<Vec<_>>() }))).into_response();
+    }
+    // all
+    let mut all = Vec::new();
+    for r in ["iad","sfo","fra","sin"].iter() { // simple iteration; registry may have others
+        for g in reg.list_by_region(r) {
+            all.push(serde_json::json!({
+                "id": g.id,
+                "region": g.region,
+                "weight": g.weight,
+                "capacity_score": g.capacity_score,
+                "healthy": g.healthy,
+            }));
+        }
+    }
+    (StatusCode::OK, axum::Json(serde_json::json!({"gateways": all})))
 }
 
 /// Main proxy handler
@@ -513,8 +578,18 @@ async fn proxy_handler(
         ).into_response());
     }
     
-    // Get service instance
-    let instance = match state.load_balancer.get_instance(&route.service).await {
+    // Get service instance (prefer region if supplied via header, else sticky by client IP)
+    let preferred_region = headers
+        .get("x-region")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .or_else(|| state.config.region_self.clone());
+    let instance = match state
+        .load_balancer
+        .get_instance_for_client_with_region(&route.service, addr.ip(), preferred_region.as_deref())
+        .await
+    {
         Some(instance) => instance,
         None => {
             return Ok((

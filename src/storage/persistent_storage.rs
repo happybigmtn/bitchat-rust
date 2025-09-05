@@ -1003,7 +1003,8 @@ impl BackupManager {
 
     pub async fn create_backup(&self) -> Result<BackupInfo, StorageError> {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)
-            .unwrap().as_secs();
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to get timestamp: {}", e)))?
+            .as_secs();
         let backup_name = format!("bitcraps_backup_{}.db", timestamp);
         let backup_path = self.backup_dir.join(&backup_name);
         let source_db = self.config.data_path.join("bitcraps.db");
@@ -1142,7 +1143,9 @@ impl BackupManager {
     pub async fn cleanup_old_backups(&self) -> Result<usize, StorageError> {
         let max_age_days = 30; // Keep backups for 30 days
         let max_age_secs = max_age_days * 24 * 3600;
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)
+            .map_err(|e| StorageError::DatabaseError(format!("Failed to get timestamp: {}", e)))?
+            .as_secs();
         let mut cleaned_count = 0;
 
         let entries = std::fs::read_dir(&self.backup_dir)

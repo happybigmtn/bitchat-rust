@@ -44,6 +44,14 @@ pub struct Cli {
     #[arg(long, default_value = "client")]
     pub role: String,
 
+    /// This node's region code (e.g., iad, sfo)
+    #[arg(long)]
+    pub region_self: Option<String>,
+
+    /// Comma or space separated list of known regions
+    #[arg(long, value_delimiter = ',')]
+    pub regions: Vec<String>,
+
     /// PBFT batch size (operations per batch)
     #[arg(long)]
     pub pbft_batch_size: Option<usize>,
@@ -59,6 +67,18 @@ pub struct Cli {
     /// PBFT view change timeout in milliseconds
     #[arg(long)]
     pub pbft_view_timeout_ms: Option<u64>,
+
+    /// Randomness reveal window in milliseconds
+    #[arg(long)]
+    pub reveal_window_ms: Option<u64>,
+
+    /// Randomness reveal grace period in milliseconds
+    #[arg(long)]
+    pub reveal_grace_ms: Option<u64>,
+
+    /// Observability trace sampling ratio (0.0 - 1.0)
+    #[arg(long)]
+    pub trace_ratio: Option<f64>,
 }
 
 /// Available commands for the BitCraps CLI

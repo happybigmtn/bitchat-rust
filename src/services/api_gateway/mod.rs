@@ -8,6 +8,7 @@ pub mod middleware;
 pub mod routing;
 pub mod load_balancer;
 pub mod circuit_breaker;
+pub mod geo;
 
 #[cfg(feature = "api-gateway")]
 pub use gateway::ApiGateway;
@@ -36,6 +37,10 @@ pub struct GatewayConfig {
     pub circuit_breaker: CircuitBreakerConfig,
     /// Broker configuration for fan-out
     pub broker: BrokerConfig,
+    /// Load balancing strategy
+    pub lb_strategy: LoadBalancingStrategy,
+    /// Optional self region code for region-aware routing
+    pub region_self: Option<String>,
 }
 
 impl Default for GatewayConfig {
@@ -48,6 +53,8 @@ impl Default for GatewayConfig {
             service_discovery: ServiceDiscoveryConfig::default(),
             circuit_breaker: CircuitBreakerConfig::default(),
             broker: BrokerConfig::default(),
+            lb_strategy: LoadBalancingStrategy::WeightedRoundRobin,
+            region_self: None,
         }
     }
 }
@@ -144,6 +151,7 @@ impl Default for ServiceDiscoveryConfig {
                 address: "127.0.0.1:8081".parse().unwrap(),
                 weight: 100,
                 health_check_path: Some("/health".to_string()),
+                region: None,
             }
         ]);
         static_services.insert("consensus".to_string(), vec![
@@ -151,6 +159,7 @@ impl Default for ServiceDiscoveryConfig {
                 address: "127.0.0.1:8082".parse().unwrap(),
                 weight: 100,
                 health_check_path: Some("/health".to_string()),
+                region: None,
             }
         ]);
         
@@ -185,6 +194,8 @@ pub struct ServiceEndpoint {
     pub address: SocketAddr,
     pub weight: u32,
     pub health_check_path: Option<String>,
+    /// Optional region code for this endpoint (e.g., "iad")
+    pub region: Option<String>,
 }
 
 /// Circuit breaker configuration
