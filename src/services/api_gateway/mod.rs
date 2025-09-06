@@ -41,6 +41,10 @@ pub struct GatewayConfig {
     pub lb_strategy: LoadBalancingStrategy,
     /// Optional self region code for region-aware routing
     pub region_self: Option<String>,
+    /// Minimum bet amount in base units
+    pub min_bet_amount: u64,
+    /// Fee in basis points applied to accepted bets
+    pub fee_bps: u32,
 }
 
 impl Default for GatewayConfig {
@@ -55,6 +59,8 @@ impl Default for GatewayConfig {
             broker: BrokerConfig::default(),
             lb_strategy: LoadBalancingStrategy::WeightedRoundRobin,
             region_self: None,
+            min_bet_amount: 1,
+            fee_bps: 0,
         }
     }
 }
@@ -322,6 +328,22 @@ pub struct GatewayMetrics {
     pub circuit_breaker_open_count: u64,
     pub average_response_time: f64,
     pub requests_per_second: f64,
+    /// Total bets accepted via gateway
+    pub bets_accepted_total: u64,
+    /// Total fees collected (base units)
+    pub fees_collected_total: u64,
+    /// Per-route request counters (uses route pattern)
+    pub route_counts: std::collections::HashMap<String, u64>,
+    /// Per-route-method request counters
+    pub route_method_counts: std::collections::HashMap<(String, String), u64>,
+    /// Per-route latency histogram buckets (ms): [50,100,200,500,1000,2000,5000,+Inf]
+    pub route_latency_buckets: std::collections::HashMap<String, [u64; 8]>,
+    /// WS fan-out latency histogram per topic (ms)
+    pub fanout_latency_buckets: std::collections::HashMap<String, [u64; 8]>,
+    /// Ingress (bet accept) to proof availability latency histogram (ms)
+    pub ingress_to_proof_latency_buckets: [u64; 8],
+    /// Consensus commit to gateway broadcast latency histogram (ms)
+    pub commit_to_broadcast_latency_buckets: [u64; 8],
 }
 
 impl GatewayMetrics {
@@ -339,6 +361,51 @@ impl GatewayMetrics {
         self.average_response_time = alpha * response_time_ms + (1.0 - alpha) * self.average_response_time;
     }
     
+    pub fn record_route(&mut self, route_pattern: &str) {
+        *self.route_counts.entry(route_pattern.to_string()).or_insert(0) += 1;
+    }
+
+    pub fn record_latency_ms(&mut self, route_pattern: &str, latency_ms: f64) {
+        let buckets = self.route_latency_buckets.entry(route_pattern.to_string()).or_insert([0u64; 8]);
+        let ms = latency_ms as u64;
+        let thresholds = [50u64, 100, 200, 500, 1000, 2000, 5000];
+        let mut idx = thresholds.len();
+        for (i, t) in thresholds.iter().enumerate() {
+            if ms <= *t { idx = i; break; }
+        }
+        if idx < 7 { buckets[idx] += 1; } else { buckets[7] += 1; }
+    }
+
+    pub fn record_fanout_latency_ms(&mut self, topic: &str, latency_ms: f64) {
+        let buckets = self.fanout_latency_buckets.entry(topic.to_string()).or_insert([0u64; 8]);
+        let ms = latency_ms as u64;
+        let thresholds = [50u64, 100, 200, 500, 1000, 2000, 5000];
+        let mut idx = thresholds.len();
+        for (i, t) in thresholds.iter().enumerate() {
+            if ms <= *t { idx = i; break; }
+        }
+        if idx < 7 { buckets[idx] += 1; } else { buckets[7] += 1; }
+    }
+
+    pub fn record_route_method(&mut self, route_pattern: &str, method: &str) {
+        *self.route_method_counts.entry((route_pattern.to_string(), method.to_string())).or_insert(0) += 1;
+    }
+
+    pub fn record_ingress_to_proof_latency_ms(&mut self, latency_ms: f64) {
+        let thresholds = [50u64, 100, 200, 500, 1000, 2000, 5000];
+        let ms = latency_ms as u64;
+        let mut idx = thresholds.len();
+        for (i, t) in thresholds.iter().enumerate() {
+            if ms <= *t { idx = i; break; }
+        }
+        if idx < 7 { self.ingress_to_proof_latency_buckets[idx] += 1; } else { self.ingress_to_proof_latency_buckets[7] += 1; }
+    }
+
+    pub fn record_bet_and_fee(&mut self, fee: u64) {
+        self.bets_accepted_total = self.bets_accepted_total.saturating_add(1);
+        self.fees_collected_total = self.fees_collected_total.saturating_add(fee);
+    }
+    
     pub fn record_rate_limited(&mut self) {
         self.rate_limited_requests += 1;
     }
@@ -354,6 +421,16 @@ impl GatewayMetrics {
             self.successful_requests as f64 / self.total_requests as f64
         }
     }
+
+    pub fn record_commit_to_broadcast_latency_ms(&mut self, latency_ms: f64) {
+        let thresholds = [50u64, 100, 200, 500, 1000, 2000, 5000];
+        let ms = latency_ms as u64;
+        let mut idx = thresholds.len();
+        for (i, t) in thresholds.iter().enumerate() {
+            if ms <= *t { idx = i; break; }
+        }
+        if idx < 7 { self.commit_to_broadcast_latency_buckets[idx] += 1; } else { self.commit_to_broadcast_latency_buckets[7] += 1; }
+    }
 }
 
 /// Request context information
@@ -364,6 +441,7 @@ pub struct RequestContext {
     pub user_agent: Option<String>,
     pub api_key: Option<String>,
     pub peer_id: Option<PeerId>,
+    pub region_claim: Option<String>,
     pub start_time: std::time::Instant,
 }
 
@@ -375,6 +453,7 @@ impl RequestContext {
             user_agent: None,
             api_key: None,
             peer_id: None,
+            region_claim: None,
             start_time: std::time::Instant::now(),
         }
     }

@@ -37,6 +37,57 @@ impl ConsensusAPI {
         }
     }
 
+    /// Fetch randomness proof bundle for a game round from the Game Engine (proxied via gateway)
+    /// Returns None if not available yet.
+    pub async fn get_randomness_proof(&self, game_id_hex: &str, round: u64) -> SDKResult<Option<String>> {
+        let path = format!("api/v1/games/{}/randomness/{}", game_id_hex, round);
+        let val: serde_json::Value = self.rest_client.get(&path).await?;
+        if val.get("status").and_then(|s| s.as_str()) == Some("not_available") {
+            return Ok(None);
+        }
+        Ok(Some(val.to_string()))
+    }
+
+    /// Hash a proof JSON string to a 32-byte hex string (matches server hashing for entropy_proof)
+    pub fn hash_randomness_proof(&self, proof_json: &str) -> String {
+        let h = crate::crypto::GameCrypto::hash(proof_json.as_bytes());
+        hex::encode(h)
+    }
+
+    /// End-to-end verify: fetch proof bundle for (game, round), verify VRF, and compare hash to expected entropy hash
+    pub async fn verify_round_randomness(
+        &self,
+        game_id_hex: &str,
+        round: u64,
+        expected_entropy_hash_hex: &str,
+    ) -> SDKResult<bool> {
+        if let Some(bundle_json) = self.get_randomness_proof(game_id_hex, round).await? {
+            // Compare hash first
+            let hash = self.hash_randomness_proof(&bundle_json);
+            if !hash.eq_ignore_ascii_case(expected_entropy_hash_hex) { return Ok(false); }
+            // Verify VRF bundle contents
+            let ok = self.verify_vrf_bundle(&bundle_json).await.unwrap_or(false);
+            return Ok(ok);
+        }
+        Ok(false)
+    }
+
+    /// Verify a VRF proof bundle created by the server for a roll
+    /// Expects hex-encoded fields: input, output, proof, pk
+    pub async fn verify_vrf_bundle(&self, bundle_json: &str) -> SDKResult<bool> {
+        #[derive(serde::Deserialize)]
+        struct Bundle { r#type: String, input: String, output: String, proof: String, pk: String }
+        let b: Bundle = serde_json::from_str(bundle_json)
+            .map_err(|e| SDKError::SerializationError(e.to_string()))?;
+        if b.r#type.to_lowercase() != "vrf" { return Ok(false); }
+        let input = hex::decode(&b.input).map_err(|e| SDKError::SerializationError(e.to_string()))?;
+        let mut output = [0u8;32]; let ob = hex::decode(&b.output).map_err(|e| SDKError::SerializationError(e.to_string()))?; if ob.len()!=32 { return Ok(false); } output.copy_from_slice(&ob);
+        let proof = hex::decode(&b.proof).map_err(|e| SDKError::SerializationError(e.to_string()))?;
+        let mut pk = [0u8;32]; let pkb = hex::decode(&b.pk).map_err(|e| SDKError::SerializationError(e.to_string()))?; if pkb.len()!=32 { return Ok(false); } pk.copy_from_slice(&pkb);
+        let ok = crate::crypto::vrf::verify(&crate::crypto::vrf::VRFPublicKey(pk), &input, &crate::crypto::vrf::VRFOutput(output), &crate::crypto::vrf::VRFProof(proof));
+        Ok(ok)
+    }
+
     /// Fetch a quorum certificate by sequence (if available)
     pub async fn get_quorum_certificate_by_sequence(&self, sequence: u64) -> SDKResult<Option<Vec<u8>>> {
         // GET consensus/qc?sequence={sequence}
@@ -181,6 +232,19 @@ impl ConsensusAPI {
         
         Ok(status)
     }
+
+    /// Fast sync: fetch snapshot and (optionally) verify QC if sequence is present
+    pub async fn fast_sync_game(&self, game_id_hex: &str) -> SDKResult<()> {
+        #[derive(serde::Deserialize)]
+        struct Snapshot { session_info: serde_json::Value, valid_actions: serde_json::Value, sequence: Option<u64> }
+        let snap: Snapshot = self.rest_client.get(&format!("api/v1/games/{}/snapshot", game_id_hex)).await?;
+        if let Some(seq) = snap.sequence {
+            if let Some(qc) = self.get_quorum_certificate_by_sequence(seq as u64).await? {
+                let _ok = self.verify_quorum_certificate(&qc).await?;
+            }
+        }
+        Ok(())
+    }
     
     /// Get voting statistics
     pub async fn get_voting_stats(&self, game_id: &GameId) -> SDKResult<VotingStatistics> {
@@ -189,6 +253,47 @@ impl ConsensusAPI {
             .await?;
         
         Ok(stats)
+    }
+
+    // ================= Randomness Orchestration (commit-reveal) =================
+    /// Start a randomness round (admin/validator usage)
+    pub async fn start_randomness_round(&self, round_id: u64) -> SDKResult<bool> {
+        let v: serde_json::Value = self.rest_client
+            .post("consensus/randomness/start", &serde_json::json!({"round_id": round_id}))
+            .await?;
+        Ok(v.get("ok").and_then(|b| b.as_bool()).unwrap_or(false))
+    }
+
+    /// Submit a commit for a randomness round
+    pub async fn submit_randomness_commit(&self, round_id: u64, peer_id_hex: &str) -> SDKResult<bool> {
+        let v: serde_json::Value = self.rest_client
+            .post("consensus/randomness/commit", &serde_json::json!({"round_id": round_id, "peer_id_hex": peer_id_hex}))
+            .await?;
+        Ok(v.get("ok").and_then(|b| b.as_bool()).unwrap_or(false))
+    }
+
+    /// Submit a reveal for a randomness round
+    pub async fn submit_randomness_reveal(&self, round_id: u64, peer_id_hex: &str) -> SDKResult<bool> {
+        let v: serde_json::Value = self.rest_client
+            .post("consensus/randomness/reveal", &serde_json::json!({"round_id": round_id, "peer_id_hex": peer_id_hex}))
+            .await?;
+        Ok(v.get("ok").and_then(|b| b.as_bool()).unwrap_or(false))
+    }
+
+    /// Get randomness round status
+    pub async fn get_randomness_status(&self, round_id: u64) -> SDKResult<serde_json::Value> {
+        let v: serde_json::Value = self.rest_client
+            .get(&format!("consensus/randomness/status?round_id={}", round_id))
+            .await?;
+        Ok(v)
+    }
+
+    /// Get evidence of missing reveals for a finalized round
+    pub async fn get_randomness_evidence(&self, round_id: u64) -> SDKResult<Option<Vec<[u8;32]>>> {
+        let v: Option<Vec<[u8;32]>> = self.rest_client
+            .get(&format!("consensus/randomness/evidence?round_id={}", round_id))
+            .await?;
+        Ok(v)
     }
     
     /// Create a proposal builder

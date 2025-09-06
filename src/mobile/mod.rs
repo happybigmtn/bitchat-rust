@@ -433,7 +433,7 @@ pub fn create_node(config: BitCrapsConfig) -> Result<Arc<BitCrapsNode>, BitCraps
                 .unwrap_or(PlatformType::Unknown);
 
             // Create unbounded channel for battery manager events
-            let (battery_event_sender, _) = mpsc::unbounded_channel();
+            let (battery_event_sender, _) = mpsc::channel(16);
 
             Some(Arc::new(battery_optimization::BatteryManager::new(
                 platform_type,

@@ -646,7 +646,7 @@ impl BitcoinBridge {
         // For now, generate a mock address
         let config = self.config.read().await;
         let prefix = config.network.address_prefix();
-        Ok(format!("{}multisig_{:016x}", prefix, rand::random::<u64>()))
+        Ok(format!("{}multisig_{}", prefix, hex::encode(crate::crypto::GameCrypto::random_bytes::<8>())))
     }
 
     async fn create_bitcoin_lock_transaction(
@@ -658,7 +658,7 @@ impl BitcoinBridge {
     ) -> Result<String> {
         // Create transaction that locks Bitcoin in multisig
         // In production, this would create actual Bitcoin transaction
-        Ok(format!("lock_tx_{:016x}", rand::random::<u64>()))
+        Ok(format!("lock_tx_{}", hex::encode(crate::crypto::GameCrypto::random_bytes::<8>())))
     }
 
     async fn create_bitcoin_release_transaction(
@@ -669,7 +669,7 @@ impl BitcoinBridge {
         _source_tx_hash: &Hash256,
     ) -> Result<String> {
         // Create transaction that releases Bitcoin from multisig
-        Ok(format!("release_tx_{:016x}", rand::random::<u64>()))
+        Ok(format!("release_tx_{}", hex::encode(crate::crypto::GameCrypto::random_bytes::<8>())))
     }
 
     async fn create_psbt_for_transaction(
@@ -684,7 +684,7 @@ impl BitcoinBridge {
             let mut hasher = Sha256::new();
             hasher.update(b"bitcoin_psbt");
             hasher.update(&Self::current_timestamp().to_be_bytes());
-            hasher.update(&rand::random::<[u8; 16]>());
+            hasher.update(&crate::crypto::GameCrypto::random_bytes::<16>());
             
             let result = hasher.finalize();
             let mut id = [0u8; 32];
@@ -728,7 +728,7 @@ impl BitcoinBridge {
         _timeout_block: u32,
     ) -> Result<String> {
         // Create Hash Time Lock Contract transaction
-        Ok(format!("htlc_tx_{:016x}", rand::random::<u64>()))
+        Ok(format!("htlc_tx_{}", hex::encode(crate::crypto::GameCrypto::random_bytes::<8>())))
     }
 
     async fn create_bitcoin_redeem_transaction(
@@ -737,11 +737,11 @@ impl BitcoinBridge {
         _secret: &Hash256,
     ) -> Result<String> {
         // Create transaction that redeems from HTLC using secret
-        Ok(format!("redeem_tx_{:016x}", rand::random::<u64>()))
+        Ok(format!("redeem_tx_{}", hex::encode(crate::crypto::GameCrypto::random_bytes::<8>())))
     }
 
     fn generate_payment_hash(&self) -> String {
-        format!("{:064x}", rand::random::<u64>())
+        hex::encode(crate::crypto::GameCrypto::random_bytes::<32>())
     }
 
     fn generate_swap_id(&self) -> Hash256 {
@@ -749,7 +749,7 @@ impl BitcoinBridge {
         let mut hasher = Sha256::new();
         hasher.update(b"atomic_swap");
         hasher.update(&Self::current_timestamp().to_be_bytes());
-        hasher.update(&rand::random::<[u8; 16]>());
+        hasher.update(&crate::crypto::GameCrypto::random_bytes::<16>());
         
         let result = hasher.finalize();
         let mut id = [0u8; 32];
@@ -759,7 +759,7 @@ impl BitcoinBridge {
 
     fn generate_hash_commitment(&self) -> Hash256 {
         use sha2::{Digest, Sha256};
-        let secret: [u8; 32] = rand::random();
+        let secret: [u8; 32] = crate::crypto::GameCrypto::random_bytes();
         let mut hasher = Sha256::new();
         hasher.update(&secret);
         

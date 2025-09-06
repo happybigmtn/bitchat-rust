@@ -7,7 +7,7 @@ use super::types::*;
 use super::{ConsensusConfig, ConsensusAlgorithm, NetworkState, ConsensusMetrics, ConsensusRound, ConsensusProposal, ConsensusResult, ConsensusVote};
 use crate::error::{Error, Result};
 use crate::protocol::{GameId, PeerId, TransactionId};
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -29,6 +29,20 @@ pub struct ConsensusService {
     quorum_certs: Arc<DashMap<TransactionId, Vec<u8>>>,
     /// Stored quorum certificates by round sequence (u64)
     quorum_certs_by_sequence: Arc<DashMap<u64, Vec<u8>>>,
+    // Randomness orchestration (commit-reveal) tracking
+    randomness_rounds: Arc<DashMap<u64, RandomnessRoundState>>, // round_id -> state
+    randomness_evidence: Arc<DashMap<u64, Vec<PeerId>>>,        // round_id -> missing peers
+    reveal_window_ms: u64,
+    reveal_grace_ms: u64,
+    randomness_penalties: Arc<DashMap<PeerId, u64>>,            // peer -> strikes
+}
+
+#[derive(Clone)]
+struct RandomnessRoundState {
+    started_at: std::time::Instant,
+    validators: Vec<PeerId>,
+    commits: DashSet<PeerId>,
+    reveals: DashSet<PeerId>,
 }
 
 impl ConsensusService {
@@ -49,6 +63,11 @@ impl ConsensusService {
             peer_id,
             quorum_certs: Arc::new(DashMap::new()),
             quorum_certs_by_sequence: Arc::new(DashMap::new()),
+            randomness_rounds: Arc::new(DashMap::new()),
+            randomness_evidence: Arc::new(DashMap::new()),
+            reveal_window_ms: 5_000,
+            reveal_grace_ms: 5_000,
+            randomness_penalties: Arc::new(DashMap::new()),
         };
         // Log PBFT tuning overrides if provided
         if this.config.pbft_batch_size.is_some()
@@ -102,6 +121,44 @@ impl ConsensusService {
                     }
                     _ = shutdown_rx1.recv() => {
                         break;
+                    }
+                }
+            }
+        });
+
+        // Randomness monitor: check commit-reveal windows and produce evidence
+        let rr = self.randomness_rounds.clone();
+        let evidence = self.randomness_evidence.clone();
+        let this_penalties = self.randomness_penalties.clone();
+        let window = self.reveal_window_ms;
+        let grace = self.reveal_grace_ms;
+        tokio::spawn(async move {
+            let mut tick = interval(Duration::from_millis(500));
+            loop {
+                tick.tick().await;
+                let now = std::time::Instant::now();
+                let rounds: Vec<(u64, RandomnessRoundState)> = rr
+                    .iter()
+                    .map(|e| (*e.key(), e.value().clone()))
+                    .collect();
+                for (round_id, state) in rounds {
+                    let deadline = state.started_at + Duration::from_millis(window + grace);
+                    if now >= deadline {
+                        // Determine missing reveals
+                        let mut missing = Vec::new();
+                        for v in &state.validators {
+                            if !state.reveals.contains(v) {
+                                missing.push(*v);
+                            }
+                        }
+                        if !missing.is_empty() {
+                            // Record evidence and increment penalties
+                            evidence.insert(round_id, missing.clone());
+                            for p in missing {
+                                this_penalties.entry(p).and_modify(|v| *v += 1).or_insert(1);
+                            }
+                        }
+                        rr.remove(&round_id);
                     }
                 }
             }
@@ -332,6 +389,75 @@ impl ConsensusService {
                 average_time_to_commit_ms: metrics.average_time_to_commit.as_millis() as u64,
             },
         })
+    }
+
+    // ===================== Randomness Orchestration (Commit-Reveal) =====================
+    /// Start a randomness round with the current active validators
+    pub async fn randomness_start_round(&self, round_id: u64) -> Result<bool> {
+        let validators: Vec<PeerId> = self.network_state.read().await
+            .active_validators()
+            .into_iter()
+            .map(|v| v.peer_id)
+            .collect();
+        let state = RandomnessRoundState {
+            started_at: std::time::Instant::now(),
+            validators: validators.clone(),
+            commits: DashSet::new(),
+            reveals: DashSet::new(),
+        };
+        self.randomness_rounds.insert(round_id, state);
+        Ok(true)
+    }
+
+    /// Record a commitment from a validator
+    pub async fn randomness_commit(&self, round_id: u64, peer: PeerId) -> Result<bool> {
+        if let Some(r) = self.randomness_rounds.get(&round_id) {
+            r.commits.insert(peer);
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    /// Record a reveal from a validator
+    pub async fn randomness_reveal(&self, round_id: u64, peer: PeerId) -> Result<bool> {
+        if let Some(r) = self.randomness_rounds.get(&round_id) {
+            r.reveals.insert(peer);
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    /// Get status of a randomness round
+    pub async fn randomness_status(&self, round_id: u64) -> Result<serde_json::Value> {
+        if let Some(r) = self.randomness_rounds.get(&round_id) {
+            let total = r.validators.len();
+            let commits = r.commits.len();
+            let reveals = r.reveals.len();
+            let elapsed_ms = r.value().started_at.elapsed().as_millis() as u64;
+            return Ok(serde_json::json!({
+                "round_id": round_id,
+                "validators_total": total,
+                "commits": commits,
+                "reveals": reveals,
+                "elapsed_ms": elapsed_ms,
+                "window_ms": self.reveal_window_ms,
+                "grace_ms": self.reveal_grace_ms,
+            }));
+        }
+        Ok(serde_json::json!({"round_id": round_id, "status": "not_found"}))
+    }
+
+    /// Get evidence list for a finalized round (missing reveals)
+    pub async fn randomness_evidence(&self, round_id: u64) -> Result<Option<Vec<PeerId>>> {
+        Ok(self.randomness_evidence.get(&round_id).map(|e| e.clone()))
+    }
+
+    /// Get penalties map snapshot
+    pub async fn randomness_penalties_snapshot(&self) -> Vec<(PeerId, u64)> {
+        self.randomness_penalties
+            .iter()
+            .map(|e| (*e.key(), *e.value()))
+            .collect()
     }
     
     /// Add or update validator

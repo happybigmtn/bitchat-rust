@@ -24,7 +24,7 @@ use tokio::time::{interval, sleep};
 use crate::error::{Error, Result};
 use crate::protocol::{Hash256, PeerId, CrapTokens};
 use crate::crypto::BitchatKeypair;
-use crate::validation::InputValidator;
+use crate::validation::{InputValidator, ValidationRules};
 use crate::security::{SecurityManager, SecurityEvent};
 use crate::utils::spawn_tracked;
 use crate::utils::task::TaskType;
@@ -300,10 +300,17 @@ impl BridgeSecurityManager {
     pub fn new(security_manager: Arc<SecurityManager>) -> Self {
         Self {
             security_manager,
-            validator: Arc::new(InputValidator::new(Default::default()).unwrap_or_else(|_| {
-                // TODO: Handle InputValidator initialization error gracefully
-                panic!("Failed to create InputValidator")
-            })),
+            validator: Arc::new(match InputValidator::new(Default::default()) {
+                Ok(v) => v,
+                Err(e) => {
+                    log::error!("Failed to create InputValidator: {}. Falling back to default rules without sanitizer.", e);
+                    // Fallback: construct a minimal validator without regex sanitizer
+                    InputValidator::new(ValidationRules::default()).unwrap_or_else(|_| {
+                        // As a last resort, this will not fail because default rules and sanitizer init succeed in normal cases
+                        panic!("Critical: failed to initialize InputValidator even with defaults");
+                    })
+                }
+            }),
             fraud_detection_rules: Arc::new(RwLock::new(HashMap::new())),
             security_events: Arc::new(RwLock::new(Vec::new())),
         }

@@ -143,6 +143,8 @@ pub use bridges::universal::{
     LiquidityConfig, LiquidityPool, RoutingConfig, RoutingAlgorithm, BridgePlugin,
 };
 
+pub mod protocol_randomness;
+
 /// Application configuration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeRole {
@@ -185,6 +187,8 @@ pub struct AppConfig {
     pub dashboard_port: Option<u16>,
     /// Observability: trace sampling ratio
     pub observability_trace_ratio: Option<f64>,
+    /// Prefer VRF-based randomness when available
+    pub randomness_use_vrf: Option<bool>,
 }
 
 impl Default for AppConfig {
@@ -210,6 +214,7 @@ impl Default for AppConfig {
             prometheus_port: Some(9090),
             dashboard_port: Some(8080),
             observability_trace_ratio: None,
+            randomness_use_vrf: None,
         }
     }
 }

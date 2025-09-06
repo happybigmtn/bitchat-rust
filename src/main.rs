@@ -50,6 +50,7 @@ async fn main() -> Result<()> {
         randomness_reveal_window_ms: cli.reveal_window_ms,
         randomness_reveal_grace_ms: cli.reveal_grace_ms,
         observability_trace_ratio: cli.trace_ratio,
+        randomness_use_vrf: Some(cli.use_vrf),
         ..AppConfig::default()
     };
 

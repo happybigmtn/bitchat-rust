@@ -685,7 +685,10 @@ impl EdgeCacheManager {
             CacheTier::L1 => Arc::clone(&self.l1_cache),
             CacheTier::L2 => Arc::clone(&self.l2_cache),
             CacheTier::L3 => Arc::clone(&self.l3_cache),
-            CacheTier::Origin => panic!("Origin is not a cache tier"),
+            CacheTier::Origin => {
+                log::error!("Origin is not a cache tier; defaulting to L1 cache");
+                Arc::clone(&self.l1_cache)
+            },
         }
     }
 

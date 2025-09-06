@@ -31,6 +31,12 @@ pub async fn start_http(service: Arc<RwLock<ConsensusService>>, addr: SocketAddr
         .route("/api/v1/consensus/propose", post(post_propose))
         .route("/api/v1/consensus/vote", post(post_vote))
         .route("/api/v1/consensus/qc", get(get_qc))
+        .route("/api/v1/consensus/randomness/start", post(rnd_start))
+        .route("/api/v1/consensus/randomness/commit", post(rnd_commit))
+        .route("/api/v1/consensus/randomness/reveal", post(rnd_reveal))
+        .route("/api/v1/consensus/randomness/status", get(rnd_status))
+        .route("/api/v1/consensus/randomness/evidence", get(rnd_evidence))
+        .route("/api/v1/consensus/randomness/penalties", get(rnd_penalties))
         .route("/api/v1/consensus/subscribe", get(ws_subscribe))
         .route("/api/v1/consensus/admin/add-validator", post(post_add_validator))
         .route("/api/v1/consensus/admin/remove-validator", post(post_remove_validator))
@@ -93,6 +99,49 @@ async fn get_qc(State(state): State<AppState>, Query(q): Query<QCQuery>) -> Json
         return Json(qc);
     }
     Json(None)
+}
+
+#[derive(Deserialize)]
+struct RndStartBody { round_id: u64 }
+
+async fn rnd_start(State(state): State<AppState>, Json(body): Json<RndStartBody>) -> Json<serde_json::Value> {
+    let ok = state.service.read().await.randomness_start_round(body.round_id).await.unwrap_or(false);
+    Json(serde_json::json!({"ok": ok}))
+}
+
+#[derive(Deserialize)]
+struct RndPeerBody { round_id: u64, peer_id_hex: String }
+
+async fn rnd_commit(State(state): State<AppState>, Json(body): Json<RndPeerBody>) -> Json<serde_json::Value> {
+    let mut peer = [0u8;32]; if let Ok(b)=hex::decode(&body.peer_id_hex){ if b.len()==32 { peer.copy_from_slice(&b); } }
+    let ok = state.service.read().await.randomness_commit(body.round_id, peer).await.unwrap_or(false);
+    Json(serde_json::json!({"ok": ok}))
+}
+
+async fn rnd_reveal(State(state): State<AppState>, Json(body): Json<RndPeerBody>) -> Json<serde_json::Value> {
+    let mut peer = [0u8;32]; if let Ok(b)=hex::decode(&body.peer_id_hex){ if b.len()==32 { peer.copy_from_slice(&b); } }
+    let ok = state.service.read().await.randomness_reveal(body.round_id, peer).await.unwrap_or(false);
+    Json(serde_json::json!({"ok": ok}))
+}
+
+#[derive(Deserialize)]
+struct RndQuery { round_id: u64 }
+
+async fn rnd_status(State(state): State<AppState>, Query(q): Query<RndQuery>) -> Json<serde_json::Value> {
+    let v = state.service.read().await.randomness_status(q.round_id).await.unwrap_or(serde_json::json!({"round_id": q.round_id, "status":"error"}));
+    Json(v)
+}
+
+async fn rnd_evidence(State(state): State<AppState>, Query(q): Query<RndQuery>) -> Json<Option<Vec<[u8;32]>>> {
+    let e = state.service.read().await.randomness_evidence(q.round_id).await.unwrap_or(None);
+    Json(e)
+}
+
+async fn rnd_penalties(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let items_raw = state.service.read().await.randomness_penalties_snapshot().await;
+    let mut items: Vec<_> = items_raw.into_iter().map(|(p,c)| (hex::encode(p), c)).collect();
+    items.sort_by(|a,b| b.1.cmp(&a.1));
+    Json(serde_json::json!({"penalties": items}))
 }
 
 #[derive(Deserialize)]

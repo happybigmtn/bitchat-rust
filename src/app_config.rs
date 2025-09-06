@@ -79,6 +79,10 @@ pub struct Cli {
     /// Observability trace sampling ratio (0.0 - 1.0)
     #[arg(long)]
     pub trace_ratio: Option<f64>,
+
+    /// Prefer VRF-based randomness when available
+    #[arg(long)]
+    pub use_vrf: bool,
 }
 
 /// Available commands for the BitCraps CLI

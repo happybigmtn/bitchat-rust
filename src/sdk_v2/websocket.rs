@@ -173,7 +173,7 @@ impl WebSocketManager {
     where
         T: for<'de> Deserialize<'de> + Send + 'static,
     {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(1024);
         
         {
             let mut subscriptions = self.subscriptions.write().await;

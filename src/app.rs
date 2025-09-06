@@ -301,7 +301,8 @@ impl BitCrapsApp {
         mesh_service: Arc<MeshService>,
         consensus_handler: Arc<ConsensusMessageHandler>,
     ) -> Result<()> {
-        let game_config = ConsensusGameConfig::default();
+        let mut game_config = ConsensusGameConfig::default();
+        // Thread VRF preference via ApplicationConfig if available later; default false here
         let game_manager = Arc::new(ConsensusGameManager::new(
             self.identity.clone(),
             mesh_service,

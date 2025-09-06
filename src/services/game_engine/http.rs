@@ -19,6 +19,7 @@ pub async fn start_http(service: Arc<RwLock<GameEngineService>>, addr: SocketAdd
         .route("/api/v1/games/:id/actions", post(process_action))
         .route("/api/v1/games/:id/subscribe", get(ws_subscribe))
         .route("/api/v1/games/:id/snapshot", get(get_snapshot))
+        .route("/api/v1/games/:id/randomness/:round", get(get_randomness).post(set_randomness))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| crate::error::Error::NetworkError(e.to_string()))?;
@@ -48,7 +49,7 @@ async fn create_game(State(state): State<AppState>, Json(req): Json<CreateGameRe
 async fn get_game_state(State(state): State<AppState>, Path(id): Path<String>) -> Json<GetGameStateResponse> {
     let gid = parse_game_id_hex(&id);
     let svc = state.service.read().await;
-    Json(svc.get_game_state(GetGameStateRequest{ game_id: gid }).await.unwrap_or(GetGameStateResponse { session_info: GameSessionInfo::new(gid, vec![], crate::protocol::craps::GamePhase::Off), valid_actions: Default::default() }))
+    Json(svc.get_game_state(GetGameStateRequest{ game_id: gid }).await.unwrap_or(GetGameStateResponse { session_info: GameSessionInfo::new(gid, vec![], crate::protocol::craps::GamePhase::Off), valid_actions: Default::default(), sequence: None, qc: None }))
 }
 
 async fn process_action(State(state): State<AppState>, Path(id): Path<String>, Json(mut req): Json<ProcessActionRequest>) -> Json<ProcessActionResponse> {
@@ -62,12 +63,60 @@ async fn get_snapshot(State(state): State<AppState>, Path(id): Path<String>) -> 
     // Use get_game_state as a snapshot endpoint
     let gid = parse_game_id_hex(&id);
     let svc = state.service.read().await;
-    Json(svc.get_game_state(GetGameStateRequest{ game_id: gid }).await.unwrap_or(GetGameStateResponse { session_info: GameSessionInfo::new(gid, vec![], crate::protocol::craps::GamePhase::Off), valid_actions: Default::default() }))
+    let mut resp = svc.get_game_state(GetGameStateRequest{ game_id: gid })
+        .await
+        .unwrap_or(GetGameStateResponse { session_info: GameSessionInfo::new(gid, vec![], crate::protocol::craps::GamePhase::Off), valid_actions: Default::default(), sequence: None, qc: None });
+    // If a sequence is present, try to fetch QC from consensus service
+    if let Some(seq) = resp.sequence {
+        let url = format!("http://127.0.0.1:8082/api/v1/consensus/qc?sequence={}", seq);
+        if let Ok(client) = reqwest::Client::builder().timeout(std::time::Duration::from_millis(800)).build() {
+            if let Ok(r) = client.get(url).send().await { if r.status().is_success() {
+                if let Ok(qc_bytes) = r.json::<Option<Vec<u8>>>().await { resp.qc = qc_bytes; }
+            }}
+        }
+    }
+    Json(resp)
 }
 
 fn parse_game_id_hex(s: &str) -> crate::protocol::GameId {
     if let Ok(bytes) = hex::decode(s) { if bytes.len()==16 { let mut id=[0u8;16]; id.copy_from_slice(&bytes); return id; } }
     [0u8;16]
+}
+
+/// Placeholder randomness endpoint: returns not available until proof store is wired
+async fn get_randomness(
+    State(state): State<AppState>,
+    Path((id, round)): Path<(String, String)>,
+) -> (axum::http::StatusCode, String) {
+    let gid = parse_game_id_hex(&id);
+    let round_num: u64 = round.parse().unwrap_or(0);
+    let svc = state.service.read().await;
+    if let Some(proof) = svc.get_randomness_proof(gid, round_num).await {
+        (axum::http::StatusCode::OK, proof)
+    } else {
+        let body = format!(
+            "{{\"game_id\":\"{}\",\"round\":{},\"status\":\"not_available\"}}",
+            id,
+            round_num
+        );
+        (axum::http::StatusCode::NOT_FOUND, body)
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct SetProofBody { proof_json: String }
+
+/// Admin/testing: set randomness proof bundle for a round
+async fn set_randomness(
+    State(state): State<AppState>,
+    Path((id, round)): Path<(String, String)>,
+    axum::Json(body): axum::Json<SetProofBody>,
+) -> (axum::http::StatusCode, String) {
+    let gid = parse_game_id_hex(&id);
+    let round_num: u64 = round.parse().unwrap_or(0);
+    let svc = state.service.read().await;
+    svc.set_randomness_proof(gid, round_num, body.proof_json.clone()).await;
+    (axum::http::StatusCode::OK, "{\"ok\":true}".to_string())
 }
 
 async fn ws_subscribe(
@@ -100,9 +149,17 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, game_id: crate::proto
                     super::types::GameEvent::Snapshot{ game_id: gid, .. } => gid == &game_id,
                 };
                 if matches {
-                    if let Ok(txt) = serde_json::to_string(&event) {
-                        if socket.send(Message::Text(txt)).await.is_err() { break; }
-                    }
+                    // Wrap event with timestamp for latency measurement
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis();
+                    let payload = serde_json::json!({
+                        "ts": ts,
+                        "event": event,
+                    });
+                    let txt = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string());
+                    if socket.send(Message::Text(txt)).await.is_err() { break; }
                 }
             }
             Some(Ok(msg)) = socket.recv() => {

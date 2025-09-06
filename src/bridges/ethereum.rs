@@ -404,7 +404,9 @@ impl EthereumBridge {
     async fn simulate_contract_deployment(&self, _deployment_data: &[u8]) -> Result<String> {
         // In production, this would actually deploy to Ethereum
         // For now, generate a mock contract address
-        Ok(format!("0x{:040x}", rand::random::<u128>()))
+        // Use cryptographically secure random bytes for tx id
+        let bytes: [u8; 32] = crate::crypto::GameCrypto::random_bytes();
+        Ok(format!("0x{}", hex::encode(bytes)))
     }
 
     async fn create_lock_transaction_data(
@@ -508,7 +510,8 @@ impl EthereumBridge {
         // 3. Return the transaction hash
         
         // For now, generate a mock transaction hash
-        Ok(format!("0x{:064x}", rand::random::<u64>()))
+        let bytes: [u8; 32] = crate::crypto::GameCrypto::random_bytes();
+        Ok(format!("0x{}", hex::encode(bytes)))
     }
 
     async fn call_contract(&self, _call_data: &[u8]) -> Result<Vec<u8>> {

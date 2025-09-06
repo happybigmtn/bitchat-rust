@@ -86,6 +86,8 @@ pub struct ConsensusGameConfig {
     pub min_participants: usize,
     /// Maximum bet amount in CRAP tokens
     pub max_bet_amount: u64,
+    /// Prefer VRF-based randomness when available
+    pub use_vrf: bool,
 }
 
 impl Default for ConsensusGameConfig {
@@ -96,6 +98,7 @@ impl Default for ConsensusGameConfig {
             max_concurrent_games: 10,
             min_participants: 2,
             max_bet_amount: 1000,
+            use_vrf: false,
         }
     }
 }
@@ -788,14 +791,41 @@ impl ConsensusGameManager {
             ));
         }
 
-        // Generate dice roll
-        let dice_roll = DiceRoll::generate();
+        // Generate dice roll using configured randomness (VRF preferred if enabled)
+        let round_id = self.generate_round_id();
+        let (dice_roll, proof_json_opt) = {
+            #[allow(unused)]
+            use crate::protocol_randomness::{RandomnessProvider, VrfProvider, RandomnessProof};
+            // Prefer VRF if compiled and configured; seed from identity for determinism in tests
+            let use_vrf = self.config.use_vrf;
+            if use_vrf {
+                let seed = u64::from_le_bytes(self.identity.keypair.public_key_bytes()[0..8].try_into().unwrap_or([0u8;8]));
+                let provider = VrfProvider::from_seed(seed);
+                let (roll, proof) = provider.roll_with_proof(round_id, game_id);
+                let proof_json = match proof {
+                    RandomnessProof::VRF { input, output, proof, pk } => {
+                        // simple JSON bundle
+                        serde_json::to_string(&serde_json::json!({
+                            "type":"vrf","input": hex::encode(input),
+                            "output": hex::encode(output),
+                            "proof": hex::encode(proof),
+                            "pk": hex::encode(pk)
+                        })).unwrap_or_default()
+                    }
+                    _ => String::new(),
+                };
+                (roll, Some(proof_json))
+            } else {
+                let roll = DiceRoll::generate();
+                (roll, None)
+            }
+        };
 
         // Create operation
         let operation = GameOperation::ProcessRoll {
-            round_id: self.generate_round_id(),
+            round_id,
             dice_roll,
-            entropy_proof: vec![], // Simplified - would include cryptographic proof
+            entropy_proof: if let Some(ref pj) = proof_json_opt { vec![crate::crypto::GameCrypto::hash(pj.as_bytes())] } else { vec![] },
         };
 
         // Submit through consensus
@@ -808,7 +838,23 @@ impl ConsensusGameManager {
             roll: dice_roll,
         });
 
+        // Record metric
+        #[cfg(feature = "monitoring")]
+        crate::monitoring::record_game_event("dice_rolled", &format!("{:?}", game_id));
+
         log::info!("Rolled dice: {} in game {:?}", dice_roll, game_id);
+        
+        // Fire-and-forget: store randomness proof bundle in GameEngine HTTP (if available)
+        if let Some(proof_json) = proof_json_opt {
+            let game_hex = hex::encode(game_id);
+            let url = format!("http://127.0.0.1:8081/api/v1/games/{}/randomness/{}", game_hex, round_id);
+            let task_name = format!("set_randomness_proof_{}_{}", game_hex, round_id);
+            let body = serde_json::json!({"proof_json": proof_json});
+            crate::utils::task_tracker::spawn_tracked(task_name, crate::utils::task_tracker::TaskType::Network, async move {
+                let client = reqwest::Client::new();
+                let _ = client.post(&url).json(&body).send().await;
+            }).await;
+        }
         Ok(dice_roll)
     }
 

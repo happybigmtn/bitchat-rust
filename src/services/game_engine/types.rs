@@ -145,6 +145,9 @@ pub struct GetGameStateRequest {
 pub struct GetGameStateResponse {
     pub session_info: GameSessionInfo,
     pub valid_actions: std::collections::HashMap<PeerId, Vec<GameAction>>,
+    pub sequence: Option<u64>,
+    /// Optional quorum certificate bytes for the sequence (base64 in JSON)
+    pub qc: Option<Vec<u8>>,
 }
 
 /// List games request

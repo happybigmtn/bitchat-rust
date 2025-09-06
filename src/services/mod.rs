@@ -225,7 +225,10 @@ impl ServiceBuilder {
         
         // Set up gateway if configured
         #[cfg(feature = "api-gateway")]
-        if let Some(config) = self.gateway_config {
+        if let Some(mut config) = self.gateway_config {
+            // Thread region_self from global config if available via discovery, else leave None
+            // (Assumes discovery might carry app-level config; skip if not available)
+            // Keep default lb_strategy from config
             let gateway = ApiGateway::new(config);
             orchestrator.with_gateway(gateway);
         }

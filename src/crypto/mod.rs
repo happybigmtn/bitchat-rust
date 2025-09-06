@@ -11,6 +11,7 @@
 pub mod encryption;
 pub mod hsm;
 pub mod random;
+pub mod vrf;
 pub mod safe_arithmetic;
 pub mod secure_keystore;
 pub mod simd_acceleration;

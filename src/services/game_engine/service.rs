@@ -21,8 +21,10 @@ pub struct GameEngineService {
     engine: Arc<CrapsGameEngine>,
     sessions: Arc<DashMap<GameId, Arc<RwLock<GameSessionData>>>>,
     stats: Arc<GameServiceStats>,
-    shutdown_tx: Option<mpsc::UnboundedSender<()>>,
+    shutdown_tx: Option<mpsc::Sender<()>>,
     event_tx: broadcast::Sender<GameEvent>,
+    /// In-memory randomness proof store keyed by (game_id, round)
+    randomness_proofs: Arc<DashMap<(GameId, u64), String>>,
 }
 
 /// Internal session data
@@ -31,6 +33,8 @@ struct GameSessionData {
     info: GameSessionInfo,
     game_state: CrapsGame,
     last_activity: Instant,
+    /// Monotonic sequence for state changes (used by fast sync/QC lookup)
+    sequence: u64,
 }
 
 /// Service statistics
@@ -74,7 +78,7 @@ impl GameEngineService {
     /// Create a new game engine service
     pub fn new(config: GameEngineConfig) -> Self {
         let engine = Arc::new(CrapsGameEngine::new(config.clone()));
-        let sessions = Arc::new(DashMap::new());
+        let sessions = Arc::new(DashMap::with_capacity(1024));
         let stats = Arc::new(GameServiceStats::new());
         let (event_tx, _rx) = broadcast::channel(1024);
         
@@ -85,12 +89,14 @@ impl GameEngineService {
             stats,
             shutdown_tx: None,
             event_tx,
+            randomness_proofs: Arc::new(DashMap::new()),
         }
     }
     
     /// Start the service
     pub async fn start(&mut self) -> Result<()> {
-        let (shutdown_tx, mut shutdown_rx) = mpsc::unbounded_channel();
+        // Use bounded channel to avoid unbounded growth
+        let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
         self.shutdown_tx = Some(shutdown_tx);
         
         // Start background tasks
@@ -116,6 +122,16 @@ impl GameEngineService {
         log::info!("Game Engine Service started");
         Ok(())
     }
+
+    /// Store randomness proof bundle (JSON) for a given game round
+    pub async fn set_randomness_proof(&self, game_id: GameId, round: u64, proof_json: String) {
+        self.randomness_proofs.insert((game_id, round), proof_json);
+    }
+
+    /// Retrieve randomness proof bundle if present
+    pub async fn get_randomness_proof(&self, game_id: GameId, round: u64) -> Option<String> {
+        self.randomness_proofs.get(&(game_id, round)).map(|v| v.value().clone())
+    }
     
     /// Stop the service
     pub async fn stop(&mut self) -> Result<()> {
@@ -140,6 +156,7 @@ impl GameEngineService {
             info: session_info.clone(),
             game_state,
             last_activity: Instant::now(),
+            sequence: 0,
         };
         
         self.sessions.insert(game_id, Arc::new(RwLock::new(session_data)));
@@ -179,6 +196,8 @@ impl GameEngineService {
         session_data.info.phase = session_data.game_state.phase;
         session_data.info.update_activity();
         session_data.last_activity = Instant::now();
+        // Increment sequence to reflect a new applied action
+        session_data.sequence = session_data.sequence.saturating_add(1);
         
         // Check if game is complete
         if self.engine.is_game_complete(&session_data.game_state) {
@@ -231,6 +250,8 @@ impl GameEngineService {
         Ok(GetGameStateResponse {
             session_info: session_data.info.clone(),
             valid_actions,
+            sequence: Some(session_data.sequence),
+            qc: None,
         })
     }
     

@@ -19,17 +19,25 @@ Progress Tracker
 - [x] Integrate aggregator into gateway fan-in → consensus op with Merkle root
 - [x] Inclusion proof endpoint (per-player bet proof) [Merkle branch implemented]
 - [x] Payout batch op endpoint (gateway → consensus propose)
-- [ ] Regional gateways + sticky routing + health-aware LB
-- [ ] Randomness orchestration (validator commit-reveal timeouts/penalties) + VRF fallback
-- [ ] Observability: latency histograms, SLO dashboards, alerts
-- [ ] Admin auth/RBAC + rate-limits/micro-fees for anti-spam
+- [x] Regional gateways + sticky routing + health-aware LB
+- [x] Randomness orchestration (validator commit-reveal windows + evidence) + VRF fallback
+- [x] Observability: latency histograms, SLO dashboards, alerts
+- [x] Admin auth/RBAC + rate-limits/micro-fees for anti-spam
+
+Hardening (Predicted Issues Alignment)
+
+- [ ] Bound channels audit: replace remaining `unbounded_channel` with bounded MPSC (WebRTC done)
+- [ ] HashMap capacity audit: add capacities on hot-path maps (top 20 callsites)
+- [ ] Remove `panic!` in production paths; return errors + log
+- [ ] Track background tasks via `spawn_tracked` (audit remaining `tokio::spawn`)
+- [x] Prometheus metrics for queue depths and latencies to back Grafana panels
 
 Immediate Next Tasks (Priority)
 
 - [ ] Randomness orchestration: timers, evidence, SDK verify, API surface
-- [ ] Regional LB scaffolding: registry, geo extraction, sticky hash ring
-- [ ] Observability slices: trace ratio wiring, key histograms, dashboards
-- [ ] Admin RBAC scaffolding: roles map, audit log file, admin endpoints
+- [x] Regional LB scaffolding: registry, geo extraction, sticky hash ring
+- [x] Observability slices: trace ratio wiring, key histograms, dashboards
+- [x] Admin RBAC scaffolding: roles map, audit log file, admin endpoints
 
 Overview
 
@@ -214,6 +222,19 @@ M9. Regional Gateways + Routing
 - Tests
   - Integration: `tests/region_routing.rs`
     - Clients pinned to nearest gateway; failover to next region on outage.
+
+M11. Latency Metrics + WS Scale
+
+- Changes
+  - Gateway metrics: add per-route and per-method counters, request latency histograms, WS broadcast latency histograms, subscriber counts, pending bet gauges.
+  - Aggregator: record propose timestamps; watcher tracks randomness proof availability to measure ingress→proof.
+  - Game Engine WS: wrap events with timestamps.
+  - SDK: end-to-end randomness verify combining proof fetch, hash compare, and VRF verify; example binary added.
+
+- Tests
+  - Integration: `tests/metrics_visibility.rs`
+    - Scrape `/metrics` and assert presence of counters and histograms with non-zero buckets under load.
+  - Load: run `examples/gateway_load.rs` and `gateway_ws_subscribe.rs` to validate metric changes under traffic.
 
 M10. Long‑Term: Committee Rotation (Optional)
 

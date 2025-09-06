@@ -101,26 +101,36 @@ impl ApiGateway {
         self.setup_default_routes().await?;
         
         // Start background services
-        let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel(1);
         self.shutdown_tx = Some(shutdown_tx);
         
         // Start health checker
         let load_balancer = self.load_balancer.clone();
         let health_check_interval = self.config.service_discovery.health_check_interval;
-        tokio::spawn(async move {
+        crate::utils::task_tracker::spawn_tracked(
+            "gateway_health_checker".into(),
+            crate::utils::task_tracker::TaskType::Network,
+            async move {
             Self::run_health_checker(load_balancer, health_check_interval, shutdown_rx).await;
-        });
+        }).await;
 
         // Start metrics collector
         let metrics = self.metrics.clone();
         let request_counter = self.request_counter.clone();
-        tokio::spawn(async move {
-            Self::update_metrics(metrics, request_counter).await;
-        });
+        crate::utils::task_tracker::spawn_tracked(
+            "gateway_metrics_collector".into(),
+            crate::utils::task_tracker::TaskType::Network,
+            async move {
+                Self::update_metrics(metrics, request_counter).await;
+            }
+        ).await;
 
         // Start aggregator flush loop (fan-in to consensus)
         let lb_for_flush = self.load_balancer.clone();
-        tokio::spawn(async move {
+        crate::utils::task_tracker::spawn_tracked(
+            "gateway_aggregator_flush".into(),
+            crate::utils::task_tracker::TaskType::Network,
+            async move {
             let client = reqwest::Client::new();
             let mut tick = tokio::time::interval(Duration::from_millis(500));
             loop {
@@ -143,6 +153,9 @@ impl ApiGateway {
 
                     if let Some(instance) = lb_for_flush.get_instance("consensus").await {
                         let url = format!("http://{}/api/v1/consensus/propose", instance.endpoint.address);
+                        // record propose ts for ingress->proof latency
+                        let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
+                        crate::services::api_gateway::aggregate::record_propose_ts(game_id, round, now_ms);
                         let resp = client.post(&url).json(&req).send().await;
                         if resp.is_ok() {
                             // Clear this round and advance
@@ -152,13 +165,42 @@ impl ApiGateway {
                     }
                 }
             }
-        });
+        }).await;
+
+        // Background watcher: poll Game Engine for randomness proof availability and record latency
+        let metrics_for_proof = self.metrics.clone();
+        crate::utils::task_tracker::spawn_tracked(
+            "gateway_proof_latency_watcher".into(),
+            crate::utils::task_tracker::TaskType::Network,
+            async move {
+            let client = reqwest::Client::new();
+            let mut tick = tokio::time::interval(Duration::from_secs(1));
+            loop {
+                tick.tick().await;
+                let pending = crate::services::api_gateway::aggregate::list_pending_proposals();
+                for (game_id, round, ts_ms) in pending {
+                    let game_hex = hex::encode(game_id);
+                    let url = format!("http://127.0.0.1:8081/api/v1/games/{}/randomness/{}", game_hex, round);
+                    if let Ok(resp) = client.get(&url).send().await {
+                        if resp.status().is_success() {
+                            let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
+                            if now_ms >= ts_ms {
+                                let mut m = metrics_for_proof.write().await;
+                                m.record_ingress_to_proof_latency_ms((now_ms - ts_ms) as f64);
+                            }
+                            crate::services::api_gateway::aggregate::clear_proposal(game_id, round);
+                        }
+                    }
+                }
+            }
+        }).await;
 
         // Subscribe to consensus WS and re-publish to gateway broker (optional, behind ws-client)
         #[cfg(feature = "ws-client")]
         {
             let lb2 = self.load_balancer.clone();
             let broker = self.broker.clone();
+            let metrics = self.metrics.clone();
             tokio::spawn(async move {
                 use tokio_tungstenite::connect_async;
                 use url::Url;
@@ -172,7 +214,31 @@ impl ApiGateway {
                             while let Some(msg) = read.next().await {
                                 if let Ok(msg) = msg {
                                     if msg.is_text() {
-                                        broker.publish("consensus:events", msg.to_text().unwrap_or_default().to_string());
+                                        let txt = msg.to_text().unwrap_or_default().to_string();
+                                        // If this is a result with commit_time, record commit->broadcast latency and inject ts for fanout measurement
+                                        if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&txt) {
+                                            if val.get("type").and_then(|v| v.as_str()) == Some("result") {
+                                                if let Some(ct) = val.get("result").and_then(|r| r.get("commit_time")).and_then(|v| v.as_u64()) {
+                                                    let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+                                                    let commit_ms = ct.saturating_mul(1000);
+                                                    if now_ms >= commit_ms {
+                                                        let mut m = metrics.write().await;
+                                                        m.record_commit_to_broadcast_latency_ms((now_ms - commit_ms) as f64);
+                                                    }
+                                                }
+                                            }
+                                            // Add ts for WS fanout latency measurement
+                                            val["ts"] = serde_json::json!(
+                                                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()
+                                            );
+                                            if let Ok(with_ts) = serde_json::to_string(&val) {
+                                                broker.publish("consensus:events", with_ts);
+                                            } else {
+                                                broker.publish("consensus:events", txt);
+                                            }
+                                        } else {
+                                            broker.publish("consensus:events", txt);
+                                        }
                                     }
                                 } else { break; }
                             }
@@ -330,6 +396,9 @@ impl ApiGateway {
             config: self.config.clone(),
             broker: self.broker.clone(),
             registry: self.registry.clone(),
+            subscriber_counts: Arc::new(dashmap::DashMap::new()),
+            fee_bps_override: Arc::new(std::sync::atomic::AtomicU32::new(self.config.fee_bps)),
+            min_bet_override: Arc::new(std::sync::atomic::AtomicU64::new(self.config.min_bet_amount)),
         };
         
         AxumRouter::new()
@@ -343,6 +412,8 @@ impl ApiGateway {
             // Admin endpoints for gateway registry
             .route("/admin/gateways/register", axum::routing::post(admin_register_gateway))
             .route("/admin/gateways", axum::routing::get(admin_list_gateways))
+            .route("/admin/fees/policy", axum::routing::post(admin_update_fees))
+            .route("/admin/audit", axum::routing::get(admin_get_audit))
             .route("/api/*path", any(proxy_handler))
             .route("/*path", any(proxy_handler))
             .layer(
@@ -410,6 +481,10 @@ struct GatewayState {
     config: GatewayConfig,
     broker: SharedBroker,
     registry: Arc<RwLock<GatewayRegistry>>,
+    subscriber_counts: Arc<dashmap::DashMap<String, u64>>,
+    // Dynamic admin-configurable overrides
+    fee_bps_override: Arc<std::sync::atomic::AtomicU32>,
+    min_bet_override: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Health check endpoint
@@ -431,8 +506,115 @@ async fn health_handler(State(state): State<GatewayState>) -> impl IntoResponse 
 
 /// Metrics endpoint
 async fn metrics_handler(State(state): State<GatewayState>) -> impl IntoResponse {
-    let metrics = state.metrics.read().await.clone();
-    (StatusCode::OK, axum::Json(metrics))
+    // Expose simple Prometheus-style metrics for scraping
+    let m = state.metrics.read().await.clone();
+    let mut out = String::new();
+    use std::fmt::Write as _;
+    let _ = writeln!(out, "# HELP bitcraps_gateway_requests_total Total requests processed");
+    let _ = writeln!(out, "# TYPE bitcraps_gateway_requests_total counter");
+    let _ = writeln!(out, "bitcraps_gateway_requests_total {}", m.total_requests);
+    let _ = writeln!(out, "# HELP bitcraps_gateway_success_total Successful requests");
+    let _ = writeln!(out, "# TYPE bitcraps_gateway_success_total counter");
+    let _ = writeln!(out, "bitcraps_gateway_success_total {}", m.successful_requests);
+    let _ = writeln!(out, "# HELP bitcraps_gateway_failed_total Failed requests");
+    let _ = writeln!(out, "# TYPE bitcraps_gateway_failed_total counter");
+    let _ = writeln!(out, "bitcraps_gateway_failed_total {}", m.failed_requests);
+    let _ = writeln!(out, "# HELP bitcraps_gateway_rate_limited_total Rate limited requests");
+    let _ = writeln!(out, "# TYPE bitcraps_gateway_rate_limited_total counter");
+    let _ = writeln!(out, "bitcraps_gateway_rate_limited_total {}", m.rate_limited_requests);
+    let _ = writeln!(out, "# HELP bitcraps_gateway_circuit_open_total Circuit breaker opens");
+    let _ = writeln!(out, "# TYPE bitcraps_gateway_circuit_open_total counter");
+    let _ = writeln!(out, "bitcraps_gateway_circuit_open_total {}", m.circuit_breaker_open_count);
+    let _ = writeln!(out, "# HELP bitcraps_gateway_avg_response_ms Average response time (EMA)");
+    let _ = writeln!(out, "# TYPE bitcraps_gateway_avg_response_ms gauge");
+    let _ = writeln!(out, "bitcraps_gateway_avg_response_ms {:.3}", m.average_response_time);
+    let _ = writeln!(out, "# HELP bitcraps_gateway_rps Requests per second");
+    let _ = writeln!(out, "# TYPE bitcraps_gateway_rps gauge");
+    let _ = writeln!(out, "bitcraps_gateway_rps {:.3}", m.requests_per_second);
+    // Betting economics counters
+    let _ = writeln!(out, "# HELP bitcraps_gateway_bets_accepted_total Total bets accepted by gateway");
+    let _ = writeln!(out, "# TYPE bitcraps_gateway_bets_accepted_total counter");
+    let _ = writeln!(out, "bitcraps_gateway_bets_accepted_total {}", m.bets_accepted_total);
+    let _ = writeln!(out, "# HELP bitcraps_gateway_fees_collected_total Total fees collected (base units)");
+    let _ = writeln!(out, "# TYPE bitcraps_gateway_fees_collected_total counter");
+    let _ = writeln!(out, "bitcraps_gateway_fees_collected_total {}", m.fees_collected_total);
+    // Per-route counters
+    let _ = writeln!(out, "# HELP bitcraps_gateway_requests_by_route_total Total requests by route");
+    let _ = writeln!(out, "# TYPE bitcraps_gateway_requests_by_route_total counter");
+    for (route, count) in m.route_counts.iter() {
+        let _ = writeln!(out, "bitcraps_gateway_requests_by_route_total{{route=\"{}\"}} {}", route.replace('"', "\""), count);
+    }
+    // Per-route-method counters
+    let _ = writeln!(out, "# HELP bitcraps_gateway_requests_by_route_method_total Total requests by route and method");
+    let _ = writeln!(out, "# TYPE bitcraps_gateway_requests_by_route_method_total counter");
+    for ((route, method), count) in m.route_method_counts.iter() {
+        let _ = writeln!(out, "bitcraps_gateway_requests_by_route_method_total{{route=\"{}\",method=\"{}\"}} {}", route.replace('"', "\""), method, count);
+    }
+    // Per-route latency histogram (cumulative buckets)
+    let _ = writeln!(out, "# HELP bitcraps_gateway_request_latency_ms Request latency histogram (ms)");
+    let _ = writeln!(out, "# TYPE bitcraps_gateway_request_latency_ms histogram");
+    for (route, buckets) in m.route_latency_buckets.iter() {
+        let labels = format!("route=\"{}\"", route.replace('"', "\\\""));
+        let thresholds = [50u64, 100, 200, 500, 1000, 2000, 5000];
+        let mut cumulative = 0u64;
+        for (i, le) in thresholds.iter().enumerate() {
+            cumulative += buckets[i];
+            let _ = writeln!(out, "bitcraps_gateway_request_latency_ms_bucket{{{},le=\"{}\"}} {}", labels, le, cumulative);
+        }
+        // +Inf bucket
+        let total: u64 = buckets.iter().sum();
+        let _ = writeln!(out, "bitcraps_gateway_request_latency_ms_bucket{{{},le=\"+Inf\"}} {}", labels, total);
+        // Optional sum/count could be added; omitted for simplicity
+    }
+    // Ingress->proof latency histogram
+    let _ = writeln!(out, "# HELP bitcraps_gateway_ingress_to_proof_ms Ingress to proof availability latency (ms)");
+    let _ = writeln!(out, "# TYPE bitcraps_gateway_ingress_to_proof_ms histogram");
+    let thresholds = [50u64, 100, 200, 500, 1000, 2000, 5000];
+    let mut cumulative = 0u64;
+    for (i, le) in thresholds.iter().enumerate() {
+        cumulative += m.ingress_to_proof_latency_buckets[i];
+        let _ = writeln!(out, "bitcraps_gateway_ingress_to_proof_ms_bucket{{le=\"{}\"}} {}", le, cumulative);
+    }
+    let total: u64 = m.ingress_to_proof_latency_buckets.iter().sum();
+    let _ = writeln!(out, "bitcraps_gateway_ingress_to_proof_ms_bucket{{le=\"+Inf\"}} {}", total);
+    // Commit->broadcast latency histogram
+    let _ = writeln!(out, "# HELP bitcraps_gateway_commit_to_broadcast_ms Consensus commit to gateway broadcast latency (ms)");
+    let _ = writeln!(out, "# TYPE bitcraps_gateway_commit_to_broadcast_ms histogram");
+    let thresholds = [50u64, 100, 200, 500, 1000, 2000, 5000];
+    let mut cumulative2 = 0u64;
+    for (i, le) in thresholds.iter().enumerate() {
+        cumulative2 += m.commit_to_broadcast_latency_buckets[i];
+        let _ = writeln!(out, "bitcraps_gateway_commit_to_broadcast_ms_bucket{{le=\"{}\"}} {}", le, cumulative2);
+    }
+    let total2: u64 = m.commit_to_broadcast_latency_buckets.iter().sum();
+    let _ = writeln!(out, "bitcraps_gateway_commit_to_broadcast_ms_bucket{{le=\"+Inf\"}} {}", total2);
+    // WS fan-out latency histogram per topic
+    let _ = writeln!(out, "# HELP bitcraps_gateway_ws_broadcast_latency_ms WS broadcast latency histogram (ms)");
+    let _ = writeln!(out, "# TYPE bitcraps_gateway_ws_broadcast_latency_ms histogram");
+    for (topic, buckets) in m.fanout_latency_buckets.iter() {
+        let labels = format!("topic=\"{}\"", topic.replace('"', "\\\""));
+        let thresholds = [50u64, 100, 200, 500, 1000, 2000, 5000];
+        let mut cumulative = 0u64;
+        for (i, le) in thresholds.iter().enumerate() {
+            cumulative += buckets[i];
+            let _ = writeln!(out, "bitcraps_gateway_ws_broadcast_latency_ms_bucket{{{},le=\"{}\"}} {}", labels, le, cumulative);
+        }
+        let total: u64 = buckets.iter().sum();
+        let _ = writeln!(out, "bitcraps_gateway_ws_broadcast_latency_ms_bucket{{{},le=\"+Inf\"}} {}", labels, total);
+    }
+    // WS subscriber counts
+    let _ = writeln!(out, "# HELP bitcraps_gateway_ws_subscribers Current WS subscribers by topic");
+    let _ = writeln!(out, "# TYPE bitcraps_gateway_ws_subscribers gauge");
+    for entry in state.subscriber_counts.iter() {
+        let _ = writeln!(out, "bitcraps_gateway_ws_subscribers{{topic=\"{}\"}} {}", entry.key(), entry.value());
+    }
+    // Pending bets per game/round
+    let _ = writeln!(out, "# HELP bitcraps_gateway_pending_bets_total Pending bets awaiting aggregation");
+    let _ = writeln!(out, "# TYPE bitcraps_gateway_pending_bets_total gauge");
+    for (game, round, count) in crate::services::api_gateway::aggregate::list_pending_bets() {
+        let _ = writeln!(out, "bitcraps_gateway_pending_bets_total{{game=\"{}\",round=\"{}\"}} {}", hex::encode(game), round, count);
+    }
+    (StatusCode::OK, out)
 }
 
 #[derive(serde::Deserialize)]
@@ -450,14 +632,30 @@ fn default_capacity() -> u32 { 100 }
 /// Admin: register or update a gateway in the registry
 async fn admin_register_gateway(
     State(state): State<GatewayState>,
+    headers: HeaderMap,
     axum::extract::Json(req): axum::extract::Json<RegisterGatewayReq>,
 ) -> impl IntoResponse {
+    // Require API key with permission "admin:gateways"
+    let api_key = headers.get("x-api-key").and_then(|h| h.to_str().ok());
+    let has_perm = api_key.and_then(|k| state.config.auth.api_keys.get(k))
+        .map(|info| info.permissions.iter().any(|p| p == "admin:gateways")).unwrap_or(false);
+    if !has_perm {
+        return (StatusCode::UNAUTHORIZED, axum::Json(serde_json::json!({"error":"admin permission required"}))).into_response();
+    }
+    // Minimal RBAC: require X-API-Key with permission containing "admin:gateways"
+    // (Auth middleware not used here because this is an internal admin route.)
+    // For now, enforce via header presence to avoid large refactor.
+    // NOTE: Replace with proper middleware in a follow-up.
+    // If missing, return 401.
+    // We don't have direct headers here; consider making this a middleware later.
     let mut reg = state.registry.write().await;
     let mut info = GatewayInfo::new(req.id, req.region);
     info.weight = req.weight;
     info.capacity_score = req.capacity_score;
     info.ws_topics_supported = req.ws_topics_supported;
     reg.register(info);
+    // Audit log
+    log_admin_action(&state, "gateways/register", api_key.map(|s| s.to_string()), serde_json::to_value(&req).unwrap_or(serde_json::json!({}))).await;
     (StatusCode::OK, axum::Json(serde_json::json!({"ok": true})))
 }
 
@@ -579,11 +777,14 @@ async fn proxy_handler(
     }
     
     // Get service instance (prefer region if supplied via header, else sticky by client IP)
-    let preferred_region = headers
-        .get("x-region")
-        .and_then(|h| h.to_str().ok())
-        .map(|s| s.trim().to_lowercase())
-        .filter(|s| !s.is_empty())
+    let preferred_region = context.region_claim.clone()
+        .or_else(|| headers
+            .get("x-region")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty()))
+        .or_else(|| headers.get("x-jwt-region").and_then(|h| h.to_str().ok()).map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()))
+        .or_else(|| headers.get("x-region-claim").and_then(|h| h.to_str().ok()).map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()))
         .or_else(|| state.config.region_self.clone());
     let instance = match state
         .load_balancer
@@ -624,6 +825,9 @@ async fn proxy_handler(
     // Update metrics
     let mut metrics = state.metrics.write().await;
     metrics.record_request(success, elapsed);
+    metrics.record_route(&route.path);
+    metrics.record_route_method(&route.path, &method.to_string());
+    metrics.record_latency_ms(&route.path, elapsed.as_millis() as f64);
     drop(metrics);
     
     match response_result {
@@ -669,9 +873,23 @@ async fn post_bet_handler(
     if bt.is_none() || body.amount == 0 { return (StatusCode::BAD_REQUEST, axum::Json(GatewayResponse::<serde_json::Value>::error("invalid bet".into(), uuid::Uuid::new_v4().to_string()))).into_response(); }
     let bt = bt.unwrap();
 
+    // Enforce min bet and compute fee
+    let min_bet = state.min_bet_override.load(std::sync::atomic::Ordering::Relaxed);
+    if body.amount < min_bet {
+        return (StatusCode::BAD_REQUEST, axum::Json(GatewayResponse::<serde_json::Value>::error("amount below minimum".into(), uuid::Uuid::new_v4().to_string()))).into_response();
+    }
+    let fee_bps = state.fee_bps_override.load(std::sync::atomic::Ordering::Relaxed);
+    let fee = (body.amount as u128 * fee_bps as u128) / 10_000u128;
+    let amount_after_fee = body.amount.saturating_sub(fee as u64);
+    // Update economics metrics
+    {
+        let mut m = state.metrics.write().await;
+        m.record_bet_and_fee(fee as u64);
+    }
+
     // Add to aggregator with current round
     let round = crate::services::api_gateway::aggregate::current_round(gid);
-    crate::services::api_gateway::aggregate::add_bet(gid, round, player, bt, crate::protocol::craps::CrapTokens(body.amount));
+    crate::services::api_gateway::aggregate::add_bet(gid, round, player, bt, crate::protocol::craps::CrapTokens(amount_after_fee));
 
     // Publish event to broker
     let evt = serde_json::json!({
@@ -680,7 +898,9 @@ async fn post_bet_handler(
         "player_id_hex": body.player_id_hex,
         "bet_type": body.bet_type,
         "amount": body.amount,
+        "fee": fee as u64,
         "round": round,
+        "ts": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(),
     });
     state.broker.publish(&format!("game:{}:events", id), evt.to_string());
 
@@ -731,7 +951,9 @@ async fn ws_gateway_subscribe(
     AxumQuery(q): AxumQuery<SubQuery>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_gateway_ws(socket, state, q.topic))
+    let topic = q.topic.clone();
+    state.subscriber_counts.entry(topic.clone()).and_modify(|v| *v += 1).or_insert(1);
+    ws.on_upgrade(move |socket| handle_gateway_ws(socket, state, topic))
 }
 
 #[derive(serde::Deserialize)]
@@ -773,6 +995,7 @@ async fn post_payouts_handler(
                 state.broker.publish(&format!("game:{}:events", id), serde_json::json!({
                     "type": "payouts_submitted",
                     "status": status.as_u16(),
+                    "ts": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(),
                 }).to_string());
                 return (StatusCode::OK, axum::Json(serde_json::json!({"status": status.as_u16(), "resp": text }))).into_response();
             }
@@ -792,6 +1015,15 @@ async fn handle_gateway_ws(mut socket: WebSocket, state: GatewayState, topic: St
     loop {
         tokio::select! {
             Ok(msg) = rx.recv() => {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&msg) {
+                    if let Some(ts) = val.get("ts").and_then(|v| v.as_u64()) {
+                        let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+                        if now_ms >= ts {
+                            let mut m = state.metrics.write().await;
+                            m.record_fanout_latency_ms(&topic, (now_ms - ts) as f64);
+                        }
+                    }
+                }
                 if socket.send(Message::Text(msg)).await.is_err() { break; }
             }
             Some(Ok(Message::Close(_))) = socket.recv() => { break; }
@@ -800,6 +1032,74 @@ async fn handle_gateway_ws(mut socket: WebSocket, state: GatewayState, topic: St
             else => break,
         }
     }
+    if let Some(mut entry) = state.subscriber_counts.get_mut(&topic) {
+        let v = *entry.value();
+        *entry.value_mut() = v.saturating_sub(1);
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct FeesPolicyBody { fee_bps: Option<u32>, min_bet_amount: Option<u64> }
+
+/// Admin: update fees policy (RBAC: requires permission "admin:fees")
+async fn admin_update_fees(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    axum::Json(body): axum::Json<FeesPolicyBody>,
+) -> impl IntoResponse {
+    let api_key = headers.get("x-api-key").and_then(|h| h.to_str().ok());
+    let has_perm = api_key.and_then(|k| state.config.auth.api_keys.get(k))
+        .map(|info| info.permissions.iter().any(|p| p == "admin:fees")).unwrap_or(false);
+    if !has_perm {
+        return (StatusCode::UNAUTHORIZED, axum::Json(serde_json::json!({"error":"admin permission required"}))).into_response();
+    }
+    if let Some(fee) = body.fee_bps { state.fee_bps_override.store(fee, std::sync::atomic::Ordering::Relaxed); }
+    if let Some(minb) = body.min_bet_amount { state.min_bet_override.store(minb, std::sync::atomic::Ordering::Relaxed); }
+    // Audit log
+    log_admin_action(&state, "fees/policy", api_key.map(|s| s.to_string()), serde_json::to_value(&body).unwrap_or(serde_json::json!({}))).await;
+    (StatusCode::OK, axum::Json(serde_json::json!({"ok": true,"fee_bps": state.fee_bps_override.load(std::sync::atomic::Ordering::Relaxed), "min_bet_amount": state.min_bet_override.load(std::sync::atomic::Ordering::Relaxed)}))).into_response()
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct AuditEntry { ts_ms: u128, action: String, api_key: Option<String>, payload: serde_json::Value }
+
+static AUDIT_LOG: once_cell::sync::Lazy<dashmap::DashMap<u128, AuditEntry>> = once_cell::sync::Lazy::new(|| dashmap::DashMap::new());
+
+async fn log_admin_action(state: &GatewayState, action: &str, api_key: Option<String>, payload: serde_json::Value) {
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
+    AUDIT_LOG.insert(ts, AuditEntry { ts_ms: ts, action: action.to_string(), api_key, payload });
+    // Keep last 1000
+    if AUDIT_LOG.len() > 1000 {
+        if let Some(oldest) = AUDIT_LOG.iter().map(|e| *e.key()).min() { AUDIT_LOG.remove(&oldest); }
+    }
+    // Optional: append JSON line to audit file if GATEWAY_AUDIT_LOG is set
+    if let Ok(path) = std::env::var("GATEWAY_AUDIT_LOG") {
+        if !path.is_empty() {
+            let entry = AUDIT_LOG.get(&ts).map(|e| e.value().clone());
+            if let Some(entry) = entry {
+                if let Ok(s) = serde_json::to_string(&entry) {
+                    let _ = std::fs::OpenOptions::new().create(true).append(true).open(&path)
+                        .and_then(|mut f| {
+                            use std::io::Write as _;
+                            writeln!(f, "{}", s)
+                        });
+                }
+            }
+        }
+    }
+}
+
+/// Admin: retrieve recent audit entries (requires permission "admin:audit")
+async fn admin_get_audit(State(state): State<GatewayState>, headers: HeaderMap) -> impl IntoResponse {
+    let api_key = headers.get("x-api-key").and_then(|h| h.to_str().ok());
+    let has_perm = api_key.and_then(|k| state.config.auth.api_keys.get(k))
+        .map(|info| info.permissions.iter().any(|p| p == "admin:audit")).unwrap_or(false);
+    if !has_perm {
+        return (StatusCode::UNAUTHORIZED, axum::Json(serde_json::json!({"error":"admin permission required"}))).into_response();
+    }
+    let mut entries: Vec<_> = AUDIT_LOG.iter().map(|e| e.value().clone()).collect();
+    entries.sort_by_key(|e| e.ts_ms);
+    (StatusCode::OK, axum::Json(serde_json::json!({"entries": entries}))).into_response()
 }
 
 /// Request middleware for logging and context

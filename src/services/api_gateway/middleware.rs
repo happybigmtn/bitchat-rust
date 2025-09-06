@@ -141,7 +141,7 @@ impl AuthMiddleware {
                 // Check if key is expired
                 if let Some(expires_at) = key_info.expires_at {
                     if SystemTime::now() > expires_at {
-                        return Err(Error::AuthenticationFailed("API key expired".to_string()));
+                        return Err(Error::Authentication("API key expired".to_string()));
                     }
                 }
                 
@@ -156,15 +156,16 @@ impl AuthMiddleware {
             match self.validate_jwt(&token) {
                 Ok(claims) => {
                     context.peer_id = claims.peer_id;
+                    context.region_claim = claims.region.clone();
                     return Ok(());
                 },
                 Err(e) => {
-                    return Err(Error::AuthenticationFailed(format!("Invalid JWT: {}", e)));
+                    return Err(Error::Authentication(format!("Invalid JWT: {}", e)));
                 }
             }
         }
         
-        Err(Error::AuthenticationFailed("No valid authentication provided".to_string()))
+        Err(Error::Authentication("No valid authentication provided".to_string()))
     }
     
     fn extract_api_key(&self, headers: &HeaderMap) -> Option<String> {
@@ -180,9 +181,23 @@ impl AuthMiddleware {
             .map(|s| s.to_string())
     }
     
-    fn validate_jwt(&self, _token: &str) -> Result<JwtClaims> {
-        // Stubbed out to avoid external dependency; always fail until JWT is wired
-        Err(Error::AuthenticationFailed("JWT validation not implemented".to_string()))
+    fn validate_jwt(&self, token: &str) -> Result<JwtClaims> {
+        // Validate HMAC-SHA256 JWT using configured secret
+        #[derive(serde::Deserialize)]
+        struct Claims { sub: Option<String>, exp: Option<usize>, region: Option<String> }
+        use jsonwebtoken::{DecodingKey, Validation, Algorithm, decode};
+        let mut validation = Validation::new(Algorithm::HS256);
+        validation.validate_exp = true;
+        let key = DecodingKey::from_secret(self.config.jwt_secret.as_bytes());
+        let data = decode::<Claims>(token, &key, &validation)
+            .map_err(|e| Error::Authentication(format!("JWT decode error: {}", e)))?;
+        // Map claims to JwtClaims
+        let peer_id = if let Some(sub) = data.claims.sub.as_ref() {
+            if let Ok(bytes) = hex::decode(sub) { if bytes.len()==32 { let mut p=[0u8;32]; p.copy_from_slice(&bytes); Some(p) } else { None } }
+            else { None }
+        } else { None };
+        let expires_at = data.claims.exp.unwrap_or(0) as u64;
+        Ok(JwtClaims { peer_id, expires_at, region: data.claims.region.clone() })
     }
 }
 
@@ -191,6 +206,7 @@ impl AuthMiddleware {
 struct JwtClaims {
     peer_id: Option<PeerId>,
     expires_at: u64,
+    region: Option<String>,
 }
 
 #[cfg(test)]

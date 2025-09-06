@@ -182,7 +182,8 @@ impl BitCrapsApp {
         ));
 
         // Create consensus game manager
-        let game_config = ConsensusGameConfig::default();
+        let mut game_config = ConsensusGameConfig::default();
+        game_config.use_vrf = config.randomness_use_vrf.unwrap_or(false);
         let consensus_game_manager = Arc::new(ConsensusGameManager::new(
             identity.clone(),
             mesh_service.clone(),

@@ -1,0 +1,11 @@
+{
+  "title": "BitCraps Operations",
+  "panels": [
+    {"type": "stat", "title": "Requests/s", "targets": [], "gridPos": {"w": 6, "h": 3, "x": 0, "y": 0}},
+    {"type": "graph", "title": "Ingress→Commit Latency p50/p95/p99", "targets": [], "gridPos": {"w": 12, "h": 8, "x": 0, "y": 3}},
+    {"type": "graph", "title": "Commit→Broadcast Latency", "targets": [], "gridPos": {"w": 12, "h": 8, "x": 12, "y": 3}},
+    {"type": "graph", "title": "WS Backlog by Shard", "targets": [], "gridPos": {"w": 12, "h": 8, "x": 0, "y": 11}}
+  ],
+  "time": {"from": "now-1h", "to": "now"}
+}
+

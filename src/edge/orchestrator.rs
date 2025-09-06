@@ -219,8 +219,8 @@ pub struct EdgeOrchestrator {
     slas: Arc<RwLock<HashMap<Uuid, ServiceLevelAgreement>>>,
     
     /// Event channel for orchestration events
-    event_tx: mpsc::UnboundedSender<OrchestrationEvent>,
-    event_rx: Arc<Mutex<mpsc::UnboundedReceiver<OrchestrationEvent>>>,
+    event_tx: mpsc::Sender<OrchestrationEvent>,
+    event_rx: Arc<Mutex<mpsc::Receiver<OrchestrationEvent>>>,
     
     /// Configuration
     config: OrchestratorConfig,
@@ -263,14 +263,14 @@ impl Default for OrchestratorConfig {
 impl EdgeOrchestrator {
     /// Create new edge orchestrator
     pub fn new(config: OrchestratorConfig) -> Self {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = mpsc::channel(1024);
         
         Self {
-            clusters: Arc::new(RwLock::new(HashMap::new())),
-            nodes: Arc::new(RwLock::new(HashMap::new())),
-            workloads: Arc::new(RwLock::new(HashMap::new())),
-            placements: Arc::new(RwLock::new(HashMap::new())),
-            slas: Arc::new(RwLock::new(HashMap::new())),
+            clusters: Arc::new(RwLock::new(HashMap::with_capacity(64))),
+            nodes: Arc::new(RwLock::new(HashMap::with_capacity(1024))),
+            workloads: Arc::new(RwLock::new(HashMap::with_capacity(1024))),
+            placements: Arc::new(RwLock::new(HashMap::with_capacity(2048))),
+            slas: Arc::new(RwLock::new(HashMap::with_capacity(128))),
             event_tx,
             event_rx: Arc::new(Mutex::new(event_rx)),
             config,

@@ -274,14 +274,15 @@ pub struct SignalingClient {
     server_url: String,
     local_peer_id: PeerId,
     connection: Option<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>,
-    message_sender: mpsc::UnboundedSender<SignalingMessage>,
-    message_receiver: Arc<RwLock<mpsc::UnboundedReceiver<SignalingMessage>>>,
+    message_sender: mpsc::Sender<SignalingMessage>,
+    message_receiver: Arc<RwLock<mpsc::Receiver<SignalingMessage>>>,
     connected: bool,
 }
 
 impl SignalingClient {
     pub async fn new(server_url: String, local_peer_id: PeerId) -> Result<Self> {
-        let (message_sender, message_receiver) = mpsc::unbounded_channel();
+        // Use bounded channel to avoid unbounded memory growth
+        let (message_sender, message_receiver) = mpsc::channel(1024);
         
         Ok(Self {
             server_url,
@@ -344,8 +345,8 @@ pub struct WebRtcTransport {
     config: WebRtcConfig,
     peers: Arc<DashMap<PeerId, Arc<RwLock<PeerConnection>>>>,
     signaling_client: Option<Arc<RwLock<SignalingClient>>>,
-    event_sender: mpsc::UnboundedSender<TransportEvent>,
-    event_receiver: Arc<RwLock<mpsc::UnboundedReceiver<TransportEvent>>>,
+    event_sender: mpsc::Sender<TransportEvent>,
+    event_receiver: Arc<RwLock<mpsc::Receiver<TransportEvent>>>,
     stats: Arc<RwLock<WebRtcStats>>,
     running: Arc<RwLock<bool>>,
 }
@@ -353,7 +354,8 @@ pub struct WebRtcTransport {
 impl WebRtcTransport {
     /// Create a new WebRTC transport
     pub fn new(local_peer_id: PeerId, config: WebRtcConfig) -> Self {
-        let (event_sender, event_receiver) = mpsc::unbounded_channel();
+        // Use bounded channel for events to apply backpressure
+        let (event_sender, event_receiver) = mpsc::channel(4096);
 
         Self {
             local_peer_id,

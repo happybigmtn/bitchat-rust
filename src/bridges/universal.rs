@@ -984,12 +984,20 @@ impl UniversalBridge {
 
     async fn query_pool_liquidity(&self, _pool_config: &LiquidityPool) -> Result<u64> {
         // In production, query actual pool contracts
-        Ok(rand::random::<u64>() % 1_000_000 + 100_000)
+        use crate::crypto::GameCrypto;
+        // Use secure RNG and bound to range
+        let bytes = GameCrypto::random_bytes::<8>();
+        let mut v = u64::from_le_bytes(bytes);
+        v = v % 1_000_000 + 100_000;
+        Ok(v)
     }
 
     async fn calculate_pool_utilization(&self, _pool_config: &LiquidityPool) -> Result<f64> {
         // In production, calculate actual utilization
-        Ok(rand::random::<f64>() * 0.8) // 0-80% utilization
+        // Simulated utilization; keep deterministic-ish but not weak crypto sensitive
+        let b = crate::crypto::GameCrypto::random_bytes::<8>();
+        let v = (u64::from_le_bytes(b) as f64 / u64::MAX as f64) * 0.8;
+        Ok(v)
     }
 
     async fn update_network_connections(
@@ -1059,7 +1067,7 @@ impl UniversalBridge {
         let mut hasher = Sha256::new();
         hasher.update(b"cross_chain_message");
         hasher.update(&Self::current_timestamp().to_be_bytes());
-        hasher.update(&rand::random::<[u8; 16]>());
+            hasher.update(&crate::crypto::GameCrypto::random_bytes::<16>());
         
         let result = hasher.finalize();
         let mut id = [0u8; 32];
@@ -1072,7 +1080,7 @@ impl UniversalBridge {
         let mut hasher = Sha256::new();
         hasher.update(b"cross_chain_route");
         hasher.update(&Self::current_timestamp().to_be_bytes());
-        hasher.update(&rand::random::<[u8; 16]>());
+            hasher.update(&crate::crypto::GameCrypto::random_bytes::<16>());
         
         let result = hasher.finalize();
         let mut id = [0u8; 32];

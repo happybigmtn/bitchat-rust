@@ -455,7 +455,7 @@ impl OptimizedPBFTEngine {
         crypto: Arc<GameCrypto>,
         participants: Vec<PeerId>,
     ) -> Result<Self> {
-        let (message_sender, message_receiver) = mpsc::unbounded_channel();
+        let (message_sender, message_receiver) = mpsc::channel(8192);
         
         let cache_size = NonZeroUsize::new(config.signature_cache_size)
             .ok_or_else(|| Error::InvalidConfiguration("Cache size must be non-zero".to_string()))?;

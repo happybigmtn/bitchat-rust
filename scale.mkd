@@ -1,0 +1,31 @@
+Scaling Plan Addendum (Active Development Notes)
+
+Focus Areas (Next 7–10 days)
+
+- VRF: finalize SDK verify + server endpoints
+  - [ ] Expose `GET /api/v1/games/{id}/randomness/{round}` returning VRF bundle
+  - [ ] SDK: fetch + verify bundle; compare hash in `ProcessRoll.entropy_proof`
+  - [ ] Negative tests for tampered proofs
+
+- Load/Scale testing
+  - [ ] Extend `examples/gateway_load.rs` to support WS subscribe load
+  - [ ] Add simple `--ramp` and `--duration` args
+  - [ ] Scripts for multi-process load
+
+- Observability wiring
+  - [ ] Emit gateway Prometheus metrics (done minimal); add per-route and per-service labels
+  - [ ] Add consensus/gateway histograms for ingress→commit and commit→broadcast
+  - [ ] Track WS topic subscriber counts and publish rates
+
+- Hardening (predicted issues)
+  - [ ] Bound channels audit: replace remaining `unbounded_channel`
+  - [ ] Capacity hints for hot-path HashMaps (top 20)
+  - [ ] Replace production `panic!` with error returns
+  - [ ] Audit `tokio::spawn` and switch to `spawn_tracked`
+
+Deliverables
+
+- Endpoint: randomness proof fetch
+- SDK: verify + examples
+- Metrics: gateway text endpoint (done), add histograms
+- Docs: update dashboards and runbooks
